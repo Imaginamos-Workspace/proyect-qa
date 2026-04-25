@@ -31,7 +31,10 @@ export function useUpdateProject() {
   return useMutation({
     mutationFn: ({ id, dto }: { id: string; dto: UpdateProjectDto }) =>
       api.patch<Project>(`/projects/${id}`, dto),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['projects'] }),
+    onSuccess: (_data, variables) => {
+      queryClient.invalidateQueries({ queryKey: ['projects'] });
+      queryClient.invalidateQueries({ queryKey: ['projects', variables.id] });
+    },
   });
 }
 

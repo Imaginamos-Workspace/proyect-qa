@@ -25,7 +25,10 @@ import {
   XCircle,
   ArrowRight,
   Zap,
+  Settings2,
 } from 'lucide-react';
+import { useState } from 'react';
+import { EditProjectModal } from './EditProjectModal';
 
 export function ProjectDetailPage() {
   const { t } = useTranslation();
@@ -34,6 +37,7 @@ export function ProjectDetailPage() {
   const { data: suites } = useTestSuites(id!);
   const { data: runs } = useTestRuns(id!);
   const { data: jiraConfig, isLoading: loadingJira } = useJiraConfig(id!);
+  const [editOpen, setEditOpen] = useState(false);
 
   if (isLoading) return <p className="text-sm text-muted-foreground">{t('projects.loading')}</p>;
   if (!project) return <p className="text-destructive">{t('projects.projectNotFound')}</p>;
@@ -50,24 +54,40 @@ export function ProjectDetailPage() {
       <Card>
         <CardContent className="p-6">
           <div className="flex items-start justify-between">
-            <div>
+            <div className="flex-1 min-w-0">
               <h1 className="text-xl font-semibold text-[#1e1b4b]">{project.name}</h1>
-              <div className="mt-2 flex items-center gap-3">
-                <a
-                  href={project.base_url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-sm text-muted-foreground hover:text-[#7c3aed]"
-                >
-                  <ExternalLink className="h-3 w-3" />
-                  {project.base_url}
-                </a>
+              <div className="mt-2 flex items-center gap-3 flex-wrap">
+                {project.base_url ? (
+                  <a
+                    href={project.base_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 text-sm text-muted-foreground hover:text-[#7c3aed] truncate max-w-xs"
+                  >
+                    <ExternalLink className="h-3 w-3 shrink-0" />
+                    {project.base_url}
+                  </a>
+                ) : (
+                  <span className="flex items-center gap-1 text-sm text-amber-600">
+                    <AlertTriangle className="h-3 w-3 shrink-0" />
+                    {t('editProject.noBaseUrl')}
+                  </span>
+                )}
                 <EnvironmentBadge environment={project.environment} />
               </div>
               {project.description && (
                 <p className="mt-2 text-sm text-muted-foreground">{project.description}</p>
               )}
             </div>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setEditOpen(true)}
+              className="shrink-0 ml-4 gap-1.5 text-xs"
+            >
+              <Settings2 className="h-3.5 w-3.5" />
+              {t('editProject.editBtn')}
+            </Button>
           </div>
 
           {/* Action buttons row */}
@@ -212,6 +232,11 @@ export function ProjectDetailPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Edit project modal */}
+      {editOpen && (
+        <EditProjectModal project={project} onClose={() => setEditOpen(false)} />
+      )}
 
       {/* Recent Test Runs */}
       <Card>

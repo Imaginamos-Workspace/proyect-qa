@@ -158,6 +158,25 @@
     "hoursAgo": "hace {{count}}h",
     "daysAgo": "hace {{count}}d"
   },
+  "editProject": {
+    "title": "Editar Proyecto",
+    "editBtn": "Editar",
+    "nameLabel": "Nombre del Proyecto",
+    "namePlaceholder": "Mi Aplicacion Web",
+    "nameRequired": "El nombre es obligatorio",
+    "baseUrlLabel": "URL Base",
+    "baseUrlHint": "La URL raiz de la aplicacion que deseas probar",
+    "baseUrlRequired": "La URL base es obligatoria",
+    "noBaseUrl": "Sin URL base configurada",
+    "environmentLabel": "Entorno",
+    "projectTypeLabel": "Tipo de Proyecto",
+    "noType": "Sin tipo especifico",
+    "descriptionLabel": "Descripcion (opcional)",
+    "save": "Guardar Cambios",
+    "saving": "Guardando...",
+    "cancel": "Cancelar",
+    "saveError": "Error al guardar. Intenta de nuevo."
+  },
   "wizard": {
     "createNewProject": "Crear Nuevo Proyecto",
     "createNewProjectDesc": "Configura tu aplicacion web para pruebas de QA impulsadas por IA",

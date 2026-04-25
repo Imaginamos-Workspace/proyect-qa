@@ -158,6 +158,25 @@
     "hoursAgo": "{{count}}h ago",
     "daysAgo": "{{count}}d ago"
   },
+  "editProject": {
+    "title": "Edit Project",
+    "editBtn": "Edit",
+    "nameLabel": "Project Name",
+    "namePlaceholder": "My Web App",
+    "nameRequired": "Name is required",
+    "baseUrlLabel": "Base URL",
+    "baseUrlHint": "The root URL of the application you want to test",
+    "baseUrlRequired": "Base URL is required",
+    "noBaseUrl": "No base URL configured",
+    "environmentLabel": "Environment",
+    "projectTypeLabel": "Project Type",
+    "noType": "No specific type",
+    "descriptionLabel": "Description (optional)",
+    "save": "Save Changes",
+    "saving": "Saving...",
+    "cancel": "Cancel",
+    "saveError": "Failed to save. Please try again."
+  },
   "wizard": {
     "createNewProject": "Create New Project",
     "createNewProjectDesc": "Set up your web application for AI-powered QA testing",
