@@ -15,7 +15,10 @@ import {
   Eye,
   Layers,
   Play,
+  Settings2,
 } from 'lucide-react';
+import { EditProjectModal } from './EditProjectModal';
+import type { Project } from '@qa/shared-types';
 
 const envBorderColor: Record<string, string> = {
   development: '#8b5cf6',
@@ -34,6 +37,7 @@ export function ProjectsPage() {
   const { data: projects, isLoading } = useProjects();
   const deleteProject = useDeleteProject();
   const [search, setSearch] = useState('');
+  const [editingProject, setEditingProject] = useState<Project | null>(null);
 
   const filtered = projects?.filter(
     (p) =>
@@ -131,16 +135,27 @@ export function ProjectsPage() {
 
                   {/* Actions */}
                   <div className="flex items-center justify-between border-t pt-3">
-                    <Link to={`/projects/${project.id}`}>
+                    <div className="flex items-center gap-1">
+                      <Link to={`/projects/${project.id}`}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-8 gap-1.5 text-xs font-medium text-[#7c3aed] hover:bg-[rgba(124,58,237,0.1)]"
+                        >
+                          <Eye className="h-3.5 w-3.5" />
+                          {t('projects.view')}
+                        </Button>
+                      </Link>
                       <Button
                         variant="ghost"
                         size="sm"
-                        className="h-8 gap-1.5 text-xs font-medium text-[#7c3aed] hover:bg-[rgba(124,58,237,0.1)]"
+                        className="h-8 gap-1.5 text-xs text-muted-foreground hover:bg-[rgba(124,58,237,0.08)] hover:text-[#7c3aed]"
+                        onClick={() => setEditingProject(project)}
                       >
-                        <Eye className="h-3.5 w-3.5" />
-                        {t('projects.view')}
+                        <Settings2 className="h-3.5 w-3.5" />
+                        {t('editProject.editBtn')}
                       </Button>
-                    </Link>
+                    </div>
                     <Button
                       variant="ghost"
                       size="sm"
@@ -160,6 +175,14 @@ export function ProjectsPage() {
             );
           })}
         </div>
+      )}
+
+      {/* Edit modal */}
+      {editingProject && (
+        <EditProjectModal
+          project={editingProject}
+          onClose={() => setEditingProject(null)}
+        />
       )}
     </div>
   );
