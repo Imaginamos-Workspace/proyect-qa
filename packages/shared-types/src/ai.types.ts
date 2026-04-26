@@ -118,9 +118,21 @@ export interface AICompleteTestRequest {
   description: string;
   test_type: TestType;
   priority?: TestPriority;
+  /** Project base URL — used both for the prompt context AND to scan the DOM. */
   base_url?: string;
+  /**
+   * Optional explicit URL or path to scan, overriding the default (which is
+   * the base URL). Same semantics as AIRefineRequest.scan_url_override:
+   *   - Absolute URL: 'https://example.com/checkout' (host must match base)
+   *   - Path:         '/checkout'
+   */
+  scan_url_override?: string;
 }
 
 export interface AICompleteTestResponse {
   test_case: AIGeneratedTestCase;
+  /** Whether a live scan ran and what happened. */
+  scan_status?: 'scanned' | 'no_base_url' | 'scan_failed';
+  scan_url?: string;
+  scan_elements?: { inputs: number; buttons: number; links: number; forms: number };
 }

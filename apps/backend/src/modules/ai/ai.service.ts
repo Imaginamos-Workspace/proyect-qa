@@ -88,9 +88,66 @@ export class AIService {
   async completeSingleTest(
     request: AICompleteTestRequest,
   ): Promise<AICompleteTestResponse> {
-    const test_case = await this.gemini.completeSingleTest(request);
+    // Live scan (same pattern as refineTest). The user describes what they
+    // want to test; we look at the actual page so the AI uses real selectors
+    // instead of guessing. Bulletproof: any failure falls back to text-only.
+    let liveSnapshotText: string | undefined;
+    let scanStatus: 'scanned' | 'no_base_url' | 'scan_failed' = 'no_base_url';
+    let scanUrl: string | null = null;
+    let elementCounts:
+      | { inputs: number; buttons: number; links: number; forms: number }
+      | undefined;
+
+    if (request.base_url) {
+      // Resolve the path: explicit override wins, else default to '/'
+      let path: string;
+      const override = request.scan_url_override?.trim();
+      if (override) {
+        if (/^https?:\/\//i.test(override)) {
+          try {
+            const u = new URL(override);
+            path = u.pathname + u.search + u.hash;
+          } catch {
+            path = '/';
+          }
+        } else {
+          path = override.startsWith('/') ? override : '/' + override;
+        }
+      } else {
+        path = '/';
+      }
+
+      scanUrl = buildScanUrl(request.base_url, path);
+      if (scanUrl) {
+        const snapshot = await scanPage(scanUrl);
+        if (snapshot) {
+          liveSnapshotText = summarizeSnapshotForPrompt(snapshot);
+          scanStatus = 'scanned';
+          elementCounts = {
+            inputs: snapshot.inputs.length,
+            buttons: snapshot.buttons.length,
+            links: snapshot.links.length,
+            forms: snapshot.forms.length,
+          };
+        } else {
+          scanStatus = 'scan_failed';
+        }
+      } else {
+        scanStatus = 'scan_failed';
+      }
+    }
+
+    const test_case = await this.gemini.completeSingleTest(
+      request,
+      liveSnapshotText,
+    );
     // Do NOT persist — the frontend saves it after the user confirms.
-    return { test_case };
+    return {
+      test_case,
+      scan_status: scanStatus,
+      scan_url: scanUrl ?? undefined,
+      scan_elements: elementCounts,
+    };
   }
 
   async refineTest(request: AIRefineRequest): Promise<AIRefineResponse> {

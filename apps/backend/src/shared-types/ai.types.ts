@@ -102,8 +102,12 @@ export interface AICompleteTestRequest {
   test_type: TestType;
   priority?: TestPriority;
   base_url?: string;
+  scan_url_override?: string;
 }
 
 export interface AICompleteTestResponse {
   test_case: AIGeneratedTestCase;
+  scan_status?: 'scanned' | 'no_base_url' | 'scan_failed';
+  scan_url?: string;
+  scan_elements?: { inputs: number; buttons: number; links: number; forms: number };
 }

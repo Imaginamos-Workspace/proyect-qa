@@ -97,7 +97,40 @@ export class GeminiProvider implements AIProvider {
 
   async completeSingleTest(
     request: AICompleteTestRequest,
+    liveDomSnapshot?: string,
   ): Promise<AIGeneratedTestCase> {
+    const domSection = liveDomSnapshot
+      ? `
+
+========================================
+LIVE DOM SNAPSHOT — GROUND TRUTH
+========================================
+This snapshot was fetched LIVE from the target page seconds ago. Every
+input, button, link, label, placeholder and id below is REAL. Copy the
+attributes VERBATIM.
+
+${liveDomSnapshot}
+========================================
+
+CRITICAL — SELECTOR RULES:
+1. PROHIBITED: inventing placeholders, labels, button text, CSS classes,
+   data-test attributes that DO NOT appear above.
+2. SELECTOR PREFERENCE:
+   a. data-testid="X" → page.getByTestId('X')
+   b. input name="X"  → page.locator('input[name="X"]')
+   c. element id="X"  → page.locator('#X')
+   d. placeholder="X" → page.getByPlaceholder('X') VERBATIM
+   e. button text "X" → page.getByRole('button', { name: 'X' }) VERBATIM
+   f. label "X"       → page.getByLabel('X') VERBATIM
+3. POST-SUBMIT ERROR / VALIDATION MESSAGES that may NOT be in the snapshot:
+   use a wide text regex, NEVER invent CSS classes:
+     page.locator('text=/correo|email|inv[aá]lid|invalid|incorrecto|incorrect/i').first()
+4. URL ASSERTIONS: regex on path ONLY, no absolute strings.
+   WRONG: expect(page).toHaveURL('https://example.com/x/')
+   RIGHT: expect(page).toHaveURL(/\\/x\\/?$/)
+`
+      : '';
+
     const prompt = `You are an expert QA automation engineer. Generate ONE complete Playwright TypeScript test case.
 
 USER REQUEST:
@@ -106,7 +139,7 @@ USER REQUEST:
 - Priority: ${request.priority || 'medium'}
 ${request.title ? `- Suggested title: ${request.title}` : ''}
 ${request.base_url ? `- Base URL: ${request.base_url}` : ''}
-
+${domSection}
 SYNTAX RULES (MUST FOLLOW — parsed by TypeScript compiler; invalid tests are DROPPED):
 - Regex literals: ONLY valid JavaScript regex. NEVER put characters after the closing /. WRONG: /.*foo/.*/  CORRECT: /.*foo.*/
 - Escape forward slashes inside regex patterns. WRONG: /path/to/ CORRECT: /path\\/to/
@@ -114,8 +147,7 @@ SYNTAX RULES (MUST FOLLOW — parsed by TypeScript compiler; invalid tests are D
 - No markdown fences, no triple-backtick blocks in playwright_code.
 - No export statements. No imports other than @playwright/test.
 - The playwright_code MUST contain at least one test(...) call.
-- Prefer plain strings or getByRole over regex whenever possible.
-- NAVIGATION: Always use RELATIVE paths in page.goto() calls (e.g., page.goto('/'), page.goto('/login')). NEVER hardcode absolute URLs like 'http://localhost:3000'. The baseURL is set in playwright.config.ts and prepended automatically.
+- NAVIGATION: Always use RELATIVE paths in page.goto() calls. NEVER hardcode absolute URLs. The baseURL is set in playwright.config.ts and prepended automatically.
 
 OUTPUT FORMAT:
 Return a single JSON object (NOT an array) with this exact shape:
