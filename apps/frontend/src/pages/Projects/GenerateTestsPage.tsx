@@ -802,47 +802,25 @@ export function GenerateTestsPage() {
       {/* Mode switcher + form — hidden while any stream is active */}
       {(phase === 'idle' || saved) && (
         <>
-          {/* Mode switcher */}
-          <Card>
+          {/* Mode info — guided is the only mode now (quick was unsafe: AI guessed selectors) */}
+          <Card className="border-[#7c3aed]/20 bg-[#f5f3ff]">
             <CardContent className="p-4">
-              <div className="mb-3 flex items-center justify-between">
-                <p className="text-sm font-medium text-[#1e1b4b]">¿Cómo quieres generar los tests?</p>
-              </div>
-              <div className="grid gap-3 md:grid-cols-2">
-                <button
-                  type="button"
-                  onClick={() => setMode('guided')}
-                  className={`rounded-lg border-2 p-4 text-left transition-all ${
-                    mode === 'guided'
-                      ? 'border-[#7c3aed] bg-[#f5f3ff] shadow-sm'
-                      : 'border-border hover:bg-muted/30'
-                  }`}
-                >
-                  <div className="mb-2 flex items-center gap-2">
-                    <Compass className={`h-5 w-5 ${mode === 'guided' ? 'text-[#7c3aed]' : 'text-muted-foreground'}`} />
-                    <span className="text-sm font-semibold text-[#1e1b4b]">Modo guiado (recomendado)</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Explora el sitio, te muestra los módulos y flujos, tú eliges qué probar y qué asserciones usar. Tests más precisos.
+              <div className="flex items-start gap-3">
+                <Compass className="h-5 w-5 mt-0.5 shrink-0 text-[#7c3aed]" />
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-[#1e1b4b]">
+                    Modo guiado — 3 pasos
                   </p>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMode('quick')}
-                  className={`rounded-lg border-2 p-4 text-left transition-all ${
-                    mode === 'quick'
-                      ? 'border-[#7c3aed] bg-[#f5f3ff] shadow-sm'
-                      : 'border-border hover:bg-muted/30'
-                  }`}
-                >
-                  <div className="mb-2 flex items-center gap-2">
-                    <Zap className={`h-5 w-5 ${mode === 'quick' ? 'text-[#7c3aed]' : 'text-muted-foreground'}`} />
-                    <span className="text-sm font-semibold text-[#1e1b4b]">Modo rápido</span>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    Análisis de una sola página. La IA decide todo. Útil para prototipar rápido.
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    <span className="font-medium text-[#7c3aed]">1. Explorar</span> el sitio (escanea el DOM real con Jina) →
+                    <span className="font-medium text-[#7c3aed]"> 2. Elegir</span> los módulos y flujos a probar →
+                    <span className="font-medium text-[#7c3aed]"> 3. Generar</span> tests con selectores reales (placeholders, names, ids del DOM).
                   </p>
-                </button>
+                  <p className="mt-1.5 text-[11px] text-muted-foreground">
+                    Esta plataforma ya no soporta el modo "rápido" sin exploración —
+                    los tests fallaban porque la IA inventaba selectores. El escaneo es obligatorio.
+                  </p>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -1215,8 +1193,8 @@ export function GenerateTestsPage() {
             </>
           )}
 
-          {/* ───────── QUICK MODE ───────── */}
-          {mode === 'quick' && (
+          {/* ───────── QUICK MODE (deprecated — kept as dead code; never reached) ───────── */}
+          {false && mode === 'quick' && (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base font-semibold text-[#1e1b4b]">

@@ -448,6 +448,7 @@ export function TestCasesPage() {
         <AddTestCaseModal
           suiteId={addModalSuiteId}
           projectId={projectId!}
+          projectBaseUrl={project?.base_url}
           onClose={() => setAddModalSuiteId(null)}
         />
       )}
