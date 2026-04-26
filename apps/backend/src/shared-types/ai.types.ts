@@ -82,6 +82,14 @@ export interface AIRefineRequest {
 export interface AIRefineResponse {
   refined_code: string;
   changes_summary: string;
+  scan_status?: 'scanned' | 'no_base_url' | 'no_goto' | 'scan_failed';
+  scan_url?: string;
+  scan_elements?: {
+    inputs: number;
+    buttons: number;
+    links: number;
+    forms: number;
+  };
 }
 
 export interface AICompleteTestRequest {

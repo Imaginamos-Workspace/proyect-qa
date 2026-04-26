@@ -101,13 +101,17 @@ export class AIService {
     let liveSnapshotText: string | undefined;
     let scanStatus: 'scanned' | 'no_base_url' | 'no_goto' | 'scan_failed' =
       'no_base_url';
+    let scanUrl: string | null = null;
+    let elementCounts:
+      | { inputs: number; buttons: number; links: number; forms: number }
+      | undefined;
 
     if (request.project_base_url) {
       const path = extractGotoPath(request.current_code);
       if (path === null) {
         scanStatus = 'no_goto';
       } else {
-        const scanUrl = buildScanUrl(request.project_base_url, path);
+        scanUrl = buildScanUrl(request.project_base_url, path);
         if (!scanUrl) {
           scanStatus = 'scan_failed';
         } else {
@@ -115,6 +119,12 @@ export class AIService {
           if (snapshot) {
             liveSnapshotText = summarizeSnapshotForPrompt(snapshot);
             scanStatus = 'scanned';
+            elementCounts = {
+              inputs: snapshot.inputs.length,
+              buttons: snapshot.buttons.length,
+              links: snapshot.links.length,
+              forms: snapshot.forms.length,
+            };
           } else {
             scanStatus = 'scan_failed';
           }
@@ -133,18 +143,26 @@ export class AIService {
       playwright_code: refinedCode,
     });
 
-    const summary =
-      scanStatus === 'scanned'
-        ? 'Test case refined using a fresh scan of the target page.'
-        : scanStatus === 'no_goto'
-          ? 'Test case refined from feedback (no page.goto found to scan).'
-          : scanStatus === 'no_base_url'
-            ? 'Test case refined from feedback (project base URL not provided).'
-            : 'Test case refined from feedback (live scan failed — falling back gracefully).';
+    let summary: string;
+    if (scanStatus === 'scanned' && elementCounts && scanUrl) {
+      const c = elementCounts;
+      summary = `Escaneé ${scanUrl} → ${c.forms} formulario(s), ${c.inputs} input(s), ${c.buttons} botón(es), ${c.links} enlace(s). El AI usó estos selectores reales.`;
+    } else if (scanStatus === 'no_goto') {
+      summary =
+        'Refiné con tu feedback. No pude escanear el sitio: el test no tiene un page.goto() para saber qué URL escanear.';
+    } else if (scanStatus === 'no_base_url') {
+      summary =
+        'Refiné con tu feedback. No pude escanear el sitio: el proyecto no tiene URL base configurada (Editar proyecto → URL Base).';
+    } else {
+      summary = `Refiné con tu feedback. El escaneo de ${scanUrl ?? 'la página'} falló (timeout, sitio caído, o bloqueo de bot). El AI no tuvo selectores reales — revisa el código antes de guardar.`;
+    }
 
     return {
       refined_code: refinedCode,
       changes_summary: summary,
+      scan_status: scanStatus,
+      scan_url: scanUrl ?? undefined,
+      scan_elements: elementCounts,
     };
   }
 

@@ -88,6 +88,17 @@ export interface AIRefineRequest {
 export interface AIRefineResponse {
   refined_code: string;
   changes_summary: string;
+  /** Whether the live page scan ran and what happened. Useful for UI feedback. */
+  scan_status?: 'scanned' | 'no_base_url' | 'no_goto' | 'scan_failed';
+  /** The URL that was scanned (for display). */
+  scan_url?: string;
+  /** Element counts found in the scan — proves to the user it ran. */
+  scan_elements?: {
+    inputs: number;
+    buttons: number;
+    links: number;
+    forms: number;
+  };
 }
 
 /** Single test-case completion: user describes what to test, AI returns a full case. */
