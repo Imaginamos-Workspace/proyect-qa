@@ -63,8 +63,12 @@ module.exports = async function handler(req, res) {
     send('status', { step: 'scraping_home', message: 'Analizando página principal...' });
 
     const jinaFetch = async (url) => {
+      const headers = { 'Accept': 'text/markdown' };
+      if (process.env.JINA_API_KEY) {
+        headers['Authorization'] = 'Bearer ' + process.env.JINA_API_KEY;
+      }
       const r = await fetch('https://r.jina.ai/' + url, {
-        headers: { 'Accept': 'text/markdown' },
+        headers,
         signal: AbortSignal.timeout(12000),
       });
       if (!r.ok) throw new Error('Jina ' + r.status + ' for ' + url);

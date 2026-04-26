@@ -5,6 +5,12 @@ import { GeminiProvider } from './providers/gemini.provider';
 import { TestSuitesService } from '../test-suites/test-suites.service';
 import { TestCasesService } from '../test-cases/test-cases.service';
 import {
+  scanPage,
+  extractGotoPath,
+  buildScanUrl,
+  summarizeSnapshotForPrompt,
+} from './utils/page-scanner';
+import {
   AIGenerateRequest,
   AIGenerateResponse,
   AIRefineRequest,
@@ -88,9 +94,38 @@ export class AIService {
   }
 
   async refineTest(request: AIRefineRequest): Promise<AIRefineResponse> {
+    // Try to scan the live page for a fresh DOM snapshot. Bulletproof: any
+    // failure (no base URL, invalid path, network error, SPA shell, timeout)
+    // silently falls back to code+feedback-only refine — the user flow never
+    // breaks.
+    let liveSnapshotText: string | undefined;
+    let scanStatus: 'scanned' | 'no_base_url' | 'no_goto' | 'scan_failed' =
+      'no_base_url';
+
+    if (request.project_base_url) {
+      const path = extractGotoPath(request.current_code);
+      if (path === null) {
+        scanStatus = 'no_goto';
+      } else {
+        const scanUrl = buildScanUrl(request.project_base_url, path);
+        if (!scanUrl) {
+          scanStatus = 'scan_failed';
+        } else {
+          const snapshot = await scanPage(scanUrl);
+          if (snapshot) {
+            liveSnapshotText = summarizeSnapshotForPrompt(snapshot);
+            scanStatus = 'scanned';
+          } else {
+            scanStatus = 'scan_failed';
+          }
+        }
+      }
+    }
+
     const refinedCode = await this.gemini.refineTestCase(
       request.current_code,
       request.feedback,
+      liveSnapshotText,
     );
 
     // Update the test case in the database
@@ -98,9 +133,18 @@ export class AIService {
       playwright_code: refinedCode,
     });
 
+    const summary =
+      scanStatus === 'scanned'
+        ? 'Test case refined using a fresh scan of the target page.'
+        : scanStatus === 'no_goto'
+          ? 'Test case refined from feedback (no page.goto found to scan).'
+          : scanStatus === 'no_base_url'
+            ? 'Test case refined from feedback (project base URL not provided).'
+            : 'Test case refined from feedback (live scan failed — falling back gracefully).';
+
     return {
       refined_code: refinedCode,
-      changes_summary: 'Test case refined based on feedback',
+      changes_summary: summary,
     };
   }
 

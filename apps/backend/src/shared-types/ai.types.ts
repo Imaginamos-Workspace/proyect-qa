@@ -75,6 +75,8 @@ export interface AIRefineRequest {
   test_case_id: string;
   current_code: string;
   feedback: string;
+  /** Optional project base URL — enables fresh DOM scan for smarter refine. */
+  project_base_url?: string;
 }
 
 export interface AIRefineResponse {

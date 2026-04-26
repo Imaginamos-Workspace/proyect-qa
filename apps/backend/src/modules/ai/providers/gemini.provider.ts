@@ -74,8 +74,9 @@ export class GeminiProvider implements AIProvider {
   async refineTestCase(
     currentCode: string,
     feedback: string,
+    liveDomSnapshot?: string,
   ): Promise<string> {
-    const prompt = buildRefinePrompt(currentCode, feedback);
+    const prompt = buildRefinePrompt(currentCode, feedback, liveDomSnapshot);
 
     const result = await this.model.generateContent({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
@@ -114,6 +115,7 @@ SYNTAX RULES (MUST FOLLOW — parsed by TypeScript compiler; invalid tests are D
 - No export statements. No imports other than @playwright/test.
 - The playwright_code MUST contain at least one test(...) call.
 - Prefer plain strings or getByRole over regex whenever possible.
+- NAVIGATION: Always use RELATIVE paths in page.goto() calls (e.g., page.goto('/'), page.goto('/login')). NEVER hardcode absolute URLs like 'http://localhost:3000'. The baseURL is set in playwright.config.ts and prepended automatically.
 
 OUTPUT FORMAT:
 Return a single JSON object (NOT an array) with this exact shape:
