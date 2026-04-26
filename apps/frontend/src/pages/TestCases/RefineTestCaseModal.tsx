@@ -8,6 +8,8 @@ import type { TestCase } from '@qa/shared-types';
 
 interface Props {
   testCase: TestCase;
+  /** Project base URL — enables live DOM scan for smarter refine. */
+  projectBaseUrl?: string;
   onClose: () => void;
 }
 
@@ -18,10 +20,11 @@ const QUICK_SUGGESTIONS = [
   'quickBetterSelectors',
 ];
 
-export function RefineTestCaseModal({ testCase, onClose }: Props) {
+export function RefineTestCaseModal({ testCase, projectBaseUrl, onClose }: Props) {
   const { t } = useTranslation();
   const [feedback, setFeedback] = useState('');
   const [refinedCode, setRefinedCode] = useState('');
+  const [changesSummary, setChangesSummary] = useState('');
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
 
@@ -36,8 +39,10 @@ export function RefineTestCaseModal({ testCase, onClose }: Props) {
         test_case_id: testCase.id,
         current_code: testCase.playwright_code,
         feedback: feedback.trim(),
+        project_base_url: projectBaseUrl,
       });
       setRefinedCode(res.refined_code);
+      setChangesSummary(res.changes_summary || '');
       setDone(true);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
@@ -148,6 +153,11 @@ export function RefineTestCaseModal({ testCase, onClose }: Props) {
               <p className="text-xs text-[#047857]">
                 {t('refineModal.successHint')}
               </p>
+              {changesSummary && (
+                <p className="text-xs italic text-[#065f46]">
+                  {changesSummary}
+                </p>
+              )}
               <pre className="rounded-md bg-[#1e1b4b] p-3 text-xs text-green-400 font-mono overflow-x-auto max-h-64 leading-relaxed">
                 {refinedCode}
               </pre>

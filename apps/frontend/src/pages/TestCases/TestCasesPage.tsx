@@ -7,6 +7,7 @@ import {
   useUpdateTestCase,
   useDeleteTestCase,
 } from '@/hooks/use-test-cases';
+import { useProject } from '@/hooks/use-projects';
 import { TestCaseEditor } from '@/components/test-editor/TestCaseEditor';
 import { AddTestCaseModal } from './AddTestCaseModal';
 import { RefineTestCaseModal } from './RefineTestCaseModal';
@@ -56,6 +57,7 @@ export function TestCasesPage() {
   const [addModalSuiteId, setAddModalSuiteId] = useState<string | null>(null);
   const [refineTestCase, setRefineTestCase] = useState<TestCase | null>(null);
 
+  const { data: project } = useProject(projectId!);
   const { data: testCases, isLoading: loadingCases } = useTestCases(projectId!, {
     test_type: typeFilter || undefined,
   });
@@ -454,6 +456,7 @@ export function TestCasesPage() {
       {refineTestCase && (
         <RefineTestCaseModal
           testCase={refineTestCase}
+          projectBaseUrl={project?.base_url}
           onClose={() => setRefineTestCase(null)}
         />
       )}

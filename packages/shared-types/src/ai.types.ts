@@ -75,6 +75,14 @@ export interface AIRefineRequest {
   test_case_id: string;
   current_code: string;
   feedback: string;
+  /**
+   * Optional: if provided, the backend will try to re-scan this URL (or the
+   * specific path extracted from the test's page.goto()) to give the AI a
+   * fresh DOM snapshot. If the scan fails for any reason (network error,
+   * auth wall, JS-only SPA, timeout, etc.), the refine gracefully falls back
+   * to code+feedback-only mode.
+   */
+  project_base_url?: string;
 }
 
 export interface AIRefineResponse {
