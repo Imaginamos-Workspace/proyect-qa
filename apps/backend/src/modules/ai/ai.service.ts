@@ -107,7 +107,27 @@ export class AIService {
       | undefined;
 
     if (request.project_base_url) {
-      const path = extractGotoPath(request.current_code);
+      // Pick the path: explicit override (user-chosen URL) wins, else
+      // auto-detect from the test's page.goto().
+      let path: string | null;
+      if (request.scan_url_override && request.scan_url_override.trim()) {
+        // Override accepts both absolute URLs and paths. If absolute and
+        // matches the project host, strip to path. Otherwise treat as path.
+        const raw = request.scan_url_override.trim();
+        if (/^https?:\/\//i.test(raw)) {
+          try {
+            const u = new URL(raw);
+            path = u.pathname + u.search + u.hash;
+          } catch {
+            path = null;
+          }
+        } else {
+          path = raw.startsWith('/') ? raw : '/' + raw;
+        }
+      } else {
+        path = extractGotoPath(request.current_code);
+      }
+
       if (path === null) {
         scanStatus = 'no_goto';
       } else {

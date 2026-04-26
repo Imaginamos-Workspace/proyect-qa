@@ -83,6 +83,15 @@ export interface AIRefineRequest {
    * to code+feedback-only mode.
    */
   project_base_url?: string;
+  /**
+   * Optional: explicit URL or path to scan, overriding the auto-detected
+   * page.goto() in the test code. Accepts:
+   *   - Absolute URL: 'https://example.com/checkout' (host must match base)
+   *   - Path:         '/checkout', '/cart?step=2'
+   * The backend resolves this against project_base_url. Use when a test
+   * navigates between multiple pages and you want to scan a specific one.
+   */
+  scan_url_override?: string;
 }
 
 export interface AIRefineResponse {

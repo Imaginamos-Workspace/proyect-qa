@@ -74,6 +74,21 @@ function attr(el: HTMLElement, name: string): string | undefined {
   return v && v.trim() ? v.trim() : undefined;
 }
 
+/** Normalize a raw URL string (absolute or relative) to a path. */
+function normalizeToPath(raw: string): string | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (/^https?:\/\//i.test(trimmed)) {
+    try {
+      const u = new URL(trimmed);
+      return u.pathname + u.search + u.hash;
+    } catch {
+      return null;
+    }
+  }
+  return trimmed.startsWith('/') ? trimmed : '/' + trimmed;
+}
+
 /**
  * Extract path from the first `page.goto(...)` call in the playwright code.
  * Returns null if no valid path is found. Handles string literals (single,
@@ -81,22 +96,30 @@ function attr(el: HTMLElement, name: string): string | undefined {
  */
 export function extractGotoPath(code: string): string | null {
   if (!code) return null;
-  // Match page.goto('...'), page.goto("..."), page.goto(`...`)
   const match = code.match(/page\.goto\s*\(\s*['"`]([^'"`]+)['"`]/);
   if (!match) return null;
-  const raw = match[1].trim();
-  if (!raw) return null;
-  // Absolute URL → return the pathname + search + hash
-  if (/^https?:\/\//i.test(raw)) {
-    try {
-      const u = new URL(raw);
-      return u.pathname + u.search + u.hash;
-    } catch {
-      return null;
+  return normalizeToPath(match[1]);
+}
+
+/**
+ * Extract ALL distinct paths from page.goto() calls in the test. Useful for
+ * letting the user pick which URL to scan when a test navigates through
+ * multiple pages. Returns paths in order of appearance, deduplicated.
+ */
+export function extractAllGotoPaths(code: string): string[] {
+  if (!code) return [];
+  const re = /page\.goto\s*\(\s*['"`]([^'"`]+)['"`]/g;
+  const seen = new Set<string>();
+  const paths: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(code)) !== null) {
+    const path = normalizeToPath(m[1]);
+    if (path && !seen.has(path)) {
+      seen.add(path);
+      paths.push(path);
     }
   }
-  // Already a relative path
-  return raw.startsWith('/') ? raw : '/' + raw;
+  return paths;
 }
 
 /**

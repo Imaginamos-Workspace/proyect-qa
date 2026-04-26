@@ -77,6 +77,8 @@ export interface AIRefineRequest {
   feedback: string;
   /** Optional project base URL — enables fresh DOM scan for smarter refine. */
   project_base_url?: string;
+  /** Explicit URL or path to scan, overriding auto-detected page.goto(). */
+  scan_url_override?: string;
 }
 
 export interface AIRefineResponse {
