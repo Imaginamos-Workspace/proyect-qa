@@ -209,33 +209,38 @@ function rewriteRelativeGotos(code: string, baseUrl: string): string {
     },
   );
 
-  // Step 3: expect(page).toHaveURL('https://...') with absolute URL →
-  //         convert to a regex that matches the PATH only. Trailing slashes
-  //         are tolerated. Avoids false failures when the host or trailing
-  //         slash differs from what the AI guessed.
+  // Step 3 + 4: rewrite expect(page).toHaveURL('...') — both absolute and
+  //   relative URL strings — to a regex that matches the PATH at the END of
+  //   the URL. Critical: NO `^` anchor — Playwright matches against the full
+  //   URL (`https://host/path/`), so an anchored regex `^/path` would never
+  //   match. Trailing slash and query string are tolerated.
+  const toHaveUrlRewrite = (
+    rawPath: string,
+  ): string => {
+    const trimmed = rawPath.replace(/\/+$/, '') || '/';
+    const escaped = trimmed.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+    // Final regex: `\/path\/?(\?.*)?$` — matches path at end, optional trailing slash, optional query
+    return `new RegExp('${escaped}\\\\/?(\\\\?.*)?$')`;
+  };
+
+  // Absolute URL form
   out = out.replace(
     /(\bexpect\s*\(\s*page\s*\)\s*\.\s*toHaveURL\s*\(\s*)(['"`])(https?:\/\/[^'"`]+)\2(\s*\))/g,
     (_match, prefix, _quote, fullUrl, suffix) => {
       try {
         const u = new URL(fullUrl);
-        const path = (u.pathname || '/').replace(/\/+$/, '') || '/';
-        // Escape regex special chars in the path
-        const escaped = path.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
-        return `${prefix}new RegExp('^${escaped}\\\\/?(\\\\?.*)?$')${suffix}`;
+        return `${prefix}${toHaveUrlRewrite(u.pathname || '/')}${suffix}`;
       } catch {
         return _match;
       }
     },
   );
 
-  // Step 4: expect(page).toHaveURL('/login') with relative path → convert
-  //         to anchored regex that tolerates trailing slash + query string.
+  // Relative URL form (string starting with `/`)
   out = out.replace(
     /(\bexpect\s*\(\s*page\s*\)\s*\.\s*toHaveURL\s*\(\s*)(['"`])(\/[^'"`]*?)\2(\s*\))/g,
     (_match, prefix, _quote, path, suffix) => {
-      const trimmed = path.replace(/\/+$/, '') || '/';
-      const escaped = trimmed.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
-      return `${prefix}new RegExp('${escaped}\\\\/?(\\\\?.*)?$')${suffix}`;
+      return `${prefix}${toHaveUrlRewrite(path)}${suffix}`;
     },
   );
 
