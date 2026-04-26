@@ -39,21 +39,152 @@ module.exports = async function handler(req, res) {
     // When provided, the AI generates tests strictly for these flows + assertions.
     const selected_flows = Array.isArray(body.selected_flows) ? body.selected_flows : null;
 
-    // Extract web via Jina AI
+    // Extract web via Jina AI — TWO modes for maximum fidelity:
+    //   - Markdown:  human-readable copy/text (good for understanding the site)
+    //   - HTML:      rendered DOM with REAL attributes (placeholder, name, id,
+    //                type, aria-label) → the AI can pick exact selectors.
     let page = '';
+    let renderedHtml = '';
     try {
-      const jina = await fetch('https://r.jina.ai/' + base_url, {
-        headers: { 'Accept': 'text/markdown' },
-        signal: AbortSignal.timeout(15000),
-      });
-      if (!jina.ok) { res.status(502).json({ error: 'Jina error: ' + jina.status }); return; }
-      page = await jina.text();
+      const baseHeaders = {};
+      if (process.env.JINA_API_KEY) {
+        baseHeaders['Authorization'] = 'Bearer ' + process.env.JINA_API_KEY;
+      }
+      // Fetch BOTH formats in parallel.
+      const [mdRes, htmlRes] = await Promise.all([
+        fetch('https://r.jina.ai/' + base_url, {
+          headers: { ...baseHeaders, 'Accept': 'text/markdown' },
+          signal: AbortSignal.timeout(15000),
+        }).catch(() => null),
+        fetch('https://r.jina.ai/' + base_url, {
+          headers: { ...baseHeaders, 'Accept': 'text/html', 'X-Return-Format': 'html' },
+          signal: AbortSignal.timeout(15000),
+        }).catch(() => null),
+      ]);
+      if (mdRes && mdRes.ok) page = await mdRes.text();
+      if (htmlRes && htmlRes.ok) renderedHtml = await htmlRes.text();
+      if (!page && !renderedHtml) {
+        res.status(502).json({ error: 'Jina returned no content for ' + base_url });
+        return;
+      }
     } catch (e) {
       res.status(502).json({ error: 'Web extraction failed: ' + e.message });
       return;
     }
 
-    const content = page.substring(0, 12000);
+    const content = (page || '').substring(0, 12000);
+
+    // Build a STRUCTURED DOM snapshot from the rendered HTML — this is what
+    // makes the AI use REAL selectors instead of guessing.
+    let domBlock = '';
+    if (renderedHtml) {
+      try {
+        const { parse: parseHtml } = require('node-html-parser');
+        const root = parseHtml(renderedHtml.slice(0, 2_000_000), {
+          blockTextElements: { script: false, style: false },
+        });
+        const lines = [];
+        // Labels (for input ↔ label association)
+        const labelMap = {};
+        root.querySelectorAll('label').forEach((el) => {
+          const t = (el.text || '').trim().replace(/\s+/g, ' ').slice(0, 80);
+          const htmlFor = el.getAttribute('for');
+          if (htmlFor && t) labelMap[htmlFor] = t;
+        });
+        // Forms (with their fields)
+        const forms = root.querySelectorAll('form');
+        if (forms.length) {
+          lines.push('FORMS (use these EXACT attributes):');
+          forms.slice(0, 5).forEach((form, i) => {
+            const action = form.getAttribute('action') || '';
+            const method = (form.getAttribute('method') || 'get').toLowerCase();
+            lines.push(`  Form ${i + 1} [method=${method}${action ? `, action=${action}` : ''}]:`);
+            form.querySelectorAll('input, select, textarea').slice(0, 15).forEach((el) => {
+              const type = el.getAttribute('type');
+              if (type === 'hidden') return;
+              const tag = el.tagName.toLowerCase();
+              const parts = [];
+              if (el.getAttribute('name')) parts.push(`name="${el.getAttribute('name')}"`);
+              if (el.getAttribute('id')) parts.push(`id="${el.getAttribute('id')}"`);
+              if (el.getAttribute('placeholder')) parts.push(`placeholder="${el.getAttribute('placeholder')}"`);
+              if (el.getAttribute('aria-label')) parts.push(`aria-label="${el.getAttribute('aria-label')}"`);
+              const tid = el.getAttribute('data-testid') || el.getAttribute('data-test-id') || el.getAttribute('data-test');
+              if (tid) parts.push(`data-testid="${tid}"`);
+              const lbl = el.getAttribute('id') ? labelMap[el.getAttribute('id')] : null;
+              if (lbl) parts.push(`label="${lbl}"`);
+              lines.push(`    - ${tag}${type ? `[type=${type}]` : ''} ${parts.join(' ')}`);
+            });
+          });
+        }
+        // Standalone inputs (not in a form)
+        const standaloneInputs = root.querySelectorAll('input, select, textarea').filter((el) => {
+          if (el.getAttribute('type') === 'hidden') return false;
+          // Walk up to check if inside a form
+          let p = el.parentNode;
+          while (p) {
+            if (p.tagName && p.tagName.toLowerCase() === 'form') return false;
+            p = p.parentNode;
+          }
+          return true;
+        });
+        if (standaloneInputs.length) {
+          lines.push('STANDALONE INPUTS:');
+          standaloneInputs.slice(0, 20).forEach((el) => {
+            const type = el.getAttribute('type');
+            const tag = el.tagName.toLowerCase();
+            const parts = [];
+            if (el.getAttribute('name')) parts.push(`name="${el.getAttribute('name')}"`);
+            if (el.getAttribute('id')) parts.push(`id="${el.getAttribute('id')}"`);
+            if (el.getAttribute('placeholder')) parts.push(`placeholder="${el.getAttribute('placeholder')}"`);
+            if (el.getAttribute('aria-label')) parts.push(`aria-label="${el.getAttribute('aria-label')}"`);
+            lines.push(`  - ${tag}${type ? `[type=${type}]` : ''} ${parts.join(' ')}`);
+          });
+        }
+        // Buttons
+        const buttons = root.querySelectorAll('button, input[type="submit"], input[type="button"], [role="button"]');
+        if (buttons.length) {
+          lines.push('BUTTONS:');
+          buttons.slice(0, 25).forEach((el) => {
+            const t = (el.text || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+            const parts = [];
+            if (t) parts.push(`text="${t}"`);
+            if (el.getAttribute('id')) parts.push(`id="${el.getAttribute('id')}"`);
+            if (el.getAttribute('name')) parts.push(`name="${el.getAttribute('name')}"`);
+            if (el.getAttribute('aria-label')) parts.push(`aria-label="${el.getAttribute('aria-label')}"`);
+            const tid = el.getAttribute('data-testid') || el.getAttribute('data-test-id') || el.getAttribute('data-test');
+            if (tid) parts.push(`data-testid="${tid}"`);
+            lines.push(`  - ${parts.join(' ') || '(unlabeled)'}`);
+          });
+        }
+        // Links (only those with hrefs)
+        const links = root.querySelectorAll('a[href]').filter((el) => {
+          const h = el.getAttribute('href');
+          return h && !h.startsWith('#') && !h.startsWith('javascript:');
+        });
+        if (links.length) {
+          lines.push('LINKS:');
+          links.slice(0, 15).forEach((el) => {
+            const t = (el.text || '').trim().replace(/\s+/g, ' ').slice(0, 50);
+            lines.push(`  - "${t || '(no text)'}" → ${el.getAttribute('href')}`);
+          });
+        }
+        if (lines.length) {
+          domBlock = lines.join('\n');
+          if (domBlock.length > 6000) domBlock = domBlock.slice(0, 6000) + '\n…(truncated)';
+        }
+      } catch (e) {
+        // node-html-parser failed — drop the structured block but keep markdown
+        domBlock = '';
+      }
+    }
+    const domSection = domBlock
+      ? `\n═══════════════════════════════════════════════════════════════
+LIVE DOM ELEMENTS (real attributes, freshly fetched — USE THESE VERBATIM)
+═══════════════════════════════════════════════════════════════
+${domBlock}
+═══════════════════════════════════════════════════════════════
+`
+      : '';
 
     // Build prompt
     const ctx = biz ? '\nBusiness: ' + JSON.stringify(biz) : '';
@@ -68,9 +199,9 @@ module.exports = async function handler(req, res) {
 
 Website: ${base_url} ${project_name ? '(' + project_name + ')' : ''}${ctx}
 
-PAGE CONTENT (Markdown snapshot, for context on selectors):
+PAGE CONTENT (Markdown snapshot, for context on copy/text):
 ${content}
-
+${domSection}
 METADATA LANGUAGE: ${langName}.
 
 SELECTED FLOWS TO GENERATE (one test per flow, using the provided assertions):
@@ -80,27 +211,31 @@ RULES:
 1. Generate EXACTLY one test per flow in the SELECTED FLOWS array above
 2. Group flows by their module_name into modules in the output
 3. Each test MUST include all assertions listed for that flow — use the assertion.code snippets verbatim
-4. Start every test with: await page.goto('${base_url}')
+4. Start every test with: await page.goto('/') — RELATIVE path. NEVER hardcode absolute URLs.
 5. Add a defensive sanity assertion right after goto(): await expect(page.locator('body')).toBeVisible()
 6. Use the flow.name as the test title (in ${langName})
 7. Use the flow.description as the test description (in ${langName})
-8. When writing user interactions (click, fill) before the assertions, follow the SELECTOR STRATEGY:
-   - CSS semantic (input[type="email"], button[type="submit"]) — preferred
-   - getByRole with regex /i flag
-   - getByLabel only if exact label visible in page content
-   - NEVER hardcode English labels without regex
+8. SELECTOR RULES — use the LIVE DOM ELEMENTS list above as ground truth:
+   - If an input has name="X" → use page.locator('input[name="X"]')
+   - If an input has placeholder="X" → use page.getByPlaceholder('X') VERBATIM
+   - If a button has text "X" → use page.getByRole('button', { name: 'X' }) VERBATIM
+   - If element has data-testid → use page.getByTestId('X')
+   - NEVER invent placeholders, labels, or CSS classes that are not in the snapshot.
+9. URL ASSERTIONS — use RELATIVE regex, NEVER absolute strings:
+   WRONG: expect(page).toHaveURL('https://example.com/login/')
+   RIGHT: expect(page).toHaveURL(/\\/login\\/?$/)
 
 RETURN ONLY valid JSON (no markdown fences):
-{"modules":[{"name":"Module","description":"desc","test_cases":[{"title":"name","description":"what","test_type":"e2e","priority":"high","tags":["tag"],"code":"import { test, expect } from '@playwright/test';\\ntest('name', async ({ page }) => { await page.goto('${base_url}'); });"}]}]}`;
+{"modules":[{"name":"Module","description":"desc","test_cases":[{"title":"name","description":"what","test_type":"e2e","priority":"high","tags":["tag"],"code":"import { test, expect } from '@playwright/test';\\ntest('name', async ({ page }) => { await page.goto('/'); });"}]}]}`;
     } else {
       // Original prompt — generate from scratch without pre-selection
-      prompt = `You are an expert QA engineer. This platform is site-AGNOSTIC — the tests you generate MUST work regardless of the website's language, framework, or domain. You only know about this site what the PAGE CONTENT below tells you. Never assume anything not visible in the content.
+      prompt = `You are an expert QA engineer. This platform is site-AGNOSTIC — the tests you generate MUST work regardless of the website's language, framework, or domain. You only know about this site what the PAGE CONTENT and LIVE DOM ELEMENTS below tell you. Never assume anything not visible there.
 
 Website: ${base_url} ${project_name ? '(' + project_name + ')' : ''}${ctx}
 
-PAGE CONTENT (Markdown extracted from the live page — this is the ONLY source of truth about the site):
+PAGE CONTENT (Markdown extracted from the live page — for understanding copy/text):
 ${content}
-
+${domSection}
 LANGUAGE FOR METADATA: titles, descriptions, module names, code comments → ${langName}.
 Code itself (Playwright API) is always in English.
 
@@ -108,9 +243,15 @@ Code itself (Playwright API) is always in English.
 CRITICAL — SELECTOR STRATEGY (agnostic to any site, any language)
 ═══════════════════════════════════════════════════════════════
 
+GROUND TRUTH: The "LIVE DOM ELEMENTS" block above (when present) lists the
+REAL inputs, buttons, and links on the page with their REAL attributes
+(name, id, placeholder, aria-label, data-testid, button text). USE THESE
+VERBATIM. Do not invent attributes that do not appear there.
+
 Before writing a selector, ask yourself:
-  "Did I actually see this exact text/attribute in the PAGE CONTENT above?"
-  If NO → use a CSS attribute selector instead.
+  "Did I actually see this exact text/attribute in the LIVE DOM ELEMENTS or PAGE CONTENT above?"
+  If NO → use a CSS attribute selector instead, OR fall back to a wide
+          regex locator. NEVER guess specific text.
 
 PRIORITY ORDER (use the FIRST strategy that works):
 
@@ -143,8 +284,16 @@ PRIORITY ORDER (use the FIRST strategy that works):
 FORBIDDEN (these break silently on real sites):
   ✗ Assuming labels in English ('Password', 'Email', 'Login') without seeing them in PAGE CONTENT
   ✗ Hardcoded text strings without /i flag or regex alternation
-  ✗ Selectors that depend on specific framework class names (e.g. .ant-btn-primary) unless seen
+  ✗ Selectors that depend on specific framework class names (e.g. .ant-btn-primary, .error-message, .alert-danger) unless they appear in the LIVE DOM ELEMENTS block
   ✗ Testing functionality you didn't observe in the page (e.g. "password reset" if no such link exists)
+  ✗ Inventing data-testid values — only use those listed in LIVE DOM ELEMENTS
+  ✗ Hardcoding absolute URLs in page.goto() or toHaveURL() — use relative paths / regex
+
+ERROR / VALIDATION MESSAGES:
+  Login error messages typically appear AFTER form submission via JS — they
+  may NOT be in the static snapshot. For these, use a wide text-based regex:
+    page.locator('text=/correo|email|inv[aá]lid|invalid|incorrecto|incorrect/i').first()
+  Do NOT invent CSS selectors like .error-message, .alert-danger, [data-test="email-error"].
 
 ═══════════════════════════════════════════════════════════════
 TEST STRUCTURE RULES
@@ -160,14 +309,22 @@ TEST STRUCTURE RULES
 
 3. Each test is fully independent — no shared state, each starts with page.goto()
 
-4. Every test starts with: await page.goto('${base_url}');
+4. Every test starts with: await page.goto('/');  ← RELATIVE PATH ONLY.
+   Subsequent navigations: await page.goto('/login'), '/signup', etc.
+   NEVER hardcode absolute URLs like '${base_url}/login' — baseURL is set
+   in playwright.config.ts and prepended automatically.
 
 5. Each test MUST have at least 2 expect() assertions so failures are attributable
 
-6. Prefer STABLE assertions:
-   - toHaveURL(regex) for navigation checks
+6. URL ASSERTIONS — use REGEX on the path, NEVER an absolute URL string:
+   WRONG: await expect(page).toHaveURL('https://example.com/login/')
+   RIGHT: await expect(page).toHaveURL(/\\/login\\/?$/)
+   Trailing slashes vary across sites — regex tolerates both /login and /login/.
+
+7. Prefer STABLE assertions:
+   - toHaveURL(/regex/) for navigation checks
    - toBeVisible() for element presence
-   - toHaveTitle(regex) for page identity
+   - toHaveTitle(/regex/) for page identity
 
 7. Each interactive test should have a defensive first step:
    await expect(page.locator('body')).toBeVisible();   // page loaded at all
@@ -176,7 +333,7 @@ TEST STRUCTURE RULES
 8. Use Playwright's auto-waiting — don't add waitForTimeout() unless absolutely needed.
 
 RETURN ONLY valid JSON (no markdown fences, no explanatory text before or after):
-{"modules":[{"name":"Module","description":"desc","test_cases":[{"title":"name","description":"what","test_type":"e2e","priority":"high","tags":["tag"],"code":"import { test, expect } from '@playwright/test';\\ntest('name', async ({ page }) => { await page.goto('${base_url}'); });"}]}]}`;
+{"modules":[{"name":"Module","description":"desc","test_cases":[{"title":"name","description":"what","test_type":"e2e","priority":"high","tags":["tag"],"code":"import { test, expect } from '@playwright/test';\\ntest('name', async ({ page }) => { await page.goto('/'); });"}]}]}`;
     }
     // End of prompt selection (selected_flows vs from-scratch)
 

@@ -50,6 +50,7 @@ SYNTAX RULES (MUST FOLLOW — the output is parsed with the TypeScript compiler 
 - No export statements in the test code.
 - The code MUST contain at least one test(...) call. Do not return bare helper functions.
 - Prefer string locators or getByRole over regex whenever possible. Use regex ONLY when you need pattern matching.
+- NAVIGATION: Always use RELATIVE paths in page.goto() calls (e.g., page.goto('/'), page.goto('/login'), page.goto('/dashboard')). NEVER hardcode absolute URLs like 'http://localhost:3000/login'. The baseURL is configured in playwright.config.ts and will be prepended automatically.
 
 OUTPUT FORMAT:
 Return a JSON array of test cases with this structure:
@@ -132,7 +133,58 @@ expect(response.ok()).toBeTruthy();`,
 export function buildRefinePrompt(
   currentCode: string,
   feedback: string,
+  liveDomSnapshot?: string,
 ): string {
+  const domSection = liveDomSnapshot
+    ? `
+========================================
+LIVE DOM SNAPSHOT — GROUND TRUTH
+========================================
+This snapshot was fetched LIVE from the target page seconds ago. Every input,
+button, link, label, placeholder and id below is REAL — copy them VERBATIM.
+
+${liveDomSnapshot}
+========================================
+
+CRITICAL — SELECTOR RULES (failure to follow = test will fail at runtime):
+
+1. PROHIBITED: Inventing placeholders, labels, button texts, CSS classes, or
+   data-test attributes that DO NOT appear above. Examples of what NOT to do:
+     - WRONG: getByPlaceholder('Correo electrónico') when snapshot says placeholder="Email"
+     - WRONG: page.locator('.error-message') when snapshot has no .error-message
+     - WRONG: page.locator('[data-test="email-error"]') when no such testid exists.
+
+2. SELECTOR PREFERENCE (in order):
+   a. If snapshot lists data-testid="X" → use page.getByTestId('X')
+   b. If input has name="X" → use page.locator('input[name="X"]')
+   c. If input has id="X" → use page.locator('#X')
+   d. If input has placeholder="X" → use page.getByPlaceholder('X') with EXACT text
+   e. If button has text "X" → use page.getByRole('button', { name: 'X' }) with EXACT text
+   f. For labels: use page.getByLabel('X') with EXACT label text from snapshot
+
+3. ERROR/VALIDATION ELEMENTS NOT IN SNAPSHOT:
+   Login error messages typically appear AFTER form submission via JS — they
+   may not be in the static snapshot. For these, use a wide locator that
+   matches by text content with a regex covering common Spanish/English
+   wordings, e.g.:
+     page.locator('text=/correo|email|inválid|invalid|incorrecto|incorrect/i').first()
+   Do NOT invent CSS classes like .error-message or .alert-danger — they
+   probably don't exist on this site.
+
+4. URL ASSERTIONS — use RELATIVE regex, never absolute strings:
+   WRONG: await expect(page).toHaveURL('https://example.com/login/')
+   RIGHT: await expect(page).toHaveURL(/\\/login\\/?$/)
+
+5. NAVIGATION — use RELATIVE paths only:
+   WRONG: await page.goto('https://example.com/login')
+   RIGHT: await page.goto('/login')
+
+If the snapshot does not contain a needed element AND it is not a post-submit
+error message, KEEP the existing selector from the current code and add a
+// TODO comment explaining the gap. NEVER guess.
+`
+    : '';
+
   return `You are a Playwright test expert. Refine the following test based on the feedback.
 
 CURRENT TEST CODE:
@@ -142,7 +194,7 @@ ${currentCode}
 
 FEEDBACK:
 ${feedback}
-
+${domSection}
 SYNTAX RULES (STRICT — your output is parsed with the TypeScript compiler and REJECTED if invalid):
 - Regex literals must be valid JavaScript. NEVER put characters after the closing /. WRONG: /.*foo/.*/  CORRECT: /.*foo.*/
 - Escape forward slashes inside regex patterns.
@@ -150,6 +202,7 @@ SYNTAX RULES (STRICT — your output is parsed with the TypeScript compiler and 
 - No markdown fences or triple-backtick blocks in the response.
 - No export statements.
 - The code MUST contain at least one test(...) call.
+- NAVIGATION: Use RELATIVE paths in page.goto() (e.g., '/login', '/'). NEVER hardcode absolute URLs — baseURL is set in playwright.config.ts.
 
 Return ONLY the refined TypeScript test code, no explanations. Keep the @playwright/test import and test structure.`;
 }
