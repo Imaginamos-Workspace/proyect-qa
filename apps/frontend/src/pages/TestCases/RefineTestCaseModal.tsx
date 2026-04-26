@@ -1,10 +1,53 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { X, Sparkles, Loader2, AlertCircle, Check, Search, Globe } from 'lucide-react';
+import { X, Sparkles, Loader2, AlertCircle, Check, Search, Globe, Pencil } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { useRefineTest } from '@/hooks/use-ai';
 import type { TestCase, AIRefineResponse } from '@qa/shared-types';
+
+/** Extract every distinct page.goto() URL from a test, in order. */
+function extractAllGotoPaths(code: string): string[] {
+  if (!code) return [];
+  const re = /page\.goto\s*\(\s*['"`]([^'"`]+)['"`]/g;
+  const seen = new Set<string>();
+  const paths: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(code)) !== null) {
+    const raw = m[1].trim();
+    let path: string | null = null;
+    if (/^https?:\/\//i.test(raw)) {
+      try {
+        const u = new URL(raw);
+        path = u.pathname + u.search + u.hash;
+      } catch {
+        path = null;
+      }
+    } else {
+      path = raw.startsWith('/') ? raw : '/' + raw;
+    }
+    if (path && !seen.has(path)) {
+      seen.add(path);
+      paths.push(path);
+    }
+  }
+  return paths;
+}
+
+/** Resolve a path or URL against a base URL, returning a clean absolute URL. */
+function resolveUrl(pathOrUrl: string, baseUrl: string): string | null {
+  try {
+    if (/^https?:\/\//i.test(pathOrUrl)) {
+      // Absolute → swap host to project base
+      const u = new URL(pathOrUrl);
+      return new URL(u.pathname + u.search, baseUrl).toString();
+    }
+    return new URL(pathOrUrl.startsWith('/') ? pathOrUrl : '/' + pathOrUrl, baseUrl).toString();
+  } catch {
+    return null;
+  }
+}
 
 interface Props {
   testCase: TestCase;
@@ -33,25 +76,27 @@ export function RefineTestCaseModal({ testCase, projectBaseUrl, onClose }: Props
 
   const refine = useRefineTest();
 
-  // Predict the URL the backend will scan, so we can show "Escaneando X..."
-  // immediately when the user clicks Refine.
-  const predictedScanUrl = (() => {
-    if (!projectBaseUrl) return null;
-    const m = testCase.playwright_code?.match(/page\.goto\s*\(\s*['"`]([^'"`]+)['"`]/);
-    if (!m) return null;
-    const raw = m[1].trim();
-    try {
-      // Absolute → use its path with the project's base host
-      if (/^https?:\/\//i.test(raw)) {
-        const u = new URL(raw);
-        return new URL(u.pathname + u.search, projectBaseUrl).toString();
-      }
-      // Relative
-      return new URL(raw.startsWith('/') ? raw : '/' + raw, projectBaseUrl).toString();
-    } catch {
-      return null;
-    }
-  })();
+  // All distinct goto paths in the test — the user can pick any of them or
+  // type a custom path. This makes the scanner truly project-agnostic.
+  const detectedPaths = useMemo(
+    () => extractAllGotoPaths(testCase.playwright_code || ''),
+    [testCase.playwright_code],
+  );
+
+  // Selected path for scan: defaults to the first detected goto. The user
+  // can pick another from the chip list or type a custom one.
+  const [selectedPath, setSelectedPath] = useState<string>(detectedPaths[0] ?? '');
+  const [customPath, setCustomPath] = useState<string>('');
+  const [showPicker, setShowPicker] = useState<boolean>(false);
+
+  // The effective path that will actually be scanned (custom > selected).
+  const effectivePath = customPath.trim() || selectedPath;
+
+  // Predicted full URL — what we'll show in the banner before clicking Refine.
+  const predictedScanUrl = useMemo(() => {
+    if (!projectBaseUrl || !effectivePath) return null;
+    return resolveUrl(effectivePath, projectBaseUrl);
+  }, [projectBaseUrl, effectivePath]);
 
   const handleRefine = async () => {
     if (!feedback.trim()) return;
@@ -64,6 +109,8 @@ export function RefineTestCaseModal({ testCase, projectBaseUrl, onClose }: Props
         current_code: testCase.playwright_code,
         feedback: feedback.trim(),
         project_base_url: projectBaseUrl,
+        // Send the user's choice. If empty, backend falls back to auto-detect.
+        scan_url_override: effectivePath || undefined,
       });
       setRefinedCode(res.refined_code);
       setScanResult({
@@ -143,40 +190,94 @@ export function RefineTestCaseModal({ testCase, projectBaseUrl, onClose }: Props
             </div>
           </div>
 
-          {/* Live scan info — pre-flight banner so the user knows what will be scanned */}
-          {!done && (
-            <div className={`flex items-start gap-2 rounded-md p-3 text-xs ${
-              predictedScanUrl
-                ? 'bg-[#eff6ff] border border-[#bfdbfe] text-[#1e40af]'
-                : 'bg-amber-50 border border-amber-200 text-amber-800'
-            }`}>
+          {/* Live scan picker — agnostic URL chooser */}
+          {!done && projectBaseUrl && (
+            <div className="rounded-md border border-[#bfdbfe] bg-[#eff6ff] p-3 text-xs text-[#1e40af] space-y-2">
+              <div className="flex items-start gap-2">
+                <Search className="h-4 w-4 mt-0.5 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium">Escaneo en vivo</p>
+                  <p className="mt-0.5">
+                    Antes de mejorar, leeré el DOM real de la URL elegida para que el AI use selectores verdaderos.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowPicker((s) => !s)}
+                  className="shrink-0 inline-flex items-center gap-1 rounded-md border border-[#bfdbfe] bg-white px-2 py-1 text-[11px] font-medium text-[#1e40af] hover:bg-[#dbeafe] transition-colors"
+                >
+                  <Pencil className="h-3 w-3" />
+                  {showPicker ? 'Ocultar' : 'Cambiar URL'}
+                </button>
+              </div>
+
               {predictedScanUrl ? (
-                <>
-                  <Search className="h-4 w-4 mt-0.5 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium">Escaneo en vivo activado</p>
-                    <p className="mt-0.5 break-all">
-                      Antes de mejorar, leeré el DOM de:{' '}
-                      <span className="font-mono text-[#1e3a8a]">{predictedScanUrl}</span>
-                    </p>
-                    <p className="mt-1 opacity-80">
-                      El AI usará los selectores reales del sitio (placeholders, names, ids).
-                    </p>
-                  </div>
-                </>
+                <p className="ml-6 break-all">
+                  <span className="font-medium">URL a escanear:</span>{' '}
+                  <span className="font-mono text-[#1e3a8a]">{predictedScanUrl}</span>
+                </p>
               ) : (
-                <>
-                  <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="font-medium">Escaneo no disponible</p>
-                    <p className="mt-0.5">
-                      {!projectBaseUrl
-                        ? 'Este proyecto no tiene URL base. Edita el proyecto para activar el escaneo en vivo.'
-                        : 'No hay page.goto() en el test — no sé qué URL escanear. El AI mejorará solo con tu feedback.'}
+                <p className="ml-6 text-amber-800">
+                  Selecciona o escribe una URL/path para escanear ↓
+                </p>
+              )}
+
+              {/* Picker: chips of detected paths + custom input */}
+              {(showPicker || !predictedScanUrl) && (
+                <div className="ml-6 space-y-2 pt-1 border-t border-[#bfdbfe]/60">
+                  {detectedPaths.length > 0 && (
+                    <div>
+                      <p className="font-medium mb-1.5 mt-1.5">URLs detectadas en el test:</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {detectedPaths.map((p) => {
+                          const active = !customPath && selectedPath === p;
+                          return (
+                            <button
+                              key={p}
+                              type="button"
+                              onClick={() => { setSelectedPath(p); setCustomPath(''); }}
+                              className={`rounded-full px-2.5 py-1 text-[11px] font-mono transition-colors ${
+                                active
+                                  ? 'bg-[#1e40af] text-white'
+                                  : 'bg-white border border-[#bfdbfe] text-[#1e40af] hover:bg-[#dbeafe]'
+                              }`}
+                            >
+                              {p}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                  <div>
+                    <label className="block font-medium mb-1">
+                      O escribe un path o URL personalizada:
+                    </label>
+                    <Input
+                      value={customPath}
+                      onChange={(e) => setCustomPath(e.target.value)}
+                      placeholder="/checkout o https://example.com/checkout"
+                      className="text-xs h-8 font-mono bg-white"
+                    />
+                    <p className="mt-1 opacity-70">
+                      Útil si el módulo se renderiza tras login o en otra ruta. Se resuelve contra la URL base del proyecto.
                     </p>
                   </div>
-                </>
+                </div>
               )}
+            </div>
+          )}
+
+          {/* Banner when scan is impossible (no base URL) */}
+          {!done && !projectBaseUrl && (
+            <div className="flex items-start gap-2 rounded-md p-3 text-xs bg-amber-50 border border-amber-200 text-amber-800">
+              <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+              <div className="flex-1 min-w-0">
+                <p className="font-medium">Escaneo no disponible</p>
+                <p className="mt-0.5">
+                  Este proyecto no tiene URL base. Edita el proyecto para activar el escaneo en vivo. El AI mejorará solo con tu feedback.
+                </p>
+              </div>
             </div>
           )}
 
