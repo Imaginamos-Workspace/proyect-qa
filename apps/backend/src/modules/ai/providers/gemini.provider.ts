@@ -280,7 +280,14 @@ Return a single JSON object (NOT an array) with this exact shape:
 
       const raw = result.response.text();
       const validation = validateAndFixTestCode(raw);
-      if (validation.valid) return validation.fixed!;
+      if (validation.valid) {
+        // The validator strips the @playwright/test import as part of
+        // sanitization (older callers re-add it). The heal flow ships
+        // the code straight to disk on the user's machine, so we must
+        // ensure the import is present before returning. Without it the
+        // user sees `ReferenceError: test is not defined` on retry.
+        return ensurePlaywrightImport(validation.fixed!);
+      }
 
       lastErrors = validation.errors;
       console.warn(
@@ -303,4 +310,14 @@ Return a single JSON object (NOT an array) with this exact shape:
 
     return result.response.text();
   }
+}
+
+/**
+ * Ensure the snippet starts with `import { test, expect } from '@playwright/test';`.
+ * The validator strips this import during sanitization; for heal output we
+ * need it to be present so the file can run as-is on the user's machine.
+ */
+function ensurePlaywrightImport(code: string): string {
+  if (/from\s+['"]@playwright\/test['"]/.test(code)) return code;
+  return `import { test, expect } from '@playwright/test';\n${code}`;
 }

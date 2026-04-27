@@ -138,7 +138,13 @@ while (iteration <= MAX_ITERATIONS) {
     process.exit(1);
   }
 
-  writeFileSync(TEST_FILE, healed.healed_code);
+  // Defense in depth: ensure the healed code has a Playwright import.
+  // The backend is supposed to add it, but if Gemini ate the import line
+  // and the backend's auto-inject didn't catch it for any reason, we add
+  // it here so the next Playwright run doesn't crash with
+  // `ReferenceError: test is not defined`.
+  const healedWithImport = ensurePlaywrightImport(healed.healed_code);
+  writeFileSync(TEST_FILE, healedWithImport);
   patchSpecToUseHealFixture(TEST_FILE);
   if (healed.changes_summary) {
     console.log('   ✏️  ' + healed.changes_summary);
@@ -171,6 +177,16 @@ function patchSpecToUseHealFixture(file) {
 
 function stripHealImport(code) {
   return code.replace(/from\s+(['"`])\.\/qa-heal\1/g, `from '@playwright/test'`);
+}
+
+/**
+ * Make sure the spec file starts with the @playwright/test import. If the
+ * AI produced code without it (Gemini sometimes "forgets" the import line
+ * even when the prompt insists), prepending it here saves the next run.
+ */
+function ensurePlaywrightImport(code) {
+  if (/from\s+['"](@playwright\/test|\.\/qa-heal)['"]/.test(code)) return code;
+  return `import { test, expect } from '@playwright/test';\n${code}`;
 }
 
 function resetHealDir() {
