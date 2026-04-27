@@ -29,12 +29,57 @@ export class GeminiProvider implements AIProvider {
     this.model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
   }
 
+  /**
+   * Wraps model.generateContent() with retry on transient errors:
+   * - 503 Service Unavailable (Gemini overloaded — common at peak hours)
+   * - 429 Too Many Requests (rate limit)
+   * - network errors (5xx-class fetch failures)
+   *
+   * Exponential backoff: 1s, 2s, 4s. Total max wait ~7s before failing.
+   * If still failing, surface a friendly error so heal-loop can decide
+   * whether to retry locally.
+   */
+  private async generateContentWithRetry(
+    request: Parameters<typeof this.model.generateContent>[0],
+  ): Promise<Awaited<ReturnType<typeof this.model.generateContent>>> {
+    const MAX_ATTEMPTS = 3;
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        return await this.model.generateContent(request);
+      } catch (err) {
+        lastErr = err;
+        const status = (err as { status?: number })?.status;
+        const isRetryable =
+          status === 503 || status === 429 || status === 500 || status === 502;
+        if (!isRetryable || attempt === MAX_ATTEMPTS) break;
+        const delayMs = 1000 * Math.pow(2, attempt - 1); // 1s, 2s, 4s
+        console.warn(
+          `[gemini] ${status} on attempt ${attempt}/${MAX_ATTEMPTS}, retrying in ${delayMs}ms`,
+        );
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
+    const status = (lastErr as { status?: number })?.status;
+    if (status === 503) {
+      throw new Error(
+        'Gemini está sobrecargado en este momento (503). Intenta de nuevo en 1-2 minutos.',
+      );
+    }
+    if (status === 429) {
+      throw new Error(
+        'Cuota de Gemini agotada (429). Revisa los límites del API key.',
+      );
+    }
+    throw lastErr;
+  }
+
   async generateTestCases(
     request: AIGenerateRequest,
   ): Promise<AIGeneratedTestCase[]> {
     const prompt = buildTestGenerationPrompt(request);
 
-    const result = await this.model.generateContent({
+    const result = await this.generateContentWithRetry({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       generationConfig: {
         temperature: 0.3,
@@ -80,7 +125,7 @@ export class GeminiProvider implements AIProvider {
   ): Promise<string> {
     const prompt = buildRefinePrompt(currentCode, feedback, liveDomSnapshot);
 
-    const result = await this.model.generateContent({
+    const result = await this.generateContentWithRetry({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       generationConfig: { temperature: 0.2, maxOutputTokens: 4096 },
     });
@@ -163,7 +208,7 @@ Return a single JSON object (NOT an array) with this exact shape:
   "browser_targets": ["chromium"]
 }`;
 
-    const result = await this.model.generateContent({
+    const result = await this.generateContentWithRetry({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       generationConfig: {
         temperature: 0.2,
@@ -223,7 +268,7 @@ Return a single JSON object (NOT an array) with this exact shape:
           ? basePrompt
           : `${basePrompt}\n\n========================================\nPREVIOUS ATTEMPT WAS SYNTACTICALLY INVALID — DO NOT REPEAT\n========================================\nThe TypeScript compiler rejected your last output with these errors:\n${lastErrors.map((e) => `  - ${e}`).join('\n')}\n\nCheck especially:\n- Regex literals: never put characters after the closing /. e.g. WRONG: /foo/.*/  CORRECT: /foo.*/\n- Escape forward slashes inside regex patterns: WRONG /path/to/  CORRECT /path\\/to/\n- Balance every quote, backtick, paren, brace, bracket\n- No markdown fences\nReturn ONLY the corrected TypeScript code.`;
 
-      const result = await this.model.generateContent({
+      const result = await this.generateContentWithRetry({
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         generationConfig: {
           // Slightly higher temperature on retry so we don't get the same
@@ -251,7 +296,7 @@ Return a single JSON object (NOT an array) with this exact shape:
   async analyzeUrl(url: string, pageData: string): Promise<string> {
     const prompt = buildAnalyzePrompt(url, pageData);
 
-    const result = await this.model.generateContent({
+    const result = await this.generateContentWithRetry({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       generationConfig: { temperature: 0.1, maxOutputTokens: 4096 },
     });
