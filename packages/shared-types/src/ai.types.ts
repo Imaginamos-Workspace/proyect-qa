@@ -136,3 +136,84 @@ export interface AICompleteTestResponse {
   scan_url?: string;
   scan_elements?: { inputs: number; buttons: number; links: number; forms: number };
 }
+
+/**
+ * Structured snapshot of the page at the moment of failure. Far more useful
+ * per byte than raw HTML — the AI can read real attribute values without
+ * having to parse HTML or guess what's relevant.
+ */
+export interface HealDomSnapshot {
+  inputs: Array<{
+    name?: string;
+    id?: string;
+    type?: string;
+    placeholder?: string;
+    aria_label?: string;
+    data_testid?: string;
+    required?: boolean;
+    visible?: boolean;
+  }>;
+  buttons: Array<{
+    text?: string;
+    id?: string;
+    name?: string;
+    type?: string;
+    aria_label?: string;
+    data_testid?: string;
+    visible?: boolean;
+  }>;
+  links: Array<{ text?: string; href?: string; data_testid?: string }>;
+  forms: Array<{ action?: string; method?: string; id?: string }>;
+  /** Visible text content of [role="alert"], .error, [aria-live], etc. */
+  visible_messages: string[];
+  /** First 5 headings on the page (h1-h3). */
+  headings: string[];
+  /** Page title. */
+  title?: string;
+}
+
+/**
+ * Self-healing test loop — the user's machine ran the test, captured the DOM
+ * at the failure point, and is asking the AI to regenerate using the REAL
+ * DOM (not a static scan). This is more reliable than scan-based refine
+ * because the DOM is captured by the SAME Playwright engine that runs the
+ * test, so what the AI sees == what the test will see on retry.
+ */
+export interface AIHealIterateRequest {
+  /** Test case being healed (used to update DB if attempt succeeds). */
+  test_case_id: string;
+  /** Scoped HMAC token issued by /ai/heal-token. Required. */
+  heal_token: string;
+  /** The code that just failed. */
+  current_code: string;
+  /** Iteration number — backend uses this to cap retries. 1-based. */
+  iteration: number;
+  /** Truncated error message + stack from Playwright. */
+  error_message: string;
+  /** Selector or call that failed (e.g., "input[name='email']"). */
+  failing_selector?: string;
+  /** Truncated HTML of page.content() at the failure moment. ~30KB max. */
+  dom_snapshot: string;
+  /** Structured DOM (preferred). Backend uses this when present. */
+  structured_snapshot?: HealDomSnapshot;
+  /** Optional: full page URL at the moment of failure. */
+  failure_url?: string;
+  /** Selectors that already failed earlier in this heal session. */
+  prior_failed_selectors?: string[];
+}
+
+export interface AIHealIterateResponse {
+  /** New test code, validated by the TS compiler. */
+  healed_code: string;
+  /** Human-readable summary of what changed. */
+  changes_summary: string;
+  /** True if this is the last allowed iteration (no more retries). */
+  is_final_iteration: boolean;
+}
+
+/** Returned by /ai/heal-token. Token is scoped to one test_case_id. */
+export interface AIHealTokenResponse {
+  token: string;
+  expires_at: number;
+  test_case_id: string;
+}
