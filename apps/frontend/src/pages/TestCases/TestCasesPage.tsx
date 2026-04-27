@@ -11,6 +11,7 @@ import { useProject } from '@/hooks/use-projects';
 import { TestCaseEditor } from '@/components/test-editor/TestCaseEditor';
 import { AddTestCaseModal } from './AddTestCaseModal';
 import { RefineTestCaseModal } from './RefineTestCaseModal';
+import { HealTestModal } from './HealTestModal';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -26,6 +27,7 @@ import {
   X,
   Check,
   Sparkles,
+  Wand2,
 } from 'lucide-react';
 import type { TestType, TestPriority, TestCase } from '@qa/shared-types';
 
@@ -56,6 +58,7 @@ export function TestCasesPage() {
   const [editorTestCase, setEditorTestCase] = useState<TestCase | null>(null);
   const [addModalSuiteId, setAddModalSuiteId] = useState<string | null>(null);
   const [refineTestCase, setRefineTestCase] = useState<TestCase | null>(null);
+  const [healTestCase, setHealTestCase] = useState<TestCase | null>(null);
 
   const { data: project } = useProject(projectId!);
   const { data: testCases, isLoading: loadingCases } = useTestCases(projectId!, {
@@ -314,6 +317,15 @@ export function TestCasesPage() {
                                   variant="ghost"
                                   size="icon"
                                   className="h-8 w-8 text-muted-foreground hover:text-[#7c3aed]"
+                                  onClick={() => setHealTestCase(tc)}
+                                  title="Probar y auto-arreglar"
+                                >
+                                  <Wand2 className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-8 w-8 text-muted-foreground hover:text-[#7c3aed]"
                                   onClick={() => startEditTitle(tc)}
                                   title={t('common.edit')}
                                 >
@@ -459,6 +471,15 @@ export function TestCasesPage() {
           testCase={refineTestCase}
           projectBaseUrl={project?.base_url}
           onClose={() => setRefineTestCase(null)}
+        />
+      )}
+
+      {/* Heal Test Modal — runs the test locally and auto-fixes on failure */}
+      {healTestCase && (
+        <HealTestModal
+          testCase={healTestCase}
+          projectBaseUrl={project?.base_url}
+          onClose={() => setHealTestCase(null)}
         />
       )}
     </div>

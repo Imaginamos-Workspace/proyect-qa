@@ -1,4 +1,4 @@
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type {
   AIGenerateRequest,
@@ -7,6 +7,7 @@ import type {
   AIRefineResponse,
   AICompleteTestRequest,
   AICompleteTestResponse,
+  AIHealTokenResponse,
 } from '@qa/shared-types';
 
 export function useGenerateTests() {
@@ -39,5 +40,23 @@ export function useAnalyzeUrl() {
   return useMutation({
     mutationFn: (body: { url: string; page_data: string }) =>
       api.post<string>('/ai/analyze-url', body),
+  });
+}
+
+/**
+ * Fetch a scoped heal token for a test case. The token is valid for 1 hour
+ * and is required by /ai/heal-iterate (the public endpoint the bash script
+ * calls). Auto-refreshes every 50 minutes when the modal stays open.
+ */
+export function useHealToken(testCaseId: string | null) {
+  return useQuery<AIHealTokenResponse>({
+    queryKey: ['heal-token', testCaseId],
+    enabled: !!testCaseId,
+    staleTime: 50 * 60 * 1000, // refresh 10 min before expiry
+    refetchOnWindowFocus: false,
+    queryFn: () =>
+      api.post<AIHealTokenResponse>('/ai/heal-token', {
+        test_case_id: testCaseId,
+      }),
   });
 }
