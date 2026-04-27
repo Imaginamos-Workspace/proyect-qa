@@ -1,34 +1,13 @@
 {
-  "version": 2,
-  "builds": [
-    {
-      "src": "api/index.js",
-      "use": "@vercel/node",
-      "config": { "includeFiles": "dist/**" }
-    },
-    {
-      "src": "api/generate-stream.js",
-      "use": "@vercel/node",
-      "config": { "includeFiles": "dist/**" }
-    },
-    {
-      "src": "api/explore-stream.js",
-      "use": "@vercel/node",
-      "config": { "includeFiles": "dist/**" }
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/generate-stream",
-      "dest": "api/generate-stream.js"
-    },
-    {
-      "src": "/api/explore-stream",
-      "dest": "api/explore-stream.js"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "api/index.js"
-    }
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "api/index.js": { "includeFiles": "dist/**" },
+    "api/generate-stream.js": { "includeFiles": "dist/**" },
+    "api/explore-stream.js": { "includeFiles": "dist/**" }
+  },
+  "rewrites": [
+    { "source": "/api/generate-stream", "destination": "/api/generate-stream" },
+    { "source": "/api/explore-stream", "destination": "/api/explore-stream" },
+    { "source": "/(.*)", "destination": "/api/index" }
   ]
 }
