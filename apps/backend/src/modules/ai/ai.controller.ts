@@ -2,9 +2,11 @@ import { Controller, Post, Get, Patch, Body, Param, UseGuards } from '@nestjs/co
 import { AIService } from './ai.service';
 import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
+import { Public } from '../auth/decorators/public.decorator';
 import {
   AIRefineRequest,
   AICompleteTestRequest,
+  AIHealIterateRequest,
   CreateGenerationJobDto,
 } from '../../shared-types';
 
@@ -36,6 +38,33 @@ export class AIController {
   @Post('refine-test')
   async refineTest(@Body() request: AIRefineRequest) {
     return this.aiService.refineTest(request);
+  }
+
+  /**
+   * Issue a scoped, short-lived heal token for one test case. Required
+   * before the user can run the heal loop on their machine — the token
+   * is embedded in the bash command and validated by /ai/heal-iterate.
+   * Auth required (Supabase session via guard).
+   */
+  @Post('heal-token')
+  async issueHealToken(@Body() body: { test_case_id: string }) {
+    return this.aiService.issueHealToken(body?.test_case_id);
+  }
+
+  /**
+   * Self-heal iteration — called from the user's local machine via the heal
+   * loop CLI when a test fails. Receives the real DOM at the failure moment
+   * and returns regenerated code.
+   *
+   * PUBLIC at the auth-guard level (the bash script has no Supabase
+   * session), but the request body MUST carry a valid heal_token issued by
+   * /ai/heal-token for the same test_case_id. The service validates the
+   * HMAC before calling Gemini.
+   */
+  @Public()
+  @Post('heal-iterate')
+  async healIterate(@Body() request: AIHealIterateRequest) {
+    return this.aiService.healIterate(request);
   }
 
   @Post('analyze-url')

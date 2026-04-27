@@ -6,11 +6,13 @@ import {
   AIGenerateRequest,
   AIGeneratedTestCase,
   AICompleteTestRequest,
+  HealDomSnapshot,
 } from '../../../shared-types';
 import {
   buildTestGenerationPrompt,
   buildRefinePrompt,
   buildAnalyzePrompt,
+  buildHealPrompt,
 } from '../prompts/test-generation.prompt';
 import { validateAndFixTestCode } from '../utils/test-validator';
 
@@ -188,6 +190,41 @@ Return a single JSON object (NOT an array) with this exact shape:
     }
 
     return { ...parsed, playwright_code: validation.fixed! };
+  }
+
+  /**
+   * Heal a test that just failed at runtime. Receives the real DOM captured
+   * by Playwright at the failure moment and the error message; returns
+   * regenerated code that uses selectors confirmed to exist in that DOM.
+   */
+  async healTestCase(args: {
+    currentCode: string;
+    iteration: number;
+    maxIterations: number;
+    errorMessage: string;
+    failingSelector?: string;
+    domSnapshot: string;
+    structuredSnapshot?: HealDomSnapshot;
+    failureUrl?: string;
+    priorFailedSelectors?: string[];
+  }): Promise<string> {
+    const prompt = buildHealPrompt(args);
+
+    const result = await this.model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      // Lower temperature for heal — we want the AI to stick to the DOM,
+      // not be creative.
+      generationConfig: { temperature: 0.15, maxOutputTokens: 4096 },
+    });
+
+    const raw = result.response.text();
+    const validation = validateAndFixTestCode(raw);
+    if (!validation.valid) {
+      throw new Error(
+        `Healed test has syntax errors: ${validation.errors.join('; ')}`,
+      );
+    }
+    return validation.fixed!;
   }
 
   async analyzeUrl(url: string, pageData: string): Promise<string> {

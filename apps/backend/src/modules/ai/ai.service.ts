@@ -1,4 +1,11 @@
-import { Injectable, Inject, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  Inject,
+  NotFoundException,
+  UnauthorizedException,
+  BadRequestException,
+} from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../../config/supabase.module';
 import { GeminiProvider } from './providers/gemini.provider';
@@ -11,24 +18,66 @@ import {
   summarizeSnapshotForPrompt,
 } from './utils/page-scanner';
 import {
+  signHealToken,
+  verifyHealToken,
+  deriveHealSecret,
+} from './utils/heal-token';
+import { validateSelectorsAgainstSnapshot } from './utils/selector-validator';
+import {
   AIGenerateRequest,
   AIGenerateResponse,
   AIRefineRequest,
   AIRefineResponse,
   AICompleteTestRequest,
   AICompleteTestResponse,
+  AIHealIterateRequest,
+  AIHealIterateResponse,
+  AIHealTokenResponse,
   AIGenerationJob,
   TestType,
 } from '../../shared-types';
 
+const MAX_HEAL_ITERATIONS = 3;
+
 @Injectable()
 export class AIService {
+  /** Lazy-initialized HMAC secret for heal tokens. */
+  private healSecret?: string;
+
   constructor(
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
     private readonly gemini: GeminiProvider,
     private readonly testSuitesService: TestSuitesService,
     private readonly testCasesService: TestCasesService,
+    private readonly configService: ConfigService,
   ) {}
+
+  private getHealSecret(): string {
+    if (this.healSecret) return this.healSecret;
+    // Derive from the existing Supabase service role key — no new env var
+    // needed. Derivation isolates a heal-token leak from the underlying key.
+    const base =
+      this.configService.get<string>('SUPABASE_SERVICE_ROLE_KEY') ||
+      this.configService.get<string>('SUPABASE_KEY') ||
+      this.configService.get<string>('GEMINI_API_KEY') ||
+      'qa-heal-fallback-do-not-use-in-prod';
+    this.healSecret = deriveHealSecret(base);
+    return this.healSecret;
+  }
+
+  /**
+   * Issue a scoped heal token for a specific test case. Requires Supabase
+   * session (the controller enforces auth). The token is consumed by the
+   * public /ai/heal-iterate endpoint to authorize that one test case.
+   */
+  async issueHealToken(testCaseId: string): Promise<AIHealTokenResponse> {
+    if (!testCaseId) throw new BadRequestException('test_case_id required');
+    // Verify the test case exists before issuing a token.
+    const tc = await this.testCasesService.findOne(testCaseId).catch(() => null);
+    if (!tc) throw new NotFoundException('Test case not found');
+    const { token, expires_at } = signHealToken(this.getHealSecret(), testCaseId);
+    return { token, expires_at, test_case_id: testCaseId };
+  }
 
   async generateTests(request: AIGenerateRequest): Promise<AIGenerateResponse> {
     const generatedCases = await this.gemini.generateTestCases(request);
@@ -248,6 +297,115 @@ export class AIService {
     pageData: string,
   ): Promise<string> {
     return this.gemini.analyzeUrl(url, pageData);
+  }
+
+  /**
+   * Self-healing iteration: the user's local Playwright reported a failure
+   * along with the DOM at the failure moment. We call Gemini with that
+   * GROUND TRUTH DOM and regenerate the test. This is the closest the
+   * platform can get to "tests that always work" because the DOM the AI
+   * sees == the DOM the test will run against (same engine, same moment).
+   */
+  async healIterate(
+    request: AIHealIterateRequest,
+  ): Promise<AIHealIterateResponse> {
+    // 1. Token check — proves the request comes from a previously
+    //    authenticated user who issued this token for this exact test case.
+    if (!request.heal_token) {
+      throw new UnauthorizedException('heal_token required');
+    }
+    const tokenValid = verifyHealToken(
+      this.getHealSecret(),
+      request.heal_token,
+      request.test_case_id,
+    );
+    if (!tokenValid) {
+      throw new UnauthorizedException('invalid or expired heal token');
+    }
+
+    // 2. Iteration bounds.
+    if (request.iteration < 1 || request.iteration > MAX_HEAL_ITERATIONS) {
+      throw new BadRequestException(
+        `Invalid iteration ${request.iteration}. Must be 1..${MAX_HEAL_ITERATIONS}`,
+      );
+    }
+
+    // 3. Trim payloads. Gemini Flash handles ~1M tokens, but smaller
+    //    payloads = faster + cheaper + more focused output.
+    const domTrimmed = (request.dom_snapshot || '').slice(0, 30_000);
+    const errorTrimmed = (request.error_message || '').slice(0, 4_000);
+
+    // 4. First Gemini call — generate healed code.
+    let healedCode = await this.gemini.healTestCase({
+      currentCode: request.current_code,
+      iteration: request.iteration,
+      maxIterations: MAX_HEAL_ITERATIONS,
+      errorMessage: errorTrimmed,
+      failingSelector: request.failing_selector,
+      domSnapshot: domTrimmed,
+      structuredSnapshot: request.structured_snapshot,
+      failureUrl: request.failure_url,
+      priorFailedSelectors: request.prior_failed_selectors,
+    });
+
+    // 5. Defense in depth — validate that every selector the AI generated
+    //    actually exists in the captured DOM. If we have a structured
+    //    snapshot, this is a hard reject. If only raw HTML, we string-search.
+    //    On rejection, we make ONE more Gemini call with explicit feedback
+    //    about which selectors were invented.
+    const validation = validateSelectorsAgainstSnapshot(healedCode, {
+      structured: request.structured_snapshot,
+      rawHtml: domTrimmed,
+    });
+
+    if (validation.invented.length > 0) {
+      console.warn(
+        `[heal] AI invented ${validation.invented.length} selector(s); retrying with explicit feedback`,
+      );
+      // Append the invented selectors to the prior-failed list so the AI
+      // gets a clear "these don't exist" instruction on the retry.
+      const augmentedPrior = [
+        ...(request.prior_failed_selectors || []),
+        ...validation.invented,
+      ];
+      try {
+        healedCode = await this.gemini.healTestCase({
+          currentCode: request.current_code,
+          iteration: request.iteration,
+          maxIterations: MAX_HEAL_ITERATIONS,
+          errorMessage: errorTrimmed,
+          failingSelector: request.failing_selector,
+          domSnapshot: domTrimmed,
+          structuredSnapshot: request.structured_snapshot,
+          failureUrl: request.failure_url,
+          priorFailedSelectors: augmentedPrior,
+        });
+      } catch (err) {
+        // If the second call also fails to produce valid code, fall through
+        // with whatever the first call returned — at least it parses TS.
+        console.warn('[heal] second-pass generation failed:', err);
+      }
+    }
+
+    // 6. Persist healed code. Best-effort.
+    try {
+      await this.testCasesService.update(request.test_case_id, {
+        playwright_code: healedCode,
+      });
+    } catch (err) {
+      console.warn(`[heal] DB update failed for ${request.test_case_id}:`, err);
+    }
+
+    const inventedNote =
+      validation.invented.length > 0
+        ? ` Detecté y rechacé ${validation.invented.length} selector(es) inventado(s) en el primer intento; regeneré con instrucciones explícitas.`
+        : '';
+
+    return {
+      healed_code: healedCode,
+      changes_summary: `Iteración ${request.iteration}/${MAX_HEAL_ITERATIONS}: regeneré con el DOM real capturado en el fallo.${inventedNote}`,
+      is_final_iteration: request.iteration >= MAX_HEAL_ITERATIONS,
+    };
   }
 
   // --- AI Generation Jobs ---

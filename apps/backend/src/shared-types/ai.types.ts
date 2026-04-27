@@ -111,3 +111,77 @@ export interface AICompleteTestResponse {
   scan_url?: string;
   scan_elements?: { inputs: number; buttons: number; links: number; forms: number };
 }
+
+/**
+ * Structured snapshot of the page at the moment of failure. More useful per
+ * byte than raw HTML because the AI can directly read attribute values
+ * without parsing HTML.
+ */
+export interface HealDomSnapshot {
+  inputs: Array<{
+    name?: string;
+    id?: string;
+    type?: string;
+    placeholder?: string;
+    aria_label?: string;
+    data_testid?: string;
+    required?: boolean;
+    visible?: boolean;
+  }>;
+  buttons: Array<{
+    text?: string;
+    id?: string;
+    name?: string;
+    type?: string;
+    aria_label?: string;
+    data_testid?: string;
+    visible?: boolean;
+  }>;
+  links: Array<{ text?: string; href?: string; data_testid?: string }>;
+  forms: Array<{ action?: string; method?: string; id?: string }>;
+  /** Visible text content of [role="alert"], .error, [aria-live], etc. */
+  visible_messages: string[];
+  /** First 5 headings on the page (h1-h3). */
+  headings: string[];
+  /** Page title. */
+  title?: string;
+}
+
+/**
+ * Self-healing test loop — the user's machine ran the test, captured the DOM
+ * at the failure point, and is asking the AI to regenerate using the REAL
+ * DOM (not a static scan).
+ */
+export interface AIHealIterateRequest {
+  test_case_id: string;
+  /** Token issued by /ai/heal-token, scoped to this test_case_id. Required. */
+  heal_token: string;
+  current_code: string;
+  iteration: number;
+  error_message: string;
+  failing_selector?: string;
+  /**
+   * Raw HTML of the page at the failure moment (truncated).
+   * Used as fallback if structured snapshot is missing.
+   */
+  dom_snapshot: string;
+  /** Structured DOM extracted by the heal fixture. Preferred over dom_snapshot. */
+  structured_snapshot?: HealDomSnapshot;
+  failure_url?: string;
+  /** Selectors that already failed in previous iterations — AI must avoid them. */
+  prior_failed_selectors?: string[];
+}
+
+export interface AIHealIterateResponse {
+  healed_code: string;
+  changes_summary: string;
+  is_final_iteration: boolean;
+}
+
+/** Issued to authenticated users; consumed by the public heal endpoint. */
+export interface AIHealTokenResponse {
+  token: string;
+  expires_at: number;
+  /** Same value as request.test_case_id, echoed for convenience. */
+  test_case_id: string;
+}

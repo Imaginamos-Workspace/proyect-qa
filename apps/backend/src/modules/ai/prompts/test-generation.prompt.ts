@@ -207,6 +207,195 @@ SYNTAX RULES (STRICT — your output is parsed with the TypeScript compiler and 
 Return ONLY the refined TypeScript test code, no explanations. Keep the @playwright/test import and test structure.`;
 }
 
+/**
+ * Self-healing prompt — used when a test that the AI generated FAILED at
+ * runtime. The user's local Playwright captured the actual DOM at the
+ * failure point and the error message; we feed that GROUND TRUTH back to
+ * the AI to regenerate. Because the DOM is captured by the same engine that
+ * runs the test, this prompt is far more reliable than scan-based refine.
+ */
+export function buildHealPrompt(args: {
+  currentCode: string;
+  iteration: number;
+  maxIterations: number;
+  errorMessage: string;
+  failingSelector?: string;
+  domSnapshot: string;
+  structuredSnapshot?: import('../../../shared-types').HealDomSnapshot;
+  failureUrl?: string;
+  priorFailedSelectors?: string[];
+}): string {
+  const {
+    currentCode,
+    iteration,
+    maxIterations,
+    errorMessage,
+    failingSelector,
+    domSnapshot,
+    structuredSnapshot,
+    failureUrl,
+    priorFailedSelectors,
+  } = args;
+
+  const failingLine = failingSelector
+    ? `\nFAILING SELECTOR / CALL:\n  ${failingSelector}\n`
+    : '';
+  const urlLine = failureUrl ? `\nURL AT FAILURE: ${failureUrl}\n` : '';
+
+  // Prefer structured snapshot — it's compact, easy to read, and the AI
+  // can quote attribute values directly.
+  const groundTruthSection = structuredSnapshot
+    ? formatStructuredSnapshot(structuredSnapshot)
+    : `Raw HTML (truncated):\n\n${domSnapshot}`;
+
+  const priorBlock =
+    priorFailedSelectors && priorFailedSelectors.length > 0
+      ? `\n\n========================================\nSELECTORS THAT ALREADY FAILED (DO NOT REUSE)\n========================================\n${priorFailedSelectors.map((s) => `  - ${s}`).join('\n')}\n`
+      : '';
+
+  return `You are a Playwright test expert. A test you wrote previously FAILED at runtime in a real browser. Your job is to fix it using the REAL DOM that was captured at the failure moment.
+
+This is heal iteration ${iteration} of ${maxIterations} maximum.
+
+========================================
+PREVIOUS TEST CODE (the one that failed)
+========================================
+\`\`\`typescript
+${currentCode}
+\`\`\`
+
+========================================
+RUNTIME ERROR FROM PLAYWRIGHT
+========================================
+${errorMessage}
+${failingLine}${urlLine}
+========================================
+ACTUAL DOM AT FAILURE — GROUND TRUTH
+========================================
+This was captured by Playwright at the EXACT moment of the failure, on
+the same engine that will re-run the test. Every attribute and value
+below is REAL and PRESENT on the page right now. Quote values verbatim.
+
+${groundTruthSection}
+========================================${priorBlock}
+
+CRITICAL HEAL RULES:
+
+1. The selector that failed (\`${failingSelector || 'see error above'}\`) does NOT exist in the DOM above. You MUST replace it with a selector that DOES exist in the DOM above.
+
+2. SELECTOR PRIORITY when picking a replacement (use the FIRST that matches):
+   a. data-testid="X"  → page.getByTestId('X')
+   b. name="X" on input/textarea/select → page.locator('input[name="X"]') (or textarea/select)
+   c. id="X" → page.locator('#X')
+   d. placeholder="X" on input → page.getByPlaceholder('X') with EXACT text
+   e. button text → page.getByRole('button', { name: 'EXACT TEXT' })
+   f. <label> text linked to input → page.getByLabel('EXACT TEXT')
+   g. role + accessible name → page.getByRole('role', { name: 'EXACT TEXT' })
+
+3. PROHIBITED:
+   - Inventing any attribute that does not appear in the DOM above
+   - Using CSS classes (.foo) unless they appear with that exact name in the DOM
+   - Guessing placeholder/label text — copy verbatim from DOM
+   - Absolute URLs in page.goto — use RELATIVE paths only ('/login' not 'https://...')
+   - Absolute URL strings in toHaveURL — use regex like /\\/dashboard\\/?$/
+
+4. POST-SUBMIT ERROR MESSAGES (validation, login errors): these may not be in the captured DOM if the failure happened BEFORE the submit. Use a flexible text regex:
+     page.locator('text=/correo|email|inv[aá]lid|invalid|incorrect|wrong/i').first()
+
+5. KEEP everything that was working — only change what the error indicates is broken. Do not rewrite the whole test.
+
+6. SYNTAX RULES (parsed by TS compiler — invalid output is REJECTED):
+   - Balance every quote, backtick, paren, brace, bracket
+   - Regex literals must be valid — never put characters after closing /
+   - No markdown fences, no triple-backtick blocks
+   - No export statements; @playwright/test is the only allowed import
+   - Must contain at least one test(...) call
+
+OUTPUT: Return ONLY the healed TypeScript code. No explanations, no JSON wrapper, no markdown — just raw .ts code starting with "import { test, expect } from '@playwright/test';".`;
+}
+
+/**
+ * Format the structured DOM snapshot as a compact, AI-readable section.
+ * Inputs/buttons/links each get one line per element with all real
+ * attributes, so the AI can pick the best selector at a glance.
+ */
+function formatStructuredSnapshot(
+  s: import('../../../shared-types').HealDomSnapshot,
+): string {
+  const lines: string[] = [];
+  if (s.title) lines.push(`PAGE TITLE: ${s.title}`);
+  if (s.headings && s.headings.length) {
+    lines.push(`HEADINGS: ${s.headings.slice(0, 5).join(' | ')}`);
+  }
+
+  if (s.inputs && s.inputs.length) {
+    lines.push('');
+    lines.push(`INPUTS (${s.inputs.length}):`);
+    for (const i of s.inputs) {
+      const attrs: string[] = [];
+      if (i.data_testid) attrs.push(`data-testid="${i.data_testid}"`);
+      if (i.name) attrs.push(`name="${i.name}"`);
+      if (i.id) attrs.push(`id="${i.id}"`);
+      if (i.type) attrs.push(`type="${i.type}"`);
+      if (i.placeholder) attrs.push(`placeholder="${i.placeholder}"`);
+      if (i.aria_label) attrs.push(`aria-label="${i.aria_label}"`);
+      if (i.required) attrs.push('required');
+      if (i.visible === false) attrs.push('HIDDEN');
+      lines.push(`  - <input ${attrs.join(' ')}>`);
+    }
+  }
+
+  if (s.buttons && s.buttons.length) {
+    lines.push('');
+    lines.push(`BUTTONS (${s.buttons.length}):`);
+    for (const b of s.buttons) {
+      const attrs: string[] = [];
+      if (b.data_testid) attrs.push(`data-testid="${b.data_testid}"`);
+      if (b.id) attrs.push(`id="${b.id}"`);
+      if (b.name) attrs.push(`name="${b.name}"`);
+      if (b.type) attrs.push(`type="${b.type}"`);
+      if (b.aria_label) attrs.push(`aria-label="${b.aria_label}"`);
+      if (b.visible === false) attrs.push('HIDDEN');
+      const txt = b.text ? ` text="${b.text}"` : '';
+      lines.push(`  - <button ${attrs.join(' ')}>${txt}`);
+    }
+  }
+
+  if (s.forms && s.forms.length) {
+    lines.push('');
+    lines.push(`FORMS (${s.forms.length}):`);
+    for (const f of s.forms) {
+      const attrs: string[] = [];
+      if (f.id) attrs.push(`id="${f.id}"`);
+      if (f.action) attrs.push(`action="${f.action}"`);
+      if (f.method) attrs.push(`method="${f.method}"`);
+      lines.push(`  - <form ${attrs.join(' ')}>`);
+    }
+  }
+
+  if (s.links && s.links.length) {
+    lines.push('');
+    lines.push(`LINKS (first 20 of ${s.links.length}):`);
+    for (const l of s.links.slice(0, 20)) {
+      const attrs: string[] = [];
+      if (l.data_testid) attrs.push(`data-testid="${l.data_testid}"`);
+      if (l.href) attrs.push(`href="${l.href}"`);
+      const txt = l.text ? ` text="${l.text}"` : '';
+      lines.push(`  - <a ${attrs.join(' ')}>${txt}`);
+    }
+  }
+
+  if (s.visible_messages && s.visible_messages.length) {
+    lines.push('');
+    lines.push('VISIBLE MESSAGES (alerts/errors/aria-live):');
+    for (const m of s.visible_messages.slice(0, 10)) {
+      lines.push(`  - "${m}"`);
+    }
+  }
+
+  return lines.join('\n');
+}
+
 export function buildAnalyzePrompt(url: string, pageData: string): string {
   return `Analyze this web page and provide a structured summary for QA test generation.
 
