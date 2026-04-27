@@ -208,23 +208,44 @@ Return a single JSON object (NOT an array) with this exact shape:
     failureUrl?: string;
     priorFailedSelectors?: string[];
   }): Promise<string> {
-    const prompt = buildHealPrompt(args);
+    const basePrompt = buildHealPrompt(args);
 
-    const result = await this.model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      // Lower temperature for heal — we want the AI to stick to the DOM,
-      // not be creative.
-      generationConfig: { temperature: 0.15, maxOutputTokens: 4096 },
-    });
+    // Retry loop for syntax errors: Gemini sometimes emits invalid regex
+    // (unterminated literals, escaped slashes wrong, etc.). When the TS
+    // compiler validator rejects, ask again with explicit feedback citing
+    // the exact error message so the model can self-correct.
+    const MAX_SYNTAX_RETRIES = 2;
+    let lastErrors: string[] = [];
 
-    const raw = result.response.text();
-    const validation = validateAndFixTestCode(raw);
-    if (!validation.valid) {
-      throw new Error(
-        `Healed test has syntax errors: ${validation.errors.join('; ')}`,
+    for (let attempt = 0; attempt <= MAX_SYNTAX_RETRIES; attempt++) {
+      const prompt =
+        attempt === 0
+          ? basePrompt
+          : `${basePrompt}\n\n========================================\nPREVIOUS ATTEMPT WAS SYNTACTICALLY INVALID — DO NOT REPEAT\n========================================\nThe TypeScript compiler rejected your last output with these errors:\n${lastErrors.map((e) => `  - ${e}`).join('\n')}\n\nCheck especially:\n- Regex literals: never put characters after the closing /. e.g. WRONG: /foo/.*/  CORRECT: /foo.*/\n- Escape forward slashes inside regex patterns: WRONG /path/to/  CORRECT /path\\/to/\n- Balance every quote, backtick, paren, brace, bracket\n- No markdown fences\nReturn ONLY the corrected TypeScript code.`;
+
+      const result = await this.model.generateContent({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: {
+          // Slightly higher temperature on retry so we don't get the same
+          // bad output. Initial pass stays low (0.15) for fidelity to DOM.
+          temperature: attempt === 0 ? 0.15 : 0.25,
+          maxOutputTokens: 4096,
+        },
+      });
+
+      const raw = result.response.text();
+      const validation = validateAndFixTestCode(raw);
+      if (validation.valid) return validation.fixed!;
+
+      lastErrors = validation.errors;
+      console.warn(
+        `[heal] syntax retry ${attempt + 1}/${MAX_SYNTAX_RETRIES + 1}: ${lastErrors.join('; ')}`,
       );
     }
-    return validation.fixed!;
+
+    throw new Error(
+      `Healed test still has syntax errors after ${MAX_SYNTAX_RETRIES + 1} attempts: ${lastErrors.join('; ')}`,
+    );
   }
 
   async analyzeUrl(url: string, pageData: string): Promise<string> {
