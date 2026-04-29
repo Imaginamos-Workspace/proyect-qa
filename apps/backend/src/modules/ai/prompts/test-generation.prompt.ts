@@ -38,6 +38,29 @@ REQUIREMENTS:
 - Include descriptive test names and comments
 - Generate 3-5 tests per test type requested
 
+SCOPE RULES — STRICTLY FOLLOW (most common reason tests fail at runtime):
+
+1. NEVER invent credentials, user IDs, product names, slugs, prices, or
+   any data the description does not provide. If a test would need
+   real authenticated data you don't have (real email/password, real
+   admin user, real product in cart), DO NOT generate it. Skip that
+   scenario entirely. Better to ship 3 working tests than 5 with 2
+   that fail because they hardcode "test@example.com" / "password123".
+
+2. Each test verifies ONE concrete thing. Do NOT chain a "negative
+   path then happy path" inside the same test() — split into separate
+   test() calls, and only emit the happy-path test if you have real
+   credentials/data for it.
+
+3. If the description says "validate X", you verify X — do NOT also
+   verify "the happy path", "the redirect", "the dashboard", or any
+   other thing not explicitly requested. Scope creep = test failure.
+
+4. Login flows: only generate a "successful login" test if the user
+   provided concrete credentials in additional_context. Otherwise
+   ONLY generate negative-path login tests (invalid email format,
+   empty fields, wrong password message).
+
 SYNTAX RULES (MUST FOLLOW — the output is parsed with the TypeScript compiler and invalid tests are DROPPED):
 - Regex literals: ONLY valid JavaScript regex. NEVER put characters after the closing /. WRONG: /.*foo/.*/  CORRECT: /.*foo.*/
 - Regex literals: escape forward slashes inside patterns. WRONG: /path/to/ CORRECT: /path\\/to/
@@ -195,6 +218,17 @@ ${currentCode}
 FEEDBACK:
 ${feedback}
 ${domSection}
+SCOPE RULES — apply BEFORE you start refining:
+- The user's feedback is the ONLY source of new behavior. Do NOT add
+  steps, assertions, or scenarios the feedback does not explicitly
+  ask for. If the existing test was overscoped (e.g. has a happy-path
+  step that uses fake credentials and fails), you MAY remove the
+  invented step — but never add new ones the user didn't request.
+- NEVER hardcode credentials, IDs, prices, or other data not present
+  in the existing test or the feedback. If the test references
+  test@example.com / password123 / fake data, that data is suspect
+  and must NOT be assumed to be valid on the real site.
+
 SYNTAX RULES (STRICT — your output is parsed with the TypeScript compiler and REJECTED if invalid):
 - Regex literals must be valid JavaScript. NEVER put characters after the closing /. WRONG: /.*foo/.*/  CORRECT: /.*foo.*/
 - Escape forward slashes inside regex patterns.
@@ -303,6 +337,14 @@ CRITICAL HEAL RULES:
      page.locator('text=/correo|email|inv[aá]lid|invalid|incorrect|wrong/i').first()
 
 5. KEEP everything that was working — only change what the error indicates is broken. Do not rewrite the whole test.
+
+5a. SCOPE GUARD — if the existing test contains a step that uses
+    obviously hardcoded fake credentials/data (test@example.com,
+    password123, "test", etc.) AND that step is what's failing, the
+    correct heal is to REMOVE that step entirely. Do NOT try to make
+    it pass by guessing more credentials — those are out of reach
+    without real data the user did not provide. Keep the parts that
+    DO work (e.g. the negative-path validation), drop the rest.
 
 6. SYNTAX RULES (parsed by TS compiler — invalid output is REJECTED):
    - Balance every quote, backtick, paren, brace, bracket

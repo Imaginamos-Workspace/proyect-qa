@@ -189,6 +189,31 @@ USER REQUEST:
 ${request.title ? `- Suggested title: ${request.title}` : ''}
 ${request.base_url ? `- Base URL: ${request.base_url}` : ''}
 ${domSection}
+SCOPE RULES — STRICTLY FOLLOW THESE (most common reason tests fail):
+
+1. Verify ONLY what the description explicitly asks for. Do NOT add
+   additional verification steps the user did not request. If the
+   description says "validate that an invalid email shows an error",
+   you verify ONLY that — do NOT also try to log in successfully, do
+   NOT verify a redirect, do NOT verify the dashboard, do NOT verify
+   anything not in the description.
+
+2. NEVER invent credentials, IDs, slugs, product names, prices, or any
+   other data the user did not provide. If the test requires real data
+   you don't have, the test is OUT OF SCOPE — describe ONLY the part
+   you CAN verify with the data provided.
+
+3. NEVER add a "happy path" step alongside a "negative path". If the
+   user asked for negative validation (invalid input → error message),
+   stop there. Do NOT also test the positive flow.
+
+4. Total flow length: prefer 3-6 actions. Tests longer than that almost
+   always include scope creep that wasn't requested.
+
+5. test.step() blocks must each map to something explicitly in the
+   description. If you can't tie a step back to a phrase in the user's
+   request, delete it.
+
 SYNTAX RULES (MUST FOLLOW — parsed by TypeScript compiler; invalid tests are DROPPED):
 - Regex literals: ONLY valid JavaScript regex. NEVER put characters after the closing /. WRONG: /.*foo/.*/  CORRECT: /.*foo.*/
 - Escape forward slashes inside regex patterns. WRONG: /path/to/ CORRECT: /path\\/to/
