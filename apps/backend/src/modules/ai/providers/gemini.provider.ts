@@ -19,14 +19,18 @@ import { validateAndFixTestCode } from '../utils/test-validator';
 @Injectable()
 export class GeminiProvider implements AIProvider {
   private readonly model;
+  private readonly fallbackModel;
 
   constructor(private readonly configService: ConfigService) {
     const apiKey = this.configService.getOrThrow('GEMINI_API_KEY');
     const genAI = new GoogleGenerativeAI(apiKey);
-    // gemini-2.5-flash — full flash model, much better code quality than
-    // flash-lite and still on the free tier. Upgrade path: gemini-2.5-pro
-    // (lower quota) or Claude Haiku via Anthropic API (paid, best quality).
+    // Primary: gemini-2.5-flash — full flash model, much better code quality
+    // than flash-lite and still on the free tier.
     this.model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+    // Fallback: gemini-2.5-pro — separate quota pool, used when -flash is
+    // overloaded (503 spikes during peak hours). Slower + more expensive but
+    // capacity is independent. Auto-engaged after retries on -flash exhaust.
+    this.fallbackModel = genAI.getGenerativeModel({ model: 'gemini-2.5-pro' });
   }
 
   /**
@@ -42,11 +46,14 @@ export class GeminiProvider implements AIProvider {
   private async generateContentWithRetry(
     request: Parameters<typeof this.model.generateContent>[0],
   ): Promise<Awaited<ReturnType<typeof this.model.generateContent>>> {
-    // 5 attempts with 1s, 2s, 4s, 8s = up to ~15s total wait before failing.
-    // Gemini Flash 503s during peak hours are real and can last >10s.
-    const MAX_ATTEMPTS = 5;
+    // Primary: gemini-2.5-flash, 4 attempts with 1s, 2s, 4s, 8s waits.
+    // If still 503/429 after that, fallback to gemini-2.5-pro (separate
+    // quota pool — survives when -flash is hammered at peak hours).
+    const PRIMARY_ATTEMPTS = 4;
+    const FALLBACK_ATTEMPTS = 2;
     let lastErr: unknown;
-    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+
+    for (let attempt = 1; attempt <= PRIMARY_ATTEMPTS; attempt++) {
       try {
         return await this.model.generateContent(request);
       } catch (err) {
@@ -54,21 +61,51 @@ export class GeminiProvider implements AIProvider {
         const status = (err as { status?: number })?.status;
         const isRetryable =
           status === 503 || status === 429 || status === 500 || status === 502;
-        if (!isRetryable || attempt === MAX_ATTEMPTS) break;
-        const delayMs = 1000 * Math.pow(2, attempt - 1); // 1s, 2s, 4s, 8s
+        if (!isRetryable || attempt === PRIMARY_ATTEMPTS) break;
+        const delayMs = 1000 * Math.pow(2, attempt - 1);
         console.warn(
-          `[gemini] ${status} on attempt ${attempt}/${MAX_ATTEMPTS}, retrying in ${delayMs}ms`,
+          `[gemini-flash] ${status} on attempt ${attempt}/${PRIMARY_ATTEMPTS}, retrying in ${delayMs}ms`,
         );
         await new Promise((r) => setTimeout(r, delayMs));
       }
     }
-    const status = (lastErr as { status?: number })?.status;
-    if (status === 503) {
+
+    // -flash exhausted. Try -pro (separate quota).
+    const lastStatus = (lastErr as { status?: number })?.status;
+    const shouldFallback =
+      lastStatus === 503 || lastStatus === 429 || lastStatus === 502;
+    if (shouldFallback) {
+      console.warn(
+        `[gemini] -flash exhausted (last ${lastStatus}), falling back to -pro`,
+      );
+      for (let attempt = 1; attempt <= FALLBACK_ATTEMPTS; attempt++) {
+        try {
+          return await this.fallbackModel.generateContent(request);
+        } catch (err) {
+          lastErr = err;
+          const status = (err as { status?: number })?.status;
+          const isRetryable =
+            status === 503 ||
+            status === 429 ||
+            status === 500 ||
+            status === 502;
+          if (!isRetryable || attempt === FALLBACK_ATTEMPTS) break;
+          const delayMs = 2000 * attempt;
+          console.warn(
+            `[gemini-pro] ${status} on attempt ${attempt}/${FALLBACK_ATTEMPTS}, retrying in ${delayMs}ms`,
+          );
+          await new Promise((r) => setTimeout(r, delayMs));
+        }
+      }
+    }
+
+    const finalStatus = (lastErr as { status?: number })?.status;
+    if (finalStatus === 503) {
       throw new Error(
-        'Gemini está sobrecargado en este momento (503). Intenta de nuevo en 1-2 minutos.',
+        'Gemini está sobrecargado en este momento (503) tanto en -flash como en -pro. Intenta de nuevo en 5-10 minutos.',
       );
     }
-    if (status === 429) {
+    if (finalStatus === 429) {
       throw new Error(
         'Cuota de Gemini agotada (429). Revisa los límites del API key.',
       );
