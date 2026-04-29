@@ -185,3 +185,47 @@ export interface AIHealTokenResponse {
   /** Same value as request.test_case_id, echoed for convenience. */
   test_case_id: string;
 }
+
+// ─── Test Suggestions ─────────────────────────────────────────────────
+
+export type AISuggestionStatus = 'pending' | 'converted' | 'dismissed';
+
+export interface AISuggestion {
+  id: string;
+  project_id: string;
+  section: string;
+  scan_url: string;
+  title: string;
+  description: string;
+  what_to_test: string;
+  how_to_test: string;
+  test_type: TestType;
+  priority: TestPriority;
+  status: AISuggestionStatus;
+  dismissed_at?: string | null;
+  converted_test_case_id?: string | null;
+  ai_metadata?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AISuggestExploreRequest {
+  project_id: string;
+  reset_pending?: boolean;
+}
+
+export interface AISuggestExploreResponse {
+  suggestions: AISuggestion[];
+  sections: string[];
+  skipped_existing: number;
+  failed_sections: string[];
+}
+
+export interface AIConvertSuggestionResponse {
+  test_case_id: string;
+  test_case: {
+    id: string;
+    title: string;
+    description?: string;
+  };
+}

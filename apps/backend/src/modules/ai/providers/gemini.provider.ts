@@ -383,6 +383,28 @@ Return a single JSON object (NOT an array) with this exact shape:
     );
   }
 
+  /**
+   * Low-level helper for callers that need full control over the prompt
+   * (e.g. site exploration / suggestions). Skips the test-validator since
+   * the response is JSON metadata, not Playwright code.
+   */
+  async generateRaw(args: {
+    prompt: string;
+    temperature?: number;
+    maxOutputTokens?: number;
+    responseMimeType?: 'application/json' | 'text/plain';
+  }): Promise<string> {
+    const result = await this.generateContentWithRetry({
+      contents: [{ role: 'user', parts: [{ text: args.prompt }] }],
+      generationConfig: {
+        temperature: args.temperature ?? 0.3,
+        maxOutputTokens: args.maxOutputTokens ?? 4096,
+        responseMimeType: args.responseMimeType,
+      },
+    });
+    return result.response.text();
+  }
+
   async analyzeUrl(url: string, pageData: string): Promise<string> {
     const prompt = buildAnalyzePrompt(url, pageData);
 

@@ -449,6 +449,93 @@ function formatStructuredSnapshot(
   return lines.join('\n');
 }
 
+/**
+ * Site exploration prompt — used by /ai/suggest-explore. The platform
+ * scans multiple pages of the configured site and feeds compact DOM
+ * summaries to Gemini, which proposes a structured list of test
+ * scenarios grouped by detected section. The user reviews them, then
+ * picks which ones to convert into real test cases.
+ *
+ * This is NOT for generating final Playwright code — only for naming
+ * what's testable. The conversion step calls completeSingleTest with
+ * the chosen suggestion's metadata to produce the actual code.
+ */
+export function buildSuggestExplorationPrompt(args: {
+  baseUrl: string;
+  pages: Array<{
+    section: string;
+    url: string;
+    snapshot: string;
+  }>;
+  existingTestTitles: string[];
+}): string {
+  const pagesBlock = args.pages
+    .map(
+      (p, i) => `### PAGE ${i + 1} — section guess: "${p.section}"
+URL: ${p.url}
+
+Live DOM summary (real attributes, copy them verbatim if you reference them):
+${p.snapshot}
+---`,
+    )
+    .join('\n\n');
+
+  const existingBlock =
+    args.existingTestTitles.length > 0
+      ? `\n\n========================================\nALREADY-EXISTING TEST CASE TITLES (DO NOT PROPOSE OVERLAPPING SCENARIOS)\n========================================\n${args.existingTestTitles.map((t) => `  - "${t}"`).join('\n')}\n\nIf a scenario you'd otherwise propose is clearly already covered by one of these titles, SKIP it.`
+      : '';
+
+  return `You are an expert QA architect doing exploratory analysis on a web application. The platform has scanned several pages. Your job: propose a CURATED LIST of test scenarios the user could meaningfully run, grouped by site section.
+
+These are SUGGESTIONS — not final tests. The user will pick which ones to convert into real Playwright code later. Be concrete, actionable, and avoid scope creep.
+
+BASE URL: ${args.baseUrl}
+
+${pagesBlock}${existingBlock}
+
+YOUR TASK:
+
+1. For each section the user could meaningfully test, propose 1-4 scenarios.
+2. Each scenario must be GROUNDED in the actual elements you saw in the snapshot. NEVER invent forms, buttons, or features that don't appear in any page snapshot above.
+3. Skip scenarios that require credentials, payment, or other data you cannot have ("login successfully" without real users, "complete checkout" without real card, etc.). Stick to negative-path / validation / navigation / visual scenarios that don't need authenticated state.
+4. Skip scenarios overlapping with the existing test case titles listed above.
+5. Use plain Spanish for the user-facing fields (title, description, what_to_test, how_to_test). Make them readable for a QA reviewer.
+
+OUTPUT FORMAT (strict JSON, no markdown fences, no explanations):
+
+{
+  "sections": [
+    {
+      "name": "Login",                                      // section label, capitalize
+      "scan_url": "/login",                                 // path on the base URL
+      "suggestions": [
+        {
+          "title": "Validar formato de email en login",     // ≤60 chars, action-oriented
+          "description": "Verificar que un email mal formado muestra mensaje de error",
+          "what_to_test": "El input de email rechaza valores sin @ o sin dominio",
+          "how_to_test": "Llenar el input con 'foo' y hacer submit; esperar que aparezca un mensaje del navegador o del servidor indicando email inválido",
+          "test_type": "e2e",                               // one of: e2e|regression|visual|accessibility|performance|api|cross_browser|responsive
+          "priority": "high",                               // low|medium|high|critical
+          "ai_metadata": {                                  // free-form hints for the conversion step
+            "key_elements": ["input[name=log]", "button text 'Acceder'"],
+            "page_observations": "form posts to /wp-login.php"
+          }
+        }
+      ]
+    }
+  ]
+}
+
+GUIDELINES PER SECTION:
+
+- Common section labels to use: "Login", "Registro", "Recuperar contraseña", "Productos", "Detalle de producto", "Carrito", "Checkout", "Búsqueda", "Filtros", "Navegación", "Footer", "Contacto", "Perfil", "Dashboard", "Página de inicio", "Accesibilidad", etc. Use what fits the actual page.
+- Prioritize HIGH-VALUE scenarios: form validations, navigation links work, no broken images, search returns results, filters update state, footer links go somewhere, cart-empty state is shown, etc.
+- AVOID: anything requiring real auth, real payment, server state mutations you can't roll back.
+- Each suggestion's how_to_test should be 1-3 sentences max — concrete enough that a Playwright test could be written from it without further clarification.
+
+Return ONLY the JSON object. No prose before or after.`;
+}
+
 export function buildAnalyzePrompt(url: string, pageData: string): string {
   return `Analyze this web page and provide a structured summary for QA test generation.
 
