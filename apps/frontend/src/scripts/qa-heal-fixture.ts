@@ -39,6 +39,15 @@ export const test = base.extend({
     try {
       if (!fs.existsSync(HEAL_DIR)) fs.mkdirSync(HEAL_DIR, { recursive: true });
 
+      // Wait briefly for the DOM to settle. Without this, snapshots
+      // captured during a redirect or pre-render show 0 elements.
+      // domcontentloaded + a small grace period is enough to catch
+      // most SPA/SSR cases without slowing tests appreciably.
+      await Promise.race([
+        page.waitForLoadState('domcontentloaded').catch(() => {}),
+        new Promise((r) => setTimeout(r, 3000)),
+      ]);
+
       // Extract a structured snapshot from the live DOM. This runs INSIDE
       // the page context, so we get real attribute values — no parsing,
       // no guessing.

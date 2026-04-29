@@ -42,7 +42,9 @@ export class GeminiProvider implements AIProvider {
   private async generateContentWithRetry(
     request: Parameters<typeof this.model.generateContent>[0],
   ): Promise<Awaited<ReturnType<typeof this.model.generateContent>>> {
-    const MAX_ATTEMPTS = 3;
+    // 5 attempts with 1s, 2s, 4s, 8s = up to ~15s total wait before failing.
+    // Gemini Flash 503s during peak hours are real and can last >10s.
+    const MAX_ATTEMPTS = 5;
     let lastErr: unknown;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
       try {
@@ -53,7 +55,7 @@ export class GeminiProvider implements AIProvider {
         const isRetryable =
           status === 503 || status === 429 || status === 500 || status === 502;
         if (!isRetryable || attempt === MAX_ATTEMPTS) break;
-        const delayMs = 1000 * Math.pow(2, attempt - 1); // 1s, 2s, 4s
+        const delayMs = 1000 * Math.pow(2, attempt - 1); // 1s, 2s, 4s, 8s
         console.warn(
           `[gemini] ${status} on attempt ${attempt}/${MAX_ATTEMPTS}, retrying in ${delayMs}ms`,
         );

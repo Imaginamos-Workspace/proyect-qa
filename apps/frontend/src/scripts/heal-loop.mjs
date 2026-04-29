@@ -83,11 +83,22 @@ while (iteration <= MAX_ITERATIONS) {
   }
 
   const captured = readCapturedFailure();
+  const snapEmpty =
+    captured.snapshot &&
+    (captured.snapshot.inputs || []).length === 0 &&
+    (captured.snapshot.buttons || []).length === 0 &&
+    (captured.snapshot.forms || []).length === 0;
+
   if (!captured.snapshot && !captured.dom) {
     console.log('');
     console.log('⚠️  Test falló pero no se pudo capturar nada del DOM.');
     console.log('   Probablemente el error ocurrió antes de llegar al fixture (ej. error de import).');
     console.log('   Sin DOM real, el auto-arreglo es menos efectivo. Llamando igual con el error...');
+  } else if (snapEmpty) {
+    console.log('');
+    console.log('⚠️  Snapshot capturado pero VACÍO (0 inputs, 0 botones, 0 forms).');
+    console.log(`   Probablemente la página estaba navegando cuando se capturó (URL: ${captured.url || '?'}).`);
+    console.log('   Continúo con HTML crudo + error como contexto...');
   } else {
     if (captured.snapshot) {
       const s = captured.snapshot;
@@ -248,19 +259,35 @@ function extractFailingSelector(text) {
 
 async function callHealEndpoint(body) {
   const url = `${BACKEND}/api/ai/heal-iterate`;
-  let response;
-  try {
-    response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-  } catch (e) {
-    throw new Error(`network error: ${e.message}`);
-  }
-  if (!response.ok) {
+  // Local retries on 5xx — the backend already retries Gemini up to 5
+  // times, but on bad days even that exhausts. Give the orchestrator
+  // one more shot per iteration (effectively two windows of retries).
+  const MAX_TRIES = 2;
+  let lastErr;
+  for (let i = 1; i <= MAX_TRIES; i++) {
+    let response;
+    try {
+      response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    } catch (e) {
+      lastErr = new Error(`network error: ${e.message}`);
+      if (i === MAX_TRIES) break;
+      console.log(`   (network error en intento ${i}, retry en 5s)`);
+      await new Promise((r) => setTimeout(r, 5000));
+      continue;
+    }
+    if (response.ok) return response.json();
     const text = await response.text().catch(() => '');
-    throw new Error(`HTTP ${response.status}: ${text.slice(0, 300)}`);
+    if (response.status >= 500 && i < MAX_TRIES) {
+      console.log(`   (backend ${response.status} en intento ${i}, retry en 8s — Gemini puede estar saturado)`);
+      await new Promise((r) => setTimeout(r, 8000));
+      continue;
+    }
+    lastErr = new Error(`HTTP ${response.status}: ${text.slice(0, 300)}`);
+    break;
   }
-  return response.json();
+  throw lastErr;
 }
