@@ -217,3 +217,62 @@ export interface AIHealTokenResponse {
   expires_at: number;
   test_case_id: string;
 }
+
+// ─── Test Suggestions ─────────────────────────────────────────────────
+//
+// AI-generated proposals of test scenarios the user can review BEFORE
+// committing to a real test case. The user can convert, dismiss, or
+// regenerate them. Suggestions are organized by detected site section.
+
+export type AISuggestionStatus = 'pending' | 'converted' | 'dismissed';
+
+export interface AISuggestion {
+  id: string;
+  project_id: string;
+  /** Detected site section: "Login", "Checkout", "Productos", etc. */
+  section: string;
+  /** Path on the configured base_url where this scenario lives. */
+  scan_url: string;
+  title: string;
+  description: string;
+  /** Concrete: what to verify. */
+  what_to_test: string;
+  /** Concrete: how to verify it (steps in plain language). */
+  how_to_test: string;
+  test_type: TestType;
+  priority: TestPriority;
+  status: AISuggestionStatus;
+  dismissed_at?: string | null;
+  converted_test_case_id?: string | null;
+  /** Free-form metadata captured during exploration. */
+  ai_metadata?: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+/** POST /ai/suggest-explore */
+export interface AISuggestExploreRequest {
+  project_id: string;
+  /** If true, removes all current pending suggestions before regenerating. */
+  reset_pending?: boolean;
+}
+
+export interface AISuggestExploreResponse {
+  suggestions: AISuggestion[];
+  /** Sections detected on the site, in display order. */
+  sections: string[];
+  /** Number of suggestions filtered out because they overlap existing test cases. */
+  skipped_existing: number;
+  /** Sections that the AI failed to scan (network error, etc.). */
+  failed_sections: string[];
+}
+
+/** POST /ai/suggestions/:id/convert — turns suggestion into test case. */
+export interface AIConvertSuggestionResponse {
+  test_case_id: string;
+  test_case: {
+    id: string;
+    title: string;
+    description?: string;
+  };
+}
