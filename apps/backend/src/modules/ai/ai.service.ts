@@ -148,7 +148,9 @@ export class AIService {
       | undefined;
 
     if (request.base_url) {
-      // Resolve the path: explicit override wins, else default to '/'
+      // Resolve the path: explicit override wins, else infer from the
+      // description (login keywords → /login, signup → /register, etc.),
+      // else default to '/'.
       let path: string;
       const override = request.scan_url_override?.trim();
       if (override) {
@@ -163,7 +165,7 @@ export class AIService {
           path = override.startsWith('/') ? override : '/' + override;
         }
       } else {
-        path = '/';
+        path = inferPathFromDescription(request.description) ?? '/';
       }
 
       scanUrl = buildScanUrl(request.base_url, path);
@@ -497,4 +499,49 @@ export class AIService {
     if (error || !data) throw new NotFoundException('Generation job not found');
     return data;
   }
+}
+
+/**
+ * Best-effort guess at which path on the site is relevant to the user's
+ * test description. Returns null if no obvious match — the caller falls
+ * back to "/".
+ *
+ * Why this exists: when users describe "validar email inválido en login",
+ * they expect the AI to look at /login, not the home page. Without this
+ * hint, the AI saw / and generated tests for whatever form was on the
+ * homepage (e.g. an appointment popup), which fails because the form
+ * isn't visible without prior interaction.
+ */
+function inferPathFromDescription(description?: string): string | null {
+  if (!description) return null;
+  const d = description.toLowerCase();
+  // login / sign-in
+  if (
+    /\b(login|log\s*in|sign[\s-]?in|iniciar\s*sesi[oó]n|inicio\s*de\s*sesi[oó]n|credencial|contrase|password)\b/.test(
+      d,
+    )
+  ) {
+    return '/login';
+  }
+  // signup / register
+  if (
+    /\b(sign[\s-]?up|registr[ao]r?se?|crear\s*cuenta|create\s*account|new\s*user|nuevo\s*usuario)\b/.test(
+      d,
+    )
+  ) {
+    return '/register';
+  }
+  // checkout / cart
+  if (/\b(checkout|carrito|cart|finalizar\s*compra|pagar\s*compra)\b/.test(d)) {
+    return '/checkout';
+  }
+  // profile / account
+  if (/\b(perfil|profile|mi\s*cuenta|my\s*account)\b/.test(d)) {
+    return '/account';
+  }
+  // dashboard
+  if (/\b(dashboard|panel|admin)\b/.test(d)) {
+    return '/dashboard';
+  }
+  return null;
 }

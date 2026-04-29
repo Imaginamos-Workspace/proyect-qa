@@ -251,6 +251,25 @@ SCOPE RULES — STRICTLY FOLLOW THESE (most common reason tests fail):
    description. If you can't tie a step back to a phrase in the user's
    request, delete it.
 
+6. PAGE-INTENT MATCH: the snapshot shows ONE specific page. If the
+   description mentions a feature (login form, signup, checkout, search,
+   etc.) and that feature is NOT on the snapshot page, do NOT invent
+   a test for some unrelated form on the page. Instead, generate a
+   minimal test that navigates to the correct path FIRST (e.g.
+   page.goto('/login')) and ONLY uses elements that would exist there.
+   Better to have the test fail with "no such input on /login" than
+   pass-by-accident on the wrong page.
+
+7. HIDDEN ELEMENTS: any item in the snapshot tagged "HIDDEN" (visible=false)
+   requires user interaction to become visible (popup trigger, accordion,
+   tab, modal). NEVER fill / click / check on a HIDDEN element directly —
+   it will TimeoutError every time. Either:
+     a) Add the action that exposes it BEFORE interacting (click the
+        trigger button by its visible text), then interact.
+     b) Skip that scenario entirely if you can't identify the trigger.
+   Forms inside popups (e.g. "Book an Appointment", "Schedule") usually
+   have HIDDEN inputs/buttons until the popup opens.
+
 SYNTAX RULES (MUST FOLLOW — parsed by TypeScript compiler; invalid tests are DROPPED):
 - Regex literals: ONLY valid JavaScript regex. NEVER put characters after the closing /. WRONG: /.*foo/.*/  CORRECT: /.*foo.*/
 - Escape forward slashes inside regex patterns. WRONG: /path/to/ CORRECT: /path\\/to/

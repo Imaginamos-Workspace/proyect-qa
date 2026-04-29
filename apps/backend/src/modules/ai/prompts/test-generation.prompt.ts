@@ -346,6 +346,17 @@ CRITICAL HEAL RULES:
     without real data the user did not provide. Keep the parts that
     DO work (e.g. the negative-path validation), drop the rest.
 
+5b. HIDDEN ELEMENTS — if the failing locator points to an input/button
+    that is marked HIDDEN in the DOM snapshot, the element exists but
+    is not visible (it's inside a popup/modal/accordion that hasn't
+    been opened). NEVER try to interact with a hidden element directly:
+    Playwright's auto-wait will timeout. Either:
+      a) Insert the trigger action BEFORE the interaction (e.g. click
+         the visible button that opens the popup), or
+      b) Remove the step entirely if you can't identify the trigger.
+    Hidden form inputs are the #1 cause of "element is not visible"
+    timeouts — fix this pattern, don't paper over it with retries.
+
 6. SYNTAX RULES (parsed by TS compiler — invalid output is REJECTED):
    - Balance every quote, backtick, paren, brace, bracket
    - Regex literals must be valid — never put characters after closing /
