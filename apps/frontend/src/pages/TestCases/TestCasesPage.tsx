@@ -12,6 +12,7 @@ import { TestCaseEditor } from '@/components/test-editor/TestCaseEditor';
 import { AddTestCaseModal } from './AddTestCaseModal';
 import { RefineTestCaseModal } from './RefineTestCaseModal';
 import { HealTestModal } from './HealTestModal';
+import { SuggestionsPanel } from './SuggestionsPanel';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -163,6 +164,9 @@ export function TestCasesPage() {
           )}
         </div>
       </div>
+
+      {/* AI Suggestions panel — shown above the test case list */}
+      {projectId && <SuggestionsPanel projectId={projectId} />}
 
       {/* Filters */}
       <div className="flex gap-3">
