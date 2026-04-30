@@ -179,11 +179,20 @@ CRITICAL — SELECTOR RULES (failure to follow = test will fail at runtime):
 
 2. SELECTOR PREFERENCE (in order):
    a. If snapshot lists data-testid="X" → use page.getByTestId('X')
-   b. If input has name="X" → use page.locator('input[name="X"]')
-   c. If input has id="X" → use page.locator('#X')
+   b. If input has unique id="X" → use page.locator('#X')
+   c. If input has name="X" AND is NOT flagged ⚠️DUPLICATE-NAME → use page.locator('input[name="X"]')
    d. If input has placeholder="X" → use page.getByPlaceholder('X') with EXACT text
    e. If button has text "X" → use page.getByRole('button', { name: 'X' }) with EXACT text
    f. For labels: use page.getByLabel('X') with EXACT label text from snapshot
+
+2a. DUPLICATE-NAME RULE — when the snapshot flags ⚠️DUPLICATE-NAME (e.g.
+    WordPress login forms where email + password share name="log"),
+    page.locator('input[name="X"]') will throw "strict mode violation:
+    locator resolved to N elements". You MUST disambiguate. In order:
+      i.   Use the unique id of the specific input you want
+      ii.  Use getByRole('textbox', { name: 'Accessible name' })
+      iii. Use getByLabel with the exact label text
+      iv.  Last resort: .first() or .nth(N) with a comment explaining why
 
 3. ERROR/VALIDATION ELEMENTS NOT IN SNAPSHOT:
    Login error messages typically appear AFTER form submission via JS — they

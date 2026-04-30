@@ -528,13 +528,32 @@ export function summarizeSnapshotForPrompt(snap: DomSnapshot): string {
     );
   }
 
+  // Detect duplicate name attributes across the entire page — happens on
+  // sites like WordPress with elementor where the same `name` is reused
+  // by multiple inputs (e.g., login + password both with name="log"). The
+  // AI needs to know to disambiguate or it will hit a strict-mode
+  // violation at runtime.
+  const allInputs = [
+    ...snap.inputs,
+    ...snap.forms.flatMap((f) => f.fields),
+  ];
+  const nameCount = new Map<string, number>();
+  for (const el of allInputs) {
+    if (el.name) nameCount.set(el.name, (nameCount.get(el.name) || 0) + 1);
+  }
+  const duplicateNames = [...nameCount.entries()]
+    .filter(([, n]) => n > 1)
+    .map(([name]) => name);
+  const flagDup = (n?: string) =>
+    n && duplicateNames.includes(n) ? ' ⚠️DUPLICATE-NAME' : '';
+
   if (snap.forms.length) {
     lines.push('Forms:');
     snap.forms.slice(0, 5).forEach((f, i) => {
       lines.push(`  Form ${i + 1} (method=${f.method}${f.action ? `, action=${f.action}` : ''}):`);
       f.fields.slice(0, 15).forEach((fld) => {
         lines.push(
-          `    - ${fld.tag}${fld.type ? `[type=${fld.type}]` : ''} ${fieldDescriptors(fld)}`,
+          `    - ${fld.tag}${fld.type ? `[type=${fld.type}]` : ''} ${fieldDescriptors(fld)}${flagDup(fld.name)}`,
         );
       });
     });
@@ -543,7 +562,20 @@ export function summarizeSnapshotForPrompt(snap: DomSnapshot): string {
   if (snap.inputs.length && !snap.forms.length) {
     lines.push('Inputs (no enclosing form):');
     snap.inputs.slice(0, 20).forEach((el) =>
-      lines.push(`  - ${el.tag}${el.type ? `[type=${el.type}]` : ''} ${fieldDescriptors(el)}`),
+      lines.push(`  - ${el.tag}${el.type ? `[type=${el.type}]` : ''} ${fieldDescriptors(el)}${flagDup(el.name)}`),
+    );
+  }
+
+  if (duplicateNames.length > 0) {
+    lines.push('');
+    lines.push(
+      `⚠️ DUPLICATE NAME ATTRIBUTES DETECTED: ${duplicateNames.map((n) => `"${n}"`).join(', ')}`,
+    );
+    lines.push(
+      `   When multiple elements share a name, page.locator('input[name="X"]') will throw a strict-mode violation.`,
+    );
+    lines.push(
+      `   You MUST disambiguate by id, accessible role+name (getByRole), or .first()/.nth() — see the SELECTOR rules in the prompt.`,
     );
   }
 

@@ -262,15 +262,24 @@ CRITICAL — SELECTOR RULES:
    data-test attributes that DO NOT appear above.
 2. SELECTOR PREFERENCE:
    a. data-testid="X" → page.getByTestId('X')
-   b. input name="X"  → page.locator('input[name="X"]')
-   c. element id="X"  → page.locator('#X')
+   b. element id="X"  → page.locator('#X')   ← ALWAYS unique on a page
+   c. input name="X"  → page.locator('input[name="X"]')   ← ONLY if not flagged DUPLICATE
    d. placeholder="X" → page.getByPlaceholder('X') VERBATIM
    e. button text "X" → page.getByRole('button', { name: 'X' }) VERBATIM
    f. label "X"       → page.getByLabel('X') VERBATIM
-3. POST-SUBMIT ERROR / VALIDATION MESSAGES that may NOT be in the snapshot:
+3. STRICT-MODE / DUPLICATE-NAME RULE — Playwright fails loudly on locators
+   that match multiple elements. If the snapshot above flags an element as
+   ⚠️DUPLICATE-NAME (i.e. multiple inputs share the same \`name\`), you
+   MUST NOT use \`input[name="X"]\` directly. Disambiguate by:
+     a. Use the unique \`id\` if present:        page.locator('#user-5ca830f')
+     b. Use accessible name via getByRole:      page.getByRole('textbox', { name: 'Email Address' })
+     c. Use a unique placeholder/label if any:  page.getByLabel('Email Address')
+     d. Last resort, .first() / .nth(N) when the rest of the test makes
+        the index obvious — but explain in a comment why.
+4. POST-SUBMIT ERROR / VALIDATION MESSAGES that may NOT be in the snapshot:
    use a wide text regex, NEVER invent CSS classes:
      page.locator('text=/correo|email|inv[aá]lid|invalid|incorrecto|incorrect/i').first()
-4. URL ASSERTIONS: regex on path ONLY, no absolute strings.
+5. URL ASSERTIONS: regex on path ONLY, no absolute strings.
    WRONG: expect(page).toHaveURL('https://example.com/x/')
    RIGHT: expect(page).toHaveURL(/\\/x\\/?$/)
 `
