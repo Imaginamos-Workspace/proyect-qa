@@ -46,25 +46,37 @@ export class GeminiProvider implements AIProvider {
   private async generateContentWithRetry(
     request: Parameters<typeof this.model.generateContent>[0],
   ): Promise<Awaited<ReturnType<typeof this.model.generateContent>>> {
-    // Cascade:
-    //   1. gemini-2.5-flash, 4 attempts with 1s/2s/4s/8s backoff
-    //   2. gemini-2.5-pro,  2 attempts with 2s/4s backoff (separate quota)
-    //   3. Groq Llama 3.3 70B (free tier, separate quota, OpenAI-compat)  ← if GROQ_API_KEY
-    //   4. DeepSeek-V3 (free tier, top-tier code quality)                 ← if DEEPSEEK_API_KEY
-    // Only fall through to the next provider on 503/429/502/500.
-    const PRIMARY_ATTEMPTS = 4;
-    const FALLBACK_ATTEMPTS = 2;
-    let lastErr: unknown;
+    // Cascade — every configured provider gets a shot before we surface
+    // the error. Strategy:
+    //   1. gemini-2.5-flash      — 4 attempts, exponential backoff
+    //   2. gemini-2.5-pro        — 2 attempts (separate quota pool)
+    //   3. Groq Llama 3.3 70B    — 1 attempt (if GROQ_API_KEY)
+    //   4. DeepSeek-V3           — 1 attempt (if DEEPSEEK_API_KEY)
+    //
+    // Critical: once a provider FAILS for ANY reason — quota, network,
+    // overload, malformed response — we move on to the next one. The
+    // user does not get blocked because Gemini hit a 429 if Groq is
+    // configured and healthy. We only surface an error if EVERY
+    // configured provider fails, and the message tells them why.
+    type Failure = { provider: string; status?: number; message: string };
+    const failures: Failure[] = [];
 
+    const isQuotaOrOverload = (s?: number) =>
+      s === 503 || s === 429 || s === 502 || s === 500;
+
+    // ── Step 1: gemini-2.5-flash ────────────────────────────────────
+    const PRIMARY_ATTEMPTS = 4;
     for (let attempt = 1; attempt <= PRIMARY_ATTEMPTS; attempt++) {
       try {
         return await this.model.generateContent(request);
       } catch (err) {
-        lastErr = err;
         const status = (err as { status?: number })?.status;
-        const isRetryable =
-          status === 503 || status === 429 || status === 500 || status === 502;
-        if (!isRetryable || attempt === PRIMARY_ATTEMPTS) break;
+        const message = err instanceof Error ? err.message : String(err);
+        const isRetryable = isQuotaOrOverload(status);
+        if (!isRetryable || attempt === PRIMARY_ATTEMPTS) {
+          failures.push({ provider: 'gemini-flash', status, message });
+          break;
+        }
         const delayMs = 1000 * Math.pow(2, attempt - 1);
         console.warn(
           `[gemini-flash] ${status} on attempt ${attempt}/${PRIMARY_ATTEMPTS}, retrying in ${delayMs}ms`,
@@ -73,85 +85,75 @@ export class GeminiProvider implements AIProvider {
       }
     }
 
-    let lastStatus = (lastErr as { status?: number })?.status;
-    const shouldFallback = (s: number | undefined) =>
-      s === 503 || s === 429 || s === 502 || s === 500;
-
-    // Step 2 — gemini-pro (separate quota)
-    if (shouldFallback(lastStatus)) {
-      console.warn(
-        `[gemini] -flash exhausted (last ${lastStatus}), falling back to -pro`,
-      );
-      for (let attempt = 1; attempt <= FALLBACK_ATTEMPTS; attempt++) {
-        try {
-          return await this.fallbackModel.generateContent(request);
-        } catch (err) {
-          lastErr = err;
-          const status = (err as { status?: number })?.status;
-          if (!shouldFallback(status) || attempt === FALLBACK_ATTEMPTS) break;
-          const delayMs = 2000 * attempt;
-          console.warn(
-            `[gemini-pro] ${status} on attempt ${attempt}/${FALLBACK_ATTEMPTS}, retrying in ${delayMs}ms`,
-          );
-          await new Promise((r) => setTimeout(r, delayMs));
+    // ── Step 2: gemini-2.5-pro ──────────────────────────────────────
+    const FALLBACK_ATTEMPTS = 2;
+    console.warn(`[ai] -flash failed, trying -pro`);
+    for (let attempt = 1; attempt <= FALLBACK_ATTEMPTS; attempt++) {
+      try {
+        return await this.fallbackModel.generateContent(request);
+      } catch (err) {
+        const status = (err as { status?: number })?.status;
+        const message = err instanceof Error ? err.message : String(err);
+        if (attempt === FALLBACK_ATTEMPTS || !isQuotaOrOverload(status)) {
+          failures.push({ provider: 'gemini-pro', status, message });
+          break;
         }
+        const delayMs = 2000 * attempt;
+        console.warn(
+          `[gemini-pro] ${status} on attempt ${attempt}/${FALLBACK_ATTEMPTS}, retrying in ${delayMs}ms`,
+        );
+        await new Promise((r) => setTimeout(r, delayMs));
       }
     }
 
-    lastStatus = (lastErr as { status?: number })?.status;
-
-    // Step 3 — Groq (Llama 3.3 70B, free, OpenAI-compatible)
-    if (shouldFallback(lastStatus)) {
-      const groqKey = this.configService.get<string>('GROQ_API_KEY');
-      if (groqKey) {
-        console.warn('[gemini] all gemini exhausted, trying Groq');
-        const groqResp = await callOpenAICompatible({
-          baseUrl: 'https://api.groq.com/openai/v1',
-          apiKey: groqKey,
-          model: 'llama-3.3-70b-versatile',
-          request: request as OpenAICompatCall['request'],
-        });
-        if (groqResp.ok && groqResp.value) {
-          return groqResp.value as Awaited<ReturnType<typeof this.model.generateContent>>;
-        }
-        lastErr = groqResp.error;
-        console.warn(`[groq] failed: ${groqResp.error?.message}`);
+    // ── Step 3: Groq (always tried if configured) ───────────────────
+    const groqKey = this.configService.get<string>('GROQ_API_KEY');
+    if (groqKey) {
+      console.warn('[ai] -pro failed, trying Groq');
+      const groqResp = await callOpenAICompatible({
+        baseUrl: 'https://api.groq.com/openai/v1',
+        apiKey: groqKey,
+        model: 'llama-3.3-70b-versatile',
+        request: request as OpenAICompatCall['request'],
+      });
+      if (groqResp.ok && groqResp.value) {
+        return groqResp.value as Awaited<
+          ReturnType<typeof this.model.generateContent>
+        >;
       }
+      failures.push({
+        provider: 'groq',
+        status: groqResp.error?.status,
+        message: groqResp.error?.message || 'unknown',
+      });
+      console.warn(`[groq] failed: ${groqResp.error?.message}`);
     }
 
-    lastStatus = (lastErr as { status?: number })?.status;
-
-    // Step 4 — DeepSeek (DeepSeek-V3, top-tier code, free tier)
-    if (shouldFallback(lastStatus) || !lastStatus) {
-      const dsKey = this.configService.get<string>('DEEPSEEK_API_KEY');
-      if (dsKey) {
-        console.warn('[gemini] trying DeepSeek as final fallback');
-        const dsResp = await callOpenAICompatible({
-          baseUrl: 'https://api.deepseek.com',
-          apiKey: dsKey,
-          model: 'deepseek-chat',
-          request: request as OpenAICompatCall['request'],
-        });
-        if (dsResp.ok && dsResp.value) {
-          return dsResp.value as Awaited<ReturnType<typeof this.model.generateContent>>;
-        }
-        lastErr = dsResp.error;
-        console.warn(`[deepseek] failed: ${dsResp.error?.message}`);
+    // ── Step 4: DeepSeek (always tried if configured) ───────────────
+    const dsKey = this.configService.get<string>('DEEPSEEK_API_KEY');
+    if (dsKey) {
+      console.warn('[ai] groq failed/missing, trying DeepSeek');
+      const dsResp = await callOpenAICompatible({
+        baseUrl: 'https://api.deepseek.com',
+        apiKey: dsKey,
+        model: 'deepseek-chat',
+        request: request as OpenAICompatCall['request'],
+      });
+      if (dsResp.ok && dsResp.value) {
+        return dsResp.value as Awaited<
+          ReturnType<typeof this.model.generateContent>
+        >;
       }
+      failures.push({
+        provider: 'deepseek',
+        status: dsResp.error?.status,
+        message: dsResp.error?.message || 'unknown',
+      });
+      console.warn(`[deepseek] failed: ${dsResp.error?.message}`);
     }
 
-    const finalStatus = (lastErr as { status?: number })?.status;
-    if (finalStatus === 503) {
-      throw new Error(
-        'Todos los proveedores AI están sobrecargados en este momento (503). Intenta de nuevo en 5-10 minutos.',
-      );
-    }
-    if (finalStatus === 429) {
-      throw new Error(
-        'Cuota agotada en todos los proveedores AI configurados (429). Configura GROQ_API_KEY o DEEPSEEK_API_KEY en Vercel para más capacidad, o espera al reset diario.',
-      );
-    }
-    throw lastErr;
+    // ── All providers exhausted — build a helpful error ─────────────
+    throw buildExhaustedError(failures);
   }
 
   async generateTestCases(
@@ -511,6 +513,66 @@ Return a single JSON object (NOT an array) with this exact shape:
 function ensurePlaywrightImport(code: string): string {
   if (/from\s+['"]@playwright\/test['"]/.test(code)) return code;
   return `import { test, expect } from '@playwright/test';\n${code}`;
+}
+
+/**
+ * Compose a user-friendly error from the per-provider failure list. The
+ * goal: tell the user EXACTLY why we gave up — quota everywhere, or one
+ * specific provider broken, or all overloaded — so they know whether to
+ * retry, configure another key, or just wait.
+ */
+type ProviderFailure = { provider: string; status?: number; message: string };
+
+function buildExhaustedError(failures: ProviderFailure[]): Error {
+  if (failures.length === 0) {
+    return new Error('No AI providers were attempted (this should not happen).');
+  }
+
+  const isQuota = (f: ProviderFailure) =>
+    f.status === 429 || /quota|rate.?limit|exhaust/i.test(f.message);
+  const isOverload = (f: ProviderFailure) =>
+    f.status === 503 || f.status === 502 || /overload|sobrecarg/i.test(f.message);
+  const isAuth = (f: ProviderFailure) =>
+    f.status === 401 || f.status === 403 || /api.?key|invalid.?key|forbidden/i.test(f.message);
+
+  const allQuota = failures.every(isQuota);
+  const allOverload = failures.every(isOverload);
+  const allQuotaOrOverload = failures.every((f) => isQuota(f) || isOverload(f));
+  const anyAuth = failures.find(isAuth);
+
+  if (allQuota) {
+    return new Error(
+      `Cuota agotada en TODOS los proveedores AI configurados (${failures.map((f) => f.provider).join(', ')}). Espera al reset diario o configura otro API key (Groq/DeepSeek).`,
+    );
+  }
+  if (allOverload) {
+    return new Error(
+      `Todos los proveedores AI están sobrecargados (${failures.map((f) => f.provider).join(', ')}). Intenta de nuevo en 5-10 minutos.`,
+    );
+  }
+  if (allQuotaOrOverload) {
+    return new Error(
+      `Todos los proveedores AI están saturados o agotados. Intenta en 5-10 minutos o espera al reset de cuota. Detalle: ${failures
+        .map((f) => `${f.provider}=${f.status || 'err'}`)
+        .join(', ')}.`,
+    );
+  }
+  if (anyAuth) {
+    return new Error(
+      `API key inválida para ${anyAuth.provider} (${anyAuth.status}). Revisa la env var correspondiente en Vercel. Resto de providers también fallaron: ${failures
+        .filter((f) => f !== anyAuth)
+        .map((f) => `${f.provider}=${f.status || 'err'}`)
+        .join(', ')}.`,
+    );
+  }
+
+  // Mixed bag — surface the last meaningful error
+  const last = failures[failures.length - 1];
+  return new Error(
+    `Todos los proveedores AI fallaron. Último: ${last.provider} → ${last.message}. Detalle completo: ${failures
+      .map((f) => `${f.provider}=${f.status || 'err'} (${f.message.slice(0, 60)})`)
+      .join(' | ')}.`,
+  );
 }
 
 // ─── OpenAI-compatible providers (Groq, DeepSeek, OpenRouter, etc.) ──
