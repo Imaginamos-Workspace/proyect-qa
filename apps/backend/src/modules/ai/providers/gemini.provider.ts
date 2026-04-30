@@ -46,9 +46,12 @@ export class GeminiProvider implements AIProvider {
   private async generateContentWithRetry(
     request: Parameters<typeof this.model.generateContent>[0],
   ): Promise<Awaited<ReturnType<typeof this.model.generateContent>>> {
-    // Primary: gemini-2.5-flash, 4 attempts with 1s, 2s, 4s, 8s waits.
-    // If still 503/429 after that, fallback to gemini-2.5-pro (separate
-    // quota pool — survives when -flash is hammered at peak hours).
+    // Cascade:
+    //   1. gemini-2.5-flash, 4 attempts with 1s/2s/4s/8s backoff
+    //   2. gemini-2.5-pro,  2 attempts with 2s/4s backoff (separate quota)
+    //   3. Groq Llama 3.3 70B (free tier, separate quota, OpenAI-compat)  ← if GROQ_API_KEY
+    //   4. DeepSeek-V3 (free tier, top-tier code quality)                 ← if DEEPSEEK_API_KEY
+    // Only fall through to the next provider on 503/429/502/500.
     const PRIMARY_ATTEMPTS = 4;
     const FALLBACK_ATTEMPTS = 2;
     let lastErr: unknown;
@@ -70,11 +73,12 @@ export class GeminiProvider implements AIProvider {
       }
     }
 
-    // -flash exhausted. Try -pro (separate quota).
-    const lastStatus = (lastErr as { status?: number })?.status;
-    const shouldFallback =
-      lastStatus === 503 || lastStatus === 429 || lastStatus === 502;
-    if (shouldFallback) {
+    let lastStatus = (lastErr as { status?: number })?.status;
+    const shouldFallback = (s: number | undefined) =>
+      s === 503 || s === 429 || s === 502 || s === 500;
+
+    // Step 2 — gemini-pro (separate quota)
+    if (shouldFallback(lastStatus)) {
       console.warn(
         `[gemini] -flash exhausted (last ${lastStatus}), falling back to -pro`,
       );
@@ -84,12 +88,7 @@ export class GeminiProvider implements AIProvider {
         } catch (err) {
           lastErr = err;
           const status = (err as { status?: number })?.status;
-          const isRetryable =
-            status === 503 ||
-            status === 429 ||
-            status === 500 ||
-            status === 502;
-          if (!isRetryable || attempt === FALLBACK_ATTEMPTS) break;
+          if (!shouldFallback(status) || attempt === FALLBACK_ATTEMPTS) break;
           const delayMs = 2000 * attempt;
           console.warn(
             `[gemini-pro] ${status} on attempt ${attempt}/${FALLBACK_ATTEMPTS}, retrying in ${delayMs}ms`,
@@ -99,15 +98,57 @@ export class GeminiProvider implements AIProvider {
       }
     }
 
+    lastStatus = (lastErr as { status?: number })?.status;
+
+    // Step 3 — Groq (Llama 3.3 70B, free, OpenAI-compatible)
+    if (shouldFallback(lastStatus)) {
+      const groqKey = this.configService.get<string>('GROQ_API_KEY');
+      if (groqKey) {
+        console.warn('[gemini] all gemini exhausted, trying Groq');
+        const groqResp = await callOpenAICompatible({
+          baseUrl: 'https://api.groq.com/openai/v1',
+          apiKey: groqKey,
+          model: 'llama-3.3-70b-versatile',
+          request: request as OpenAICompatCall['request'],
+        });
+        if (groqResp.ok && groqResp.value) {
+          return groqResp.value as Awaited<ReturnType<typeof this.model.generateContent>>;
+        }
+        lastErr = groqResp.error;
+        console.warn(`[groq] failed: ${groqResp.error?.message}`);
+      }
+    }
+
+    lastStatus = (lastErr as { status?: number })?.status;
+
+    // Step 4 — DeepSeek (DeepSeek-V3, top-tier code, free tier)
+    if (shouldFallback(lastStatus) || !lastStatus) {
+      const dsKey = this.configService.get<string>('DEEPSEEK_API_KEY');
+      if (dsKey) {
+        console.warn('[gemini] trying DeepSeek as final fallback');
+        const dsResp = await callOpenAICompatible({
+          baseUrl: 'https://api.deepseek.com',
+          apiKey: dsKey,
+          model: 'deepseek-chat',
+          request: request as OpenAICompatCall['request'],
+        });
+        if (dsResp.ok && dsResp.value) {
+          return dsResp.value as Awaited<ReturnType<typeof this.model.generateContent>>;
+        }
+        lastErr = dsResp.error;
+        console.warn(`[deepseek] failed: ${dsResp.error?.message}`);
+      }
+    }
+
     const finalStatus = (lastErr as { status?: number })?.status;
     if (finalStatus === 503) {
       throw new Error(
-        'Gemini está sobrecargado en este momento (503) tanto en -flash como en -pro. Intenta de nuevo en 5-10 minutos.',
+        'Todos los proveedores AI están sobrecargados en este momento (503). Intenta de nuevo en 5-10 minutos.',
       );
     }
     if (finalStatus === 429) {
       throw new Error(
-        'Cuota de Gemini agotada (429). Revisa los límites del API key.',
+        'Cuota agotada en todos los proveedores AI configurados (429). Configura GROQ_API_KEY o DEEPSEEK_API_KEY en Vercel para más capacidad, o espera al reset diario.',
       );
     }
     throw lastErr;
@@ -425,4 +466,95 @@ Return a single JSON object (NOT an array) with this exact shape:
 function ensurePlaywrightImport(code: string): string {
   if (/from\s+['"]@playwright\/test['"]/.test(code)) return code;
   return `import { test, expect } from '@playwright/test';\n${code}`;
+}
+
+// ─── OpenAI-compatible providers (Groq, DeepSeek, OpenRouter, etc.) ──
+//
+// Both Groq and DeepSeek expose an OpenAI-compatible chat completions API.
+// We extract the prompt + config from the Gemini-shaped request, fire the
+// OpenAI-style call, and wrap the response back in Gemini's shape so the
+// rest of the codebase doesn't need to know which provider answered.
+
+interface OpenAICompatCall {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  // Reuse the Gemini-shaped request to avoid duplicate plumbing
+  request: {
+    contents: Array<{ role: string; parts: Array<{ text: string }> }>;
+    generationConfig?: {
+      temperature?: number;
+      maxOutputTokens?: number;
+      responseMimeType?: 'application/json' | 'text/plain';
+    };
+  };
+}
+
+interface FakeGeminiResponse {
+  response: { text: () => string };
+}
+
+interface OpenAICompatResult {
+  ok: boolean;
+  value?: FakeGeminiResponse;
+  error?: { message: string; status?: number };
+}
+
+async function callOpenAICompatible(
+  call: OpenAICompatCall,
+): Promise<OpenAICompatResult> {
+  const { baseUrl, apiKey, model, request } = call;
+  const prompt = request.contents
+    .map((c) => c.parts.map((p) => p.text).join(''))
+    .join('\n');
+  const cfg = request.generationConfig || {};
+  const wantJson = cfg.responseMimeType === 'application/json';
+
+  let resp: Response;
+  try {
+    resp = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: cfg.temperature ?? 0.3,
+        max_tokens: cfg.maxOutputTokens ?? 4096,
+        ...(wantJson ? { response_format: { type: 'json_object' } } : {}),
+      }),
+    });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    return { ok: false, error: { message: `network: ${message}` } };
+  }
+
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => '');
+    return {
+      ok: false,
+      error: { message: `HTTP ${resp.status}: ${text.slice(0, 200)}`, status: resp.status },
+    };
+  }
+
+  let data: { choices?: Array<{ message?: { content?: string } }> };
+  try {
+    data = await resp.json();
+  } catch (e) {
+    return {
+      ok: false,
+      error: { message: `bad json: ${e instanceof Error ? e.message : ''}` },
+    };
+  }
+
+  const text = data.choices?.[0]?.message?.content || '';
+  if (!text) {
+    return { ok: false, error: { message: 'empty response' } };
+  }
+  return {
+    ok: true,
+    value: { response: { text: () => text } },
+  };
 }
