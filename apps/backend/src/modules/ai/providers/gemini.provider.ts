@@ -203,23 +203,39 @@ export class GeminiProvider implements AIProvider {
     feedback: string,
     liveDomSnapshot?: string,
   ): Promise<string> {
-    const prompt = buildRefinePrompt(currentCode, feedback, liveDomSnapshot);
+    const basePrompt = buildRefinePrompt(currentCode, feedback, liveDomSnapshot);
 
-    const result = await this.generateContentWithRetry({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.2, maxOutputTokens: 4096 },
-    });
+    // Same syntax-retry pattern as completeSingleTest / healTestCase.
+    const MAX_SYNTAX_RETRIES = 2;
+    let lastErrors: string[] = [];
 
-    const raw = result.response.text();
-    // Validate with the TS compiler — a refined test with syntax errors
-    // is worse than no refinement. If invalid, keep the original code.
-    const validation = validateAndFixTestCode(raw);
-    if (!validation.valid) {
-      throw new Error(
-        `Refined test has syntax errors: ${validation.errors.join('; ')}`,
+    for (let attempt = 0; attempt <= MAX_SYNTAX_RETRIES; attempt++) {
+      const prompt =
+        attempt === 0
+          ? basePrompt
+          : `${basePrompt}\n\nPREVIOUS ATTEMPT WAS SYNTACTICALLY INVALID. Errors:\n${lastErrors.map((e) => `  - ${e}`).join('\n')}\n\nReturn ONLY corrected TypeScript code.`;
+
+      const result = await this.generateContentWithRetry({
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: {
+          temperature: attempt === 0 ? 0.2 : 0.3,
+          maxOutputTokens: 4096,
+        },
+      });
+
+      const raw = result.response.text();
+      const validation = validateAndFixTestCode(raw);
+      if (validation.valid) return validation.fixed!;
+
+      lastErrors = validation.errors;
+      console.warn(
+        `[refine] syntax retry ${attempt + 1}/${MAX_SYNTAX_RETRIES + 1}: ${lastErrors.join('; ')}`,
       );
     }
-    return validation.fixed!;
+
+    throw new Error(
+      `Refined test has syntax errors after ${MAX_SYNTAX_RETRIES + 1} attempts: ${lastErrors.join('; ')}`,
+    );
   }
 
   async completeSingleTest(
@@ -332,33 +348,62 @@ Return a single JSON object (NOT an array) with this exact shape:
   "browser_targets": ["chromium"]
 }`;
 
-    const result = await this.generateContentWithRetry({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: {
-        temperature: 0.2,
-        maxOutputTokens: 4096,
-        responseMimeType: 'application/json',
-      },
-    });
+    // Retry loop on syntax errors — same pattern as healTestCase. Gemini
+    // sometimes emits invalid TS (unterminated regex, missing argument,
+    // unclosed brace) on the first try. We give it 2 more shots with
+    // explicit feedback before giving up.
+    const MAX_SYNTAX_RETRIES = 2;
+    let lastErrors: string[] = [];
+    let parsed: AIGeneratedTestCase | null = null;
 
-    const responseText = result.response.text();
-    let parsed: AIGeneratedTestCase;
-    try {
-      parsed = JSON.parse(responseText);
-    } catch {
-      throw new Error(
-        `AI returned invalid JSON: ${responseText.substring(0, 200)}`,
+    for (let attempt = 0; attempt <= MAX_SYNTAX_RETRIES; attempt++) {
+      const promptForAttempt =
+        attempt === 0
+          ? prompt
+          : `${prompt}\n\n========================================\nPREVIOUS ATTEMPT WAS SYNTACTICALLY INVALID — DO NOT REPEAT\n========================================\nThe TypeScript compiler rejected your last output with these errors:\n${lastErrors.map((e) => `  - ${e}`).join('\n')}\n\nCheck especially:\n- Regex literals: never put characters after the closing /. e.g. WRONG: /foo/.*/  CORRECT: /foo.*/\n- Escape forward slashes inside regex patterns\n- Balance every quote, backtick, paren, brace, bracket\n- No markdown fences\n- Always close every test() and test.step() callback\nReturn ONLY the JSON object with the corrected playwright_code.`;
+
+      const result = await this.generateContentWithRetry({
+        contents: [{ role: 'user', parts: [{ text: promptForAttempt }] }],
+        generationConfig: {
+          temperature: attempt === 0 ? 0.2 : 0.3,
+          maxOutputTokens: 4096,
+          responseMimeType: 'application/json',
+        },
+      });
+
+      const responseText = result.response.text();
+      let candidate: AIGeneratedTestCase;
+      try {
+        candidate = JSON.parse(responseText);
+      } catch {
+        lastErrors = [`invalid JSON: ${responseText.substring(0, 100)}`];
+        console.warn(
+          `[completeSingleTest] JSON parse retry ${attempt + 1}/${MAX_SYNTAX_RETRIES + 1}`,
+        );
+        continue;
+      }
+
+      const validation = validateAndFixTestCode(
+        candidate.playwright_code || '',
+      );
+      if (validation.valid) {
+        parsed = { ...candidate, playwright_code: validation.fixed! };
+        break;
+      }
+
+      lastErrors = validation.errors;
+      console.warn(
+        `[completeSingleTest] syntax retry ${attempt + 1}/${MAX_SYNTAX_RETRIES + 1}: ${lastErrors.join('; ')}`,
       );
     }
 
-    const validation = validateAndFixTestCode(parsed.playwright_code || '');
-    if (!validation.valid) {
+    if (!parsed) {
       throw new Error(
-        `Generated test has syntax errors: ${validation.errors.join('; ')}`,
+        `Generated test has syntax errors after ${MAX_SYNTAX_RETRIES + 1} attempts: ${lastErrors.join('; ')}`,
       );
     }
 
-    return { ...parsed, playwright_code: validation.fixed! };
+    return parsed;
   }
 
   /**

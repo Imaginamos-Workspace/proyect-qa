@@ -64,7 +64,36 @@ export class SuggestionsController {
 
   @Post(':id/convert')
   async convert(@Param('id') id: string) {
-    return this.suggestions.convertToTestCase(id);
+    try {
+      return await this.suggestions.convertToTestCase(id);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (/cuota.*agotada|429/i.test(message)) {
+        throw new HttpException(
+          {
+            statusCode: HttpStatus.TOO_MANY_REQUESTS,
+            message:
+              'Cuota AI agotada en todos los proveedores. Espera al reset diario o configura más API keys.',
+          },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+      if (/sobrecargado|503/i.test(message)) {
+        throw new ServiceUnavailableException(
+          'Los proveedores AI están sobrecargados. Intenta de nuevo en 5-10 minutos.',
+        );
+      }
+      if (/syntax errors|invalid JSON/i.test(message)) {
+        throw new HttpException(
+          {
+            statusCode: HttpStatus.UNPROCESSABLE_ENTITY,
+            message: `La IA no pudo generar código válido para esta sugerencia tras varios intentos. Detalle: ${message}`,
+          },
+          HttpStatus.UNPROCESSABLE_ENTITY,
+        );
+      }
+      throw err;
+    }
   }
 
   @Delete(':id')
