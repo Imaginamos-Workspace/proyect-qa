@@ -366,6 +366,25 @@ CRITICAL HEAL RULES:
     Hidden form inputs are the #1 cause of "element is not visible"
     timeouts — fix this pattern, don't paper over it with retries.
 
+5c. STRICT-MODE VIOLATION (multi-match) — if the error says "strict
+    mode violation: locator resolved to N elements", the locator is
+    too broad. Fix by making it specific:
+      a) For inputs/buttons: use the unique id from the snapshot
+         (page.locator('#user-5ca830f')).
+      b) For inputs: use getByRole('textbox', { name: 'Email Address' })
+         with the accessible name from the snapshot.
+      c) For ERROR/VALIDATION MESSAGES: NEVER use wide regex like
+         text=/email|invalid/i — that matches every label, footer
+         "user@email.com" link, etc. on the page. Look at the
+         "VISIBLE MESSAGES" block of the snapshot for the EXACT error
+         text the page shows, and either:
+           - target by id if the snapshot lists one (e.g.
+             page.locator('#mensaje-error-login')), OR
+           - use getByText with the exact verbatim message
+             (e.g. page.getByText('Please enter your email and password')), OR
+           - if no exact match, scope to .first() with a comment
+             explaining the choice.
+
 6. SYNTAX RULES (parsed by TS compiler — invalid output is REJECTED):
    - Balance every quote, backtick, paren, brace, bracket
    - Regex literals must be valid — never put characters after closing /

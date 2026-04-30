@@ -115,15 +115,45 @@ export const test = base.extend({
               }));
 
             // Visible alert / error / live-region messages — the AI needs
-            // these for regex-based assertion locators.
-            const messageNodes = [
-              ...document.querySelectorAll(
-                '[role="alert"], [role="status"], [aria-live], .error, .alert, .invalid-feedback, .help-block, .help-text, .form-error, .form-message',
-              ),
-            ];
+            // these to write SPECIFIC assertion locators (instead of broad
+            // text=/.../i regexes that match every email-containing label
+            // on the page). We capture the text AND a stable selector hint
+            // (#id or .class) so the AI can target precisely.
+            const messageSelectors = [
+              '[role="alert"]',
+              '[role="status"]',
+              '[aria-live]',
+              '.error',
+              '.alert',
+              '.invalid-feedback',
+              '.help-block',
+              '.help-text',
+              '.form-error',
+              '.form-message',
+              // Broad class/id pattern catches WordPress et al
+              '[class*="mensaje-error"]',
+              '[id*="mensaje-error"]',
+              '[class*="form-message"]',
+              '[class*="login-error"]',
+              '[class*="error-message"]',
+              '[class*="notice"]',
+            ].join(',');
+            const messageNodes = [...document.querySelectorAll(messageSelectors)];
             const visible_messages = messageNodes
-              .map((el) => txt(el))
-              .filter((s) => s.length > 0)
+              .map((el) => {
+                const text = txt(el);
+                if (!text) return null;
+                let selectorHint;
+                if (el.id) selectorHint = '#' + el.id;
+                else if (el.className && typeof el.className === 'string') {
+                  const cls = el.className.split(/\s+/).filter(Boolean)[0];
+                  if (cls) selectorHint = '.' + cls;
+                }
+                // Embed the selector hint inline so older prompt formatters
+                // still see it; richer schema can come later.
+                return selectorHint ? `${text} [${selectorHint}]` : text;
+              })
+              .filter((s) => s)
               .slice(0, 10);
 
             const headings = [...document.querySelectorAll('h1, h2, h3')]

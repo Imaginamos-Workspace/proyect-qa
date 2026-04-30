@@ -242,8 +242,17 @@ function runPlaywright() {
 
 function extractFailingSelector(text) {
   if (!text) return undefined;
+  // The Playwright error message ALWAYS has a "waiting for locator(...)"
+  // line right under the strict-mode message — that's the ground truth
+  // selector that failed. Match that first; the source preview can have
+  // many other locator() calls and confuse a naive regex.
+  const waitingFor = text.match(/waiting for (?:locator|expect)\s*\(\s*([^\n]+?)\s*\)\s*\n/);
+  if (waitingFor) return waitingFor[1].trim();
+  // Fallback: try to find the first locator/getBy* call. Use a non-greedy
+  // body that allows nested quotes (key fix — the previous regex broke on
+  // 'input[name="log"]' because the body forbade " inside).
   const patterns = [
-    /locator\((['"`])([^'"`]+)\1[^)]*\)/,
+    /locator\(\s*((?:'[^']*'|"[^"]*"|`[^`]*`)[^)]*)\)/,
     /getByRole\([^)]*\)/,
     /getByText\([^)]*\)/,
     /getByPlaceholder\([^)]*\)/,
@@ -252,7 +261,7 @@ function extractFailingSelector(text) {
   ];
   for (const re of patterns) {
     const m = text.match(re);
-    if (m) return m[2] || m[0];
+    if (m) return (m[1] || m[0]).trim();
   }
   return undefined;
 }
