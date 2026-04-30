@@ -149,10 +149,13 @@ export class SuggestionsService {
       existingTestTitles: existingTitles,
     });
 
+    // Exploration responses are large (8 pages × multiple suggestions each).
+    // 4096 truncated mid-JSON in production — bump to 16384 (model max for
+    // gemini-2.5-flash is 65535, plenty of headroom).
     const aiResult = await this.gemini.generateRaw({
       prompt,
       temperature: 0.3,
-      maxOutputTokens: 4096,
+      maxOutputTokens: 16384,
       responseMimeType: 'application/json',
     });
 
@@ -160,9 +163,17 @@ export class SuggestionsService {
     try {
       parsed = JSON.parse(aiResult);
     } catch {
-      throw new Error(
-        `AI returned invalid JSON: ${aiResult.substring(0, 200)}`,
-      );
+      // Last-ditch: truncated JSON. Try to recover by closing brackets up
+      // to the last well-formed entry. If that also fails, surface a
+      // clear error to the UI.
+      const recovered = tryRecoverTruncatedJson(aiResult);
+      if (recovered) {
+        parsed = recovered;
+      } else {
+        throw new Error(
+          `AI returned invalid JSON (probably truncated). Re-explore en unos minutos.`,
+        );
+      }
     }
 
     const sectionsFromAI = parsed.sections || [];
@@ -378,6 +389,40 @@ interface SuggestionFromAI {
 
 function dedupe(arr: string[]): string[] {
   return Array.from(new Set(arr.filter(Boolean)));
+}
+
+/**
+ * Best-effort recovery of a JSON response that got truncated mid-output
+ * (Gemini hit maxOutputTokens). We trim to the last complete suggestion
+ * we can identify and close brackets. Returns null if nothing salvageable.
+ */
+function tryRecoverTruncatedJson(
+  raw: string,
+): { sections: SectionFromAI[] } | null {
+  if (!raw || !raw.includes('"sections"')) return null;
+  // Find the last complete "}" inside a suggestion that's followed by a
+  // comma or array close — that's our last clean cut point.
+  let cut = raw.lastIndexOf('}');
+  while (cut > 0) {
+    const tail = raw.slice(0, cut + 1);
+    // Try to close any open structures
+    const opens = (tail.match(/[\[{]/g) || []).length;
+    const closes = (tail.match(/[\]}]/g) || []).length;
+    const missing = opens - closes;
+    if (missing >= 0) {
+      const closing = ']}'.repeat(missing).split('').slice(0, missing).join('');
+      // Build closing from outside-in: usually need one of each
+      const repaired = tail + (missing === 1 ? '}' : closing.length > 0 ? ']'.repeat(Math.floor(missing / 2)) + '}'.repeat(Math.ceil(missing / 2)) : '');
+      try {
+        const parsed = JSON.parse(repaired);
+        if (parsed && Array.isArray(parsed.sections)) return parsed;
+      } catch {
+        /* keep trying */
+      }
+    }
+    cut = raw.lastIndexOf('}', cut - 1);
+  }
+  return null;
 }
 
 function titleOverlapsExisting(

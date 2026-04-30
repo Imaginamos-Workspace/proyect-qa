@@ -7,6 +7,9 @@ import {
   Query,
   Body,
   UseGuards,
+  ServiceUnavailableException,
+  HttpException,
+  HttpStatus,
 } from '@nestjs/common';
 import { SuggestionsService } from './suggestions.service';
 import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard';
@@ -29,7 +32,29 @@ export class SuggestionsController {
 
   @Post('explore')
   async explore(@Body() body: AISuggestExploreRequest) {
-    return this.suggestions.exploreAndSuggest(body);
+    try {
+      return await this.suggestions.exploreAndSuggest(body);
+    } catch (err) {
+      // Map common Gemini errors to actionable HTTP statuses so the UI
+      // can show a friendly message instead of a generic 500.
+      const message = err instanceof Error ? err.message : String(err);
+      if (/cuota.*agotada|429/i.test(message)) {
+        throw new HttpException(
+          {
+            statusCode: HttpStatus.TOO_MANY_REQUESTS,
+            message:
+              'La cuota diaria de Gemini está agotada. Espera al reset o configura un API key con más cuota.',
+          },
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+      if (/sobrecargado|503/i.test(message)) {
+        throw new ServiceUnavailableException(
+          'Gemini está sobrecargado en este momento. Intenta de nuevo en 5-10 minutos.',
+        );
+      }
+      throw err;
+    }
   }
 
   @Post(':id/dismiss')
