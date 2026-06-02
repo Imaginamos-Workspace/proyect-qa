@@ -44,7 +44,11 @@
     "signInLink": "Iniciar sesion",
     "checkYourEmail": "Revisa tu Correo",
     "confirmationSent": "Enviamos un enlace de confirmacion a {{email}}. Haz clic para activar tu cuenta.",
-    "backToSignIn": "Volver a Iniciar Sesion"
+    "backToSignIn": "Volver a Iniciar Sesion",
+    "continueWithGitHub": "Continuar con GitHub",
+    "redirectingToGitHub": "Redirigiendo a GitHub...",
+    "orWithEmail": "o con correo",
+    "notOrgMember": "Tu cuenta de GitHub no pertenece al equipo {{org}}. Pide acceso al administrador."
   },
   "dashboard": {
     "title": "Panel",

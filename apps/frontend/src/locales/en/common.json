@@ -44,7 +44,11 @@
     "signInLink": "Sign in",
     "checkYourEmail": "Check Your Email",
     "confirmationSent": "We sent a confirmation link to {{email}}. Click it to activate your account.",
-    "backToSignIn": "Back to Sign In"
+    "backToSignIn": "Back to Sign In",
+    "continueWithGitHub": "Continue with GitHub",
+    "redirectingToGitHub": "Redirecting to GitHub...",
+    "orWithEmail": "or with email",
+    "notOrgMember": "Your GitHub account is not part of the {{org}} team. Ask an administrator for access."
   },
   "dashboard": {
     "title": "Dashboard",
