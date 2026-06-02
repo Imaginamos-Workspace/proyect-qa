@@ -8,6 +8,8 @@ import {
   Settings,
   LogOut,
   Bug,
+  Users,
+  Activity,
 } from 'lucide-react';
 import { useAuthStore } from '@/stores/auth.store';
 import { cn } from '@/lib/utils';
@@ -30,6 +32,8 @@ const navGroups: NavGroup[] = [
     labelKey: 'nav.groupMenu',
     items: [
       { nameKey: 'nav.dashboard', href: '/dashboard', icon: LayoutDashboard },
+      { nameKey: 'nav.clients', href: '/clients', icon: Users },
+      { nameKey: 'nav.activity', href: '/activity', icon: Activity },
       { nameKey: 'nav.projects', href: '/projects', icon: FolderKanban },
     ],
   },
