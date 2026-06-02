@@ -12,7 +12,9 @@
     "reports": "Reportes",
     "jira": "Jira",
     "settings": "Configuracion",
-    "signOut": "Cerrar Sesion"
+    "signOut": "Cerrar Sesion",
+    "clients": "Clientes",
+    "activity": "Actividad"
   },
   "header": {
     "home": "Inicio",
@@ -655,5 +657,54 @@
     "cancelled": "cancelado",
     "passed": "aprobado",
     "skipped": "omitido"
+  },
+  "clients": {
+    "title": "Clientes",
+    "subtitle": "Progreso, cobertura y regresiones por cliente",
+    "totalClients": "Clientes",
+    "avgPassRate": "Pass-rate promedio",
+    "avgCoverage": "Cobertura promedio",
+    "openRegressions": "Regresiones abiertas",
+    "coverage": "Cobertura",
+    "regressions": "regresiones",
+    "lastRun": "Última corrida",
+    "noRuns": "Sin corridas aún",
+    "empty": "Aún no hay clientes con corridas.",
+    "notFound": "Cliente no encontrado",
+    "passRate": "Pass-rate",
+    "passed": "Pasaron",
+    "failed": "Fallaron",
+    "progress": "Progreso de corridas",
+    "coverageByModule": "Cobertura por módulo",
+    "noData": "Sin datos",
+    "regressionsTitle": "Regresiones (última corrida)",
+    "noRegressions": "Sin regresiones 🎉",
+    "viewReport": "Ver reporte",
+    "viewDesigns": "Diseños",
+    "reproduce": "Reproducir",
+    "suite": "Suite",
+    "commit": "Commit",
+    "branch": "Rama",
+    "viewCiRun": "Ver corrida en CI",
+    "kind": {
+      "new_fail": "Nuevo fallo",
+      "fixed": "Arreglado",
+      "flaky": "Flaky"
+    }
+  },
+  "activity": {
+    "title": "Actividad del equipo",
+    "subtitle": "Lo que hacen los QA y diseñadores",
+    "team": "Equipo",
+    "everyone": "Todos",
+    "recent": "Reciente",
+    "empty": "Sin actividad aún.",
+    "kind": {
+      "test": "Prueba",
+      "design": "Diseño",
+      "bug": "Bug",
+      "commit": "Commit",
+      "run": "Corrida"
+    }
   }
 }

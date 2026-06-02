@@ -10,6 +10,8 @@ import { ReportsModule } from './modules/reports/reports.module';
 import { JiraModule } from './modules/jira/jira.module';
 import { AIModule } from './modules/ai/ai.module';
 import { ModulesModule } from './modules/modules/modules.module';
+import { IngestModule } from './modules/ingest/ingest.module';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { SupabaseModule } from './config/supabase.module';
 
 @Module({
@@ -26,6 +28,8 @@ import { SupabaseModule } from './config/supabase.module';
     JiraModule,
     AIModule,
     ModulesModule,
+    IngestModule,
+    DashboardModule,
   ],
 })
 export class AppModule {}

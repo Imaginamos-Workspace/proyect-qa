@@ -17,6 +17,9 @@ import { ReportsPage } from '@/pages/Reports/ReportsPage';
 import { ReportDetailPage } from '@/pages/Reports/ReportDetailPage';
 import { JiraConfigPage } from '@/pages/JiraConfig/JiraConfigPage';
 import { SettingsPage } from '@/pages/Settings/SettingsPage';
+import { ClientsPage } from '@/pages/Clients/ClientsPage';
+import { ClientDetailPage } from '@/pages/Clients/ClientDetailPage';
+import { ActivityPage } from '@/pages/Activity/ActivityPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const user = useAuthStore((s) => s.user);
@@ -57,6 +60,9 @@ export default function App() {
           }
         >
           <Route path="/dashboard" element={<DashboardPage />} />
+          <Route path="/clients" element={<ClientsPage />} />
+          <Route path="/clients/:slug" element={<ClientDetailPage />} />
+          <Route path="/activity" element={<ActivityPage />} />
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/projects/new" element={<CreateProjectWizard />} />
           <Route path="/projects/:id" element={<ProjectDetailPage />} />

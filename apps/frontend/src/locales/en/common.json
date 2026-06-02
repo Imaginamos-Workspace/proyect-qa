@@ -12,7 +12,9 @@
     "reports": "Reports",
     "jira": "Jira",
     "settings": "Settings",
-    "signOut": "Sign Out"
+    "signOut": "Sign Out",
+    "clients": "Clients",
+    "activity": "Activity"
   },
   "header": {
     "home": "Home",
@@ -655,5 +657,54 @@
     "cancelled": "cancelled",
     "passed": "passed",
     "skipped": "skipped"
+  },
+  "clients": {
+    "title": "Clients",
+    "subtitle": "Progress, coverage and regressions per client",
+    "totalClients": "Clients",
+    "avgPassRate": "Avg pass-rate",
+    "avgCoverage": "Avg coverage",
+    "openRegressions": "Open regressions",
+    "coverage": "Coverage",
+    "regressions": "regressions",
+    "lastRun": "Last run",
+    "noRuns": "No runs yet",
+    "empty": "No clients with runs yet.",
+    "notFound": "Client not found",
+    "passRate": "Pass-rate",
+    "passed": "Passed",
+    "failed": "Failed",
+    "progress": "Run progress",
+    "coverageByModule": "Coverage by module",
+    "noData": "No data",
+    "regressionsTitle": "Regressions (latest run)",
+    "noRegressions": "No regressions 🎉",
+    "viewReport": "View report",
+    "viewDesigns": "Designs",
+    "reproduce": "Reproduce",
+    "suite": "Suite",
+    "commit": "Commit",
+    "branch": "Branch",
+    "viewCiRun": "View CI run",
+    "kind": {
+      "new_fail": "New fail",
+      "fixed": "Fixed",
+      "flaky": "Flaky"
+    }
+  },
+  "activity": {
+    "title": "Team activity",
+    "subtitle": "What QAs and designers are doing",
+    "team": "Team",
+    "everyone": "Everyone",
+    "recent": "Recent",
+    "empty": "No activity yet.",
+    "kind": {
+      "test": "Test",
+      "design": "Design",
+      "bug": "Bug",
+      "commit": "Commit",
+      "run": "Run"
+    }
   }
 }
