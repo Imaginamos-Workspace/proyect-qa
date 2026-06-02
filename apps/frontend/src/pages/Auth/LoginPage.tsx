@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router';
 import { Github } from 'lucide-react';
 import { useAuthStore } from '@/stores/auth.store';
-import { GITHUB_ORG } from '@/lib/supabase';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from '@/components/ui/card';
@@ -68,9 +67,9 @@ export function LoginPage() {
           <CardDescription>{t('auth.signInDescription')}</CardDescription>
         </CardHeader>
         <CardContent>
-          {authError === 'not_org_member' && (
+          {authError === 'not_allowed' && (
             <div className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">
-              {t('auth.notOrgMember', { org: GITHUB_ORG })}
+              {t('auth.notAllowed')}
             </div>
           )}
 

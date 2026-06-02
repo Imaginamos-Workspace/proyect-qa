@@ -1,12 +1,12 @@
 import { create } from 'zustand';
-import { supabase, GITHUB_ORG } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 import type { User, Session } from '@supabase/supabase-js';
 
 interface AuthState {
   user: User | null;
   session: Session | null;
   loading: boolean;
-  /** Código de error de acceso para que la UI lo traduzca (p.ej. 'not_org_member'). */
+  /** Código de error de acceso para que la UI lo traduzca (p.ej. 'not_allowed'). */
   authError: string | null;
   initialize: () => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
@@ -24,49 +24,22 @@ function isGitHubSession(session: Session): boolean {
 }
 
 /**
- * Verifica que el usuario pertenezca al org de GitHub usando el `provider_token`
- * de la sesión. Solo se puede comprobar justo después del OAuth, cuando el token
- * del proveedor está disponible (requiere el scope `read:org`).
+ * Gate de acceso. Las cuentas de email/contraseña son internas (creadas a mano
+ * en Supabase) y se permiten. Las de GitHub deben estar en la lista blanca:
+ * lo decide la función `is_current_user_allowed()` en Postgres, que lee el
+ * username del propio JWT (no se puede falsear desde el cliente) y no expone la
+ * lista completa.
  */
-async function isGitHubOrgMember(providerToken: string): Promise<boolean> {
-  try {
-    const res = await fetch(
-      `https://api.github.com/user/memberships/orgs/${GITHUB_ORG}`,
-      {
-        headers: {
-          Authorization: `Bearer ${providerToken}`,
-          Accept: 'application/vnd.github+json',
-        },
-      },
-    );
-    if (res.status === 200) {
-      const data = (await res.json()) as { state?: string };
-      return data.state === 'active';
-    }
-    // 404 = no es miembro · 403 = falta el scope read:org · otro = negar por seguridad.
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Aplica el gate de org sobre una sesión de GitHub. Devuelve el usuario
- * autorizado o, si no pasa, cierra la sesión y reporta el motivo.
- *
- * El gate solo se ejecuta cuando hay `provider_token` (inmediatamente después
- * del OAuth). En recargas posteriores el token del proveedor ya no está, así
- * que se confía en la sesión que ya fue validada al iniciar sesión.
- */
-async function gateGitHubSession(
+async function gateSession(
   session: Session,
 ): Promise<{ user: User | null; authError: string | null }> {
-  if (isGitHubSession(session) && session.provider_token) {
-    const member = await isGitHubOrgMember(session.provider_token);
-    if (!member) {
-      await supabase.auth.signOut();
-      return { user: null, authError: 'not_org_member' };
-    }
+  if (!isGitHubSession(session)) {
+    return { user: session.user, authError: null };
+  }
+  const { data, error } = await supabase.rpc('is_current_user_allowed');
+  if (error || data !== true) {
+    await supabase.auth.signOut();
+    return { user: null, authError: 'not_allowed' };
   }
   return { user: session.user, authError: null };
 }
@@ -82,20 +55,15 @@ export const useAuthStore = create<AuthState>((set) => ({
     const session = data.session;
 
     if (session) {
-      const { user, authError } = await gateGitHubSession(session);
-      set({
-        session: user ? session : null,
-        user,
-        authError,
-        loading: false,
-      });
+      const { user, authError } = await gateSession(session);
+      set({ session: user ? session : null, user, authError, loading: false });
     } else {
       set({ session: null, user: null, loading: false });
     }
 
     supabase.auth.onAuthStateChange(async (_event, nextSession) => {
       if (nextSession) {
-        const { user, authError } = await gateGitHubSession(nextSession);
+        const { user, authError } = await gateSession(nextSession);
         set({ session: user ? nextSession : null, user, authError });
       } else {
         // Al cerrar sesión, conserva un posible error de acceso ya fijado
@@ -120,8 +88,6 @@ export const useAuthStore = create<AuthState>((set) => ({
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'github',
       options: {
-        // `read:org` permite verificar la membresía del org tras el login.
-        scopes: 'read:org',
         // Vuelve a /login; initialize() corre el gate y redirige al dashboard.
         redirectTo: `${window.location.origin}/login`,
       },

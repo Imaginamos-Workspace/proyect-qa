@@ -48,7 +48,7 @@
     "continueWithGitHub": "Continuar con GitHub",
     "redirectingToGitHub": "Redirigiendo a GitHub...",
     "orWithEmail": "o con correo",
-    "notOrgMember": "Tu cuenta de GitHub no pertenece al equipo {{org}}. Pide acceso al administrador."
+    "notAllowed": "Tu cuenta de GitHub no está autorizada para esta plataforma (o no se pudo verificar). Pide acceso al administrador."
   },
   "dashboard": {
     "title": "Panel",

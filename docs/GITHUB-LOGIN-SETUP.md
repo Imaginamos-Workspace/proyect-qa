@@ -1,48 +1,40 @@
-# Login con GitHub — guía de configuración
+# Login con GitHub — configuración
 
-El código del frontend ya soporta **"Continuar con GitHub"** (Supabase OAuth) y
-restringe el acceso a los **miembros del org `fridaKhalo`**. Falta la
-configuración con secretos, que se hace una sola vez. Pasos:
+El frontend soporta **"Continuar con GitHub"** (Supabase OAuth) y restringe el
+acceso con una **lista blanca de usernames de GitHub** (tabla en Supabase). El
+login por email/contraseña sigue disponible para cuentas internas.
 
-## 1. Crear el OAuth App en GitHub
+> Se usa lista blanca y no "membresía de org" porque `fridaKhalo` es una cuenta
+> personal de GitHub, no una organización.
 
-1. Ir a **GitHub → Settings del org `fridaKhalo` → Developer settings →
-   OAuth Apps → New OAuth App**
-   (o a https://github.com/organizations/fridaKhalo/settings/applications).
-2. Rellenar:
-   - **Application name:** `QA Platform`
-   - **Homepage URL:** la URL del frontend en Vercel
-     (p. ej. `https://qa-frontend-xxxx.vercel.app`).
-   - **Authorization callback URL:** la **callback de Supabase**, no la del front:
-     ```
-     https://tsnqqmsrydsfuaezkfkr.supabase.co/auth/v1/callback
-     ```
-3. **Generate a new client secret.** Anota **Client ID** y **Client Secret**.
+## Estado (lo ya hecho automáticamente)
 
-> El `tsnqqmsrydsfuaezkfkr` es el ref del proyecto Supabase (ver `CLAUDE.md`).
+- ✅ Tabla `public.allowed_github_users` + función `is_current_user_allowed()`
+  (migración `014`). La función lee el username del JWT y responde sí/no sin
+  exponer la lista.
+- ✅ Sembrada con el equipo: `fridaKhalo`, `Juan06209`, `AbyteQuantic`,
+  `AndresPuyol`, `JohanaMallama2`, `brayan-murcia-imaginamos`.
+- ✅ Redirect URLs de desarrollo en Supabase (`localhost:5173`, `localhost:3000`).
+- ✅ Código del frontend (botón GitHub + gate por lista blanca).
 
-## 2. Habilitar el provider GitHub en Supabase
+## Falta (necesita el OAuth App de GitHub)
 
-**Dashboard → Authentication → Providers → GitHub:**
+### 1. Crear el OAuth App
 
-1. Activar **Enable Sign in with GitHub**.
-2. Pegar **Client ID** y **Client Secret** del paso 1.
-3. Guardar.
+En **https://github.com/settings/developers → OAuth Apps → New OAuth App**
+(NO en `/settings/installations`, esa es otra cosa):
 
-**Authentication → URL Configuration:**
-
-- **Site URL:** la URL del frontend en producción.
-- **Redirect URLs:** agregar (uno por línea):
+- **Application name:** `QA Platform`
+- **Homepage URL:** la URL del frontend en Vercel
+- **Authorization callback URL** (la de Supabase):
   ```
-  http://localhost:5173/login
-  https://<tu-dominio-vercel>/login
+  https://tsnqqmsrydsfuaezkfkr.supabase.co/auth/v1/callback
   ```
-  (el código redirige a `/login` tras el OAuth; el gate de org corre ahí y
-  manda al dashboard.)
+- "Generate a new client secret" → guarda **Client ID** y **Client Secret**.
 
-### Alternativa por API (sin dashboard)
+### 2. Habilitar el provider en Supabase
 
-Si tienes un **Personal Access Token** de Supabase (`sbp_...`):
+Con el Client ID/Secret, vía Management API:
 
 ```bash
 curl -X PATCH "https://api.supabase.com/v1/projects/tsnqqmsrydsfuaezkfkr/config/auth" \
@@ -55,34 +47,37 @@ curl -X PATCH "https://api.supabase.com/v1/projects/tsnqqmsrydsfuaezkfkr/config/
   }'
 ```
 
-## 3. Variables de entorno del frontend
+(O en el dashboard: Authentication → Providers → GitHub.)
 
-En Vercel (proyecto `qa-frontend`) y en tu `.env` local:
+### 3. Site URL / Redirect de producción
 
+Cuando exista el dominio de Vercel, agregarlo:
+
+```bash
+curl -X PATCH ".../config/auth" -H "Authorization: Bearer $SUPABASE_ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"site_url":"https://<dominio-vercel>","uri_allow_list":"http://localhost:5173/**,https://<dominio-vercel>/**"}'
 ```
-VITE_SUPABASE_URL=https://tsnqqmsrydsfuaezkfkr.supabase.co
-VITE_SUPABASE_ANON_KEY=<anon key>
-VITE_GITHUB_ORG=fridaKhalo
+
+## Gestionar la lista blanca
+
+```sql
+-- agregar
+insert into public.allowed_github_users (github_username, note)
+values ('nuevo-username', 'qa') on conflict do nothing;
+-- quitar
+delete from public.allowed_github_users where github_username = 'username';
 ```
 
-## 4. Que los QA sean miembros del org
+## Cómo funciona el gate
 
-El gate solo deja entrar a miembros **activos** del org `fridaKhalo`. Asegúrate
-de que cada QA esté invitado y haya **aceptado** la invitación al org. Si su
-membresía es privada, igual funciona porque pedimos el scope `read:org`.
+- `signInWithGitHub()` redirige a GitHub; al volver, Supabase crea la sesión.
+- `auth.store` llama a `is_current_user_allowed()`. Si el username del JWT está
+  en la lista → entra; si no → cierra sesión y muestra "no autorizada".
+- Email/contraseña: pasa directo (cuentas internas).
 
-## Cómo funciona el gate (resumen técnico)
+## Endurecimiento futuro
 
-- `signInWithGitHub()` pide el scope `read:org` y redirige a GitHub.
-- Al volver, Supabase crea la sesión con un `provider_token` (token de GitHub).
-- `auth.store` llama a `GET https://api.github.com/user/memberships/orgs/fridaKhalo`
-  con ese token. Si el estado es `active` → entra; si no → se cierra la sesión
-  y se muestra "tu cuenta no pertenece al equipo".
-- El login por **email/contraseña** sigue disponible para cuentas internas.
-
-## Endurecimiento futuro (recomendado)
-
-El gate actual es del lado del cliente (buena primera línea + UX). El acceso
-real a datos lo protege la API NestJS + RLS de Supabase. Para forzar la regla
-del lado del servidor: un **Auth Hook** de Supabase (`before user created` /
-custom claims) o validar la membresía del org en el backend al emitir el JWT.
+El gate corre en el cliente (primera línea + UX); el acceso real a datos lo
+protege la API NestJS + RLS de Supabase. Para forzarlo del lado servidor:
+validar `is_current_user_allowed()` también en el backend al recibir el JWT.

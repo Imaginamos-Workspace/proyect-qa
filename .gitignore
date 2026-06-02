@@ -41,3 +41,4 @@ blob-report/
 .qa-agent.json
 .vercel
 .claude/
+.secrets.local

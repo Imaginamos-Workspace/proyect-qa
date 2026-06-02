@@ -48,7 +48,7 @@
     "continueWithGitHub": "Continue with GitHub",
     "redirectingToGitHub": "Redirecting to GitHub...",
     "orWithEmail": "or with email",
-    "notOrgMember": "Your GitHub account is not part of the {{org}} team. Ask an administrator for access."
+    "notAllowed": "Your GitHub account is not authorized for this platform (or it could not be verified). Ask an administrator for access."
   },
   "dashboard": {
     "title": "Dashboard",
