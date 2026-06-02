@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate, Link } from 'react-router';
+import { Github } from 'lucide-react';
 import { useAuthStore } from '@/stores/auth.store';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -13,12 +14,25 @@ export function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [githubLoading, setGithubLoading] = useState(false);
+
   const signIn = useAuthStore((s) => s.signIn);
+  const signInWithGitHub = useAuthStore((s) => s.signInWithGitHub);
+  const user = useAuthStore((s) => s.user);
+  const authError = useAuthStore((s) => s.authError);
+  const clearAuthError = useAuthStore((s) => s.clearAuthError);
   const navigate = useNavigate();
+
+  // Tras el OAuth de GitHub el redirect vuelve a /login; cuando el gate de org
+  // aprueba al usuario, lo llevamos al dashboard.
+  useEffect(() => {
+    if (user) navigate('/dashboard', { replace: true });
+  }, [user, navigate]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    clearAuthError();
     setLoading(true);
     try {
       await signIn(email, password);
@@ -27,6 +41,18 @@ export function LoginPage() {
       setError(err.message || t('auth.failedSignIn'));
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleGitHub = async () => {
+    setError('');
+    clearAuthError();
+    setGithubLoading(true);
+    try {
+      await signInWithGitHub(); // redirige a GitHub; en éxito no continúa aquí.
+    } catch (err: any) {
+      setError(err.message || t('auth.failedSignIn'));
+      setGithubLoading(false);
     }
   };
 
@@ -41,6 +67,29 @@ export function LoginPage() {
           <CardDescription>{t('auth.signInDescription')}</CardDescription>
         </CardHeader>
         <CardContent>
+          {authError === 'not_allowed' && (
+            <div className="mb-4 rounded-md bg-destructive/10 p-3 text-sm text-destructive">
+              {t('auth.notAllowed')}
+            </div>
+          )}
+
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full"
+            onClick={handleGitHub}
+            disabled={githubLoading}
+          >
+            <Github className="mr-2 h-4 w-4" />
+            {githubLoading ? t('auth.redirectingToGitHub') : t('auth.continueWithGitHub')}
+          </Button>
+
+          <div className="my-4 flex items-center gap-3">
+            <span className="h-px flex-1 bg-border" />
+            <span className="text-xs uppercase text-muted-foreground">{t('auth.orWithEmail')}</span>
+            <span className="h-px flex-1 bg-border" />
+          </div>
+
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
               <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
