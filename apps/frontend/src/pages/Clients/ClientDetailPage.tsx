@@ -24,11 +24,16 @@ export function ClientDetailPage() {
   if (!client) return <p className="text-muted-foreground">{t('clients.notFound')}</p>;
 
   const latest = client.latest_run;
-  const chartData = (client.runs ?? []).map((r) => ({
-    name: r.commit_sha ? r.commit_sha.slice(0, 7) : new Date(r.created_at).toLocaleDateString(),
-    passed: r.passed,
-    failed: r.failed,
-  }));
+  // "Ejecutado" = la última corrida realmente corrió pruebas (el gate de CI solo
+  // ejecuta specs graduados; un 0/0 significa nada ejecutado, no 0% pasando).
+  const executed = !!latest && latest.total > 0;
+  const chartData = (client.runs ?? [])
+    .filter((r) => r.total > 0)
+    .map((r) => ({
+      name: r.commit_sha ? r.commit_sha.slice(0, 7) : new Date(r.created_at).toLocaleDateString(),
+      passed: r.passed,
+      failed: r.failed,
+    }));
   const modules = latest?.coverage?.modules ?? [];
   const invModules = client.inventory?.modules ?? [];
 
@@ -61,7 +66,7 @@ export function ClientDetailPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        {latest ? (
+        {executed ? (
           <>
             <StatCard title={t('clients.passRate')} value={`${client.pass_rate}%`} icon={ShieldCheck} iconBg="#d1fae5" iconColor="#10b981" />
             <StatCard title={t('clients.coverage')} value={`${client.coverage_pct}%`} icon={Gauge} iconBg="#dbeafe" iconColor="#3b82f6"
@@ -113,10 +118,10 @@ export function ClientDetailPage() {
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle>{latest ? t('clients.coverageByModule') : t('clients.writtenByModule')}</CardTitle>
+            <CardTitle>{executed ? t('clients.coverageByModule') : t('clients.writtenByModule')}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {latest ? (
+            {executed ? (
               modules.length === 0 ? (
                 <p className="text-sm text-muted-foreground">{t('clients.noData')}</p>
               ) : modules.map((m) => {

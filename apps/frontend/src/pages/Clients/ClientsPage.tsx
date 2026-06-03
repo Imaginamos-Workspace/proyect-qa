@@ -18,8 +18,9 @@ export function ClientsPage() {
 
   const list = clients ?? [];
   const totalClients = list.length;
-  const avgPass = totalClients
-    ? Math.round(list.reduce((a, c) => a + c.pass_rate, 0) / totalClients)
+  const executed = list.filter((c) => c.latest_run && c.latest_run.total > 0);
+  const avgPass = executed.length
+    ? Math.round(executed.reduce((a, c) => a + c.pass_rate, 0) / executed.length)
     : 0;
   const totalRegressions = list.reduce((a, c) => a + c.open_regressions, 0);
   const totalTests = list.reduce((a, c) => a + (c.inventory?.tests_total ?? 0), 0);
@@ -50,7 +51,7 @@ export function ClientsPage() {
                 <CardContent className="space-y-3 p-5">
                   <div className="flex items-center justify-between gap-2">
                     <span className="font-semibold">{c.display_name}</span>
-                    {c.latest_run ? (
+                    {c.latest_run && c.latest_run.total > 0 ? (
                       <Badge variant={passRateVariant(c.pass_rate)}>{c.pass_rate}% OK</Badge>
                     ) : (
                       <Badge variant="info">{c.inventory?.tests_total ?? 0} {t('clients.testsShort')}</Badge>
