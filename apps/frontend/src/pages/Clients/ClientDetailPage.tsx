@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
-import { ArrowLeft, ExternalLink, ShieldCheck, Gauge, AlertTriangle, Clock } from 'lucide-react';
+import { ArrowLeft, ExternalLink, ShieldCheck, Gauge, AlertTriangle, Clock, TestTube2 } from 'lucide-react';
 import { useClient, type Regression } from '@/hooks/use-dashboard';
 import { StatCard } from '@/components/ui/stat-card';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -30,6 +30,7 @@ export function ClientDetailPage() {
     failed: r.failed,
   }));
   const modules = latest?.coverage?.modules ?? [];
+  const invModules = client.inventory?.modules ?? [];
 
   return (
     <div className="space-y-6">
@@ -60,12 +61,23 @@ export function ClientDetailPage() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <StatCard title={t('clients.passRate')} value={`${client.pass_rate}%`} icon={ShieldCheck} iconBg="#d1fae5" iconColor="#10b981" />
-        <StatCard title={t('clients.coverage')} value={`${client.coverage_pct}%`} icon={Gauge} iconBg="#dbeafe" iconColor="#3b82f6"
-          subtitle={latest ? `${latest.coverage?.specs_covered ?? 0}/${latest.coverage?.specs_total ?? 0} specs` : ''} />
-        <StatCard title={t('clients.openRegressions')} value={client.regressions.filter((r) => r.kind === 'new_fail').length} icon={AlertTriangle} iconBg="#fee2e2" iconColor="#ef4444" />
-        <StatCard title={t('clients.lastRun')} value={latest ? `${latest.passed}/${latest.total}` : '—'} icon={Clock} iconBg="#ede9fe" iconColor="#7c3aed"
-          subtitle={latest?.actor_login ? `@${latest.actor_login}` : ''} />
+        {latest ? (
+          <>
+            <StatCard title={t('clients.passRate')} value={`${client.pass_rate}%`} icon={ShieldCheck} iconBg="#d1fae5" iconColor="#10b981" />
+            <StatCard title={t('clients.coverage')} value={`${client.coverage_pct}%`} icon={Gauge} iconBg="#dbeafe" iconColor="#3b82f6"
+              subtitle={`${latest.coverage?.specs_covered ?? 0}/${latest.coverage?.specs_total ?? 0} specs`} />
+            <StatCard title={t('clients.openRegressions')} value={client.regressions.filter((r) => r.kind === 'new_fail').length} icon={AlertTriangle} iconBg="#fee2e2" iconColor="#ef4444" />
+            <StatCard title={t('clients.lastRun')} value={`${latest.passed}/${latest.total}`} icon={Clock} iconBg="#ede9fe" iconColor="#7c3aed"
+              subtitle={latest.actor_login ? `@${latest.actor_login}` : ''} />
+          </>
+        ) : (
+          <>
+            <StatCard title={t('clients.testsWritten')} value={client.inventory?.tests_total ?? 0} icon={TestTube2} iconBg="#dbeafe" iconColor="#3b82f6" />
+            <StatCard title={t('clients.specs')} value={client.inventory?.specs_total ?? 0} icon={Gauge} iconBg="#ede9fe" iconColor="#7c3aed" />
+            <StatCard title={t('clients.modules')} value={client.inventory?.modules?.length ?? 0} icon={ShieldCheck} iconBg="#d1fae5" iconColor="#10b981" />
+            <StatCard title={t('clients.quality')} value={t('clients.notExecuted')} icon={Clock} iconBg="#fef3c7" iconColor="#f59e0b" />
+          </>
+        )}
       </div>
 
       <Card>
@@ -100,24 +112,37 @@ export function ClientDetailPage() {
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>
-          <CardHeader><CardTitle>{t('clients.coverageByModule')}</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle>{latest ? t('clients.coverageByModule') : t('clients.writtenByModule')}</CardTitle>
+          </CardHeader>
           <CardContent className="space-y-3">
-            {modules.length === 0 ? (
+            {latest ? (
+              modules.length === 0 ? (
+                <p className="text-sm text-muted-foreground">{t('clients.noData')}</p>
+              ) : modules.map((m) => {
+                const pct = m.total ? Math.round((m.passed / m.total) * 100) : 0;
+                return (
+                  <div key={m.name}>
+                    <div className="flex justify-between text-sm">
+                      <span>{m.name}</span>
+                      <span className="text-muted-foreground">{m.passed}/{m.total}</span>
+                    </div>
+                    <div className="mt-1 h-2 w-full rounded bg-muted">
+                      <div className="h-2 rounded bg-[#10b981]" style={{ width: `${pct}%` }} />
+                    </div>
+                  </div>
+                );
+              })
+            ) : invModules.length === 0 ? (
               <p className="text-sm text-muted-foreground">{t('clients.noData')}</p>
-            ) : modules.map((m) => {
-              const pct = m.total ? Math.round((m.passed / m.total) * 100) : 0;
-              return (
-                <div key={m.name}>
-                  <div className="flex justify-between text-sm">
-                    <span>{m.name}</span>
-                    <span className="text-muted-foreground">{m.passed}/{m.total}</span>
-                  </div>
-                  <div className="mt-1 h-2 w-full rounded bg-muted">
-                    <div className="h-2 rounded bg-[#10b981]" style={{ width: `${pct}%` }} />
-                  </div>
+            ) : (
+              invModules.map((m) => (
+                <div key={m.name} className="flex items-center justify-between text-sm">
+                  <span className="min-w-0 truncate">{m.name}</span>
+                  <span className="shrink-0 text-muted-foreground">{m.tests} {t('clients.testsShort')}</span>
                 </div>
-              );
-            })}
+              ))
+            )}
           </CardContent>
         </Card>
 

@@ -39,12 +39,20 @@ export interface Regression {
   created_at: string;
 }
 
+export interface Inventory {
+  specs_total?: number;
+  tests_total?: number;
+  modules?: { name: string; tests: number }[];
+  updated_at?: string;
+}
+
 export interface ClientSummary {
   slug: string;
   display_name: string;
   reports_url: string | null;
   designs_url: string | null;
   enabled: boolean;
+  inventory: Inventory;
   latest_run: QaRun | null;
   pass_rate: number;
   coverage_pct: number;

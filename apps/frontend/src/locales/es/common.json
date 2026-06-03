@@ -690,7 +690,15 @@
       "new_fail": "Nuevo fallo",
       "fixed": "Arreglado",
       "flaky": "Flaky"
-    }
+    },
+    "testsWritten": "Pruebas escritas",
+    "testsShort": "pruebas",
+    "modulesShort": "módulos",
+    "notExecuted": "Sin ejecutar",
+    "specs": "Specs",
+    "modules": "Módulos",
+    "quality": "Calidad",
+    "writtenByModule": "Pruebas escritas por módulo"
   },
   "activity": {
     "title": "Actividad del equipo",

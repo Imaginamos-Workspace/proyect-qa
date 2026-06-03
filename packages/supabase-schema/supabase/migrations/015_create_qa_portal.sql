@@ -10,6 +10,9 @@ create table if not exists public.qa_clients (
   reports_url text,
   designs_url text,
   enabled boolean not null default true,
+  -- Inventario de pruebas ESCRITAS (no ejecutadas), derivado del repo:
+  -- { specs_total, tests_total, modules: [{name, tests}], updated_at }
+  inventory jsonb not null default '{}'::jsonb,
   updated_at timestamptz not null default now()
 );
 
