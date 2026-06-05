@@ -5,6 +5,7 @@ import { useClients } from '@/hooks/use-dashboard';
 import { StatCard } from '@/components/ui/stat-card';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Skeleton, StatCardSkeleton } from '@/components/ui/skeleton';
 
 function passRateVariant(rate: number): 'success' | 'warning' | 'destructive' {
   if (rate >= 90) return 'success';
@@ -32,15 +33,27 @@ export function ClientsPage() {
         <p className="text-sm text-muted-foreground">{t('clients.subtitle')}</p>
       </div>
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <StatCard title={t('clients.totalClients')} value={totalClients} icon={FolderKanban} iconBg="#ede9fe" iconColor="#7c3aed" />
-        <StatCard title={t('clients.testsWritten')} value={totalTests} icon={TestTube2} iconBg="#dbeafe" iconColor="#3b82f6" />
-        <StatCard title={t('clients.avgPassRate')} value={`${avgPass}%`} icon={ShieldCheck} iconBg="#d1fae5" iconColor="#10b981" />
-        <StatCard title={t('clients.openRegressions')} value={totalRegressions} icon={AlertTriangle} iconBg="#fee2e2" iconColor="#ef4444" />
-      </div>
+      {isLoading ? (
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <StatCardSkeleton key={i} />
+          ))}
+        </div>
+      ) : (
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          <StatCard title={t('clients.totalClients')} value={totalClients} icon={FolderKanban} tone="primary" />
+          <StatCard title={t('clients.testsWritten')} value={totalTests} icon={TestTube2} tone="info" />
+          <StatCard title={t('clients.avgPassRate')} value={`${avgPass}%`} icon={ShieldCheck} tone="success" />
+          <StatCard title={t('clients.openRegressions')} value={totalRegressions} icon={AlertTriangle} tone={totalRegressions > 0 ? 'destructive' : 'success'} />
+        </div>
+      )}
 
       {isLoading ? (
-        <p className="text-muted-foreground">{t('common.loading')}</p>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-32 w-full" />
+          ))}
+        </div>
       ) : list.length === 0 ? (
         <Card><CardContent className="p-8 text-center text-muted-foreground">{t('clients.empty')}</CardContent></Card>
       ) : (
@@ -61,7 +74,7 @@ export function ClientsPage() {
                     <>
                       <div className="flex gap-4 text-sm text-muted-foreground">
                         <span>{t('clients.coverage')}: {c.coverage_pct}%</span>
-                        <span className={c.open_regressions > 0 ? 'text-[#ef4444]' : ''}>
+                        <span className={c.open_regressions > 0 ? 'text-destructive' : ''}>
                           {c.open_regressions} {t('clients.regressions')}
                         </span>
                       </div>

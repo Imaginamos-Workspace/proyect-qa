@@ -8,7 +8,7 @@ export function AppLayout() {
       <Sidebar />
       <div className="flex flex-1 flex-col overflow-hidden">
         <Header />
-        <main className="flex-1 overflow-auto bg-[#f5f3ff]">
+        <main className="flex-1 overflow-auto bg-background">
           <div className="container mx-auto max-w-7xl p-6">
             <Outlet />
           </div>
