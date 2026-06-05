@@ -8,6 +8,7 @@ import { useClient, type Regression } from '@/hooks/use-dashboard';
 import { StatCard } from '@/components/ui/stat-card';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Skeleton, StatCardSkeleton } from '@/components/ui/skeleton';
 
 const KIND_VARIANT: Record<Regression['kind'], 'destructive' | 'success' | 'warning'> = {
   new_fail: 'destructive',
@@ -20,7 +21,29 @@ export function ClientDetailPage() {
   const { slug = '' } = useParams();
   const { data: client, isLoading } = useClient(slug);
 
-  if (isLoading) return <p className="text-muted-foreground">{t('common.loading')}</p>;
+  if (isLoading) {
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center gap-3">
+          <Skeleton className="h-8 w-8 rounded-md" />
+          <div className="space-y-2">
+            <Skeleton className="h-6 w-48" />
+            <Skeleton className="h-4 w-24" />
+          </div>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <StatCardSkeleton key={i} />
+          ))}
+        </div>
+        <Skeleton className="h-64 w-full" />
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Skeleton className="h-48 w-full" />
+          <Skeleton className="h-48 w-full" />
+        </div>
+      </div>
+    );
+  }
   if (!client) return <p className="text-muted-foreground">{t('clients.notFound')}</p>;
 
   const latest = client.latest_run;
@@ -68,19 +91,19 @@ export function ClientDetailPage() {
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         {executed ? (
           <>
-            <StatCard title={t('clients.passRate')} value={`${client.pass_rate}%`} icon={ShieldCheck} iconBg="#d1fae5" iconColor="#10b981" />
-            <StatCard title={t('clients.coverage')} value={`${client.coverage_pct}%`} icon={Gauge} iconBg="#dbeafe" iconColor="#3b82f6"
+            <StatCard title={t('clients.passRate')} value={`${client.pass_rate}%`} icon={ShieldCheck} tone="success" />
+            <StatCard title={t('clients.coverage')} value={`${client.coverage_pct}%`} icon={Gauge} tone="info"
               subtitle={`${latest.coverage?.specs_covered ?? 0}/${latest.coverage?.specs_total ?? 0} specs`} />
-            <StatCard title={t('clients.openRegressions')} value={client.regressions.filter((r) => r.kind === 'new_fail').length} icon={AlertTriangle} iconBg="#fee2e2" iconColor="#ef4444" />
-            <StatCard title={t('clients.lastRun')} value={`${latest.passed}/${latest.total}`} icon={Clock} iconBg="#ede9fe" iconColor="#7c3aed"
+            <StatCard title={t('clients.openRegressions')} value={client.regressions.filter((r) => r.kind === 'new_fail').length} icon={AlertTriangle} tone="destructive" />
+            <StatCard title={t('clients.lastRun')} value={`${latest.passed}/${latest.total}`} icon={Clock} tone="primary"
               subtitle={latest.actor_login ? `@${latest.actor_login}` : ''} />
           </>
         ) : (
           <>
-            <StatCard title={t('clients.testsWritten')} value={client.inventory?.tests_total ?? 0} icon={TestTube2} iconBg="#dbeafe" iconColor="#3b82f6" />
-            <StatCard title={t('clients.specs')} value={client.inventory?.specs_total ?? 0} icon={Gauge} iconBg="#ede9fe" iconColor="#7c3aed" />
-            <StatCard title={t('clients.modules')} value={client.inventory?.modules?.length ?? 0} icon={ShieldCheck} iconBg="#d1fae5" iconColor="#10b981" />
-            <StatCard title={t('clients.quality')} value={t('clients.notExecuted')} icon={Clock} iconBg="#fef3c7" iconColor="#f59e0b" />
+            <StatCard title={t('clients.testsWritten')} value={client.inventory?.tests_total ?? 0} icon={TestTube2} tone="info" />
+            <StatCard title={t('clients.specs')} value={client.inventory?.specs_total ?? 0} icon={Gauge} tone="primary" />
+            <StatCard title={t('clients.modules')} value={client.inventory?.modules?.length ?? 0} icon={ShieldCheck} tone="success" />
+            <StatCard title={t('clients.quality')} value={t('clients.notExecuted')} icon={Clock} tone="warning" />
           </>
         )}
       </div>
@@ -103,10 +126,18 @@ export function ClientDetailPage() {
                     <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="name" fontSize={12} />
-                <YAxis fontSize={12} allowDecimals={false} />
-                <Tooltip />
+                <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
+                <XAxis dataKey="name" fontSize={12} stroke="hsl(var(--muted-foreground))" />
+                <YAxis fontSize={12} allowDecimals={false} stroke="hsl(var(--muted-foreground))" />
+                <Tooltip
+                  contentStyle={{
+                    backgroundColor: 'hsl(var(--card))',
+                    border: '1px solid hsl(var(--border))',
+                    borderRadius: '8px',
+                    fontSize: '12px',
+                    color: 'hsl(var(--foreground))',
+                  }}
+                />
                 <Area type="monotone" dataKey="passed" stroke="#10b981" fill="url(#gP)" name={t('clients.passed')} />
                 <Area type="monotone" dataKey="failed" stroke="#ef4444" fill="url(#gF)" name={t('clients.failed')} />
               </AreaChart>
@@ -133,7 +164,7 @@ export function ClientDetailPage() {
                       <span className="text-muted-foreground">{m.passed}/{m.total}</span>
                     </div>
                     <div className="mt-1 h-2 w-full rounded bg-muted">
-                      <div className="h-2 rounded bg-[#10b981]" style={{ width: `${pct}%` }} />
+                      <div className="h-2 rounded bg-success" style={{ width: `${pct}%` }} />
                     </div>
                   </div>
                 );
