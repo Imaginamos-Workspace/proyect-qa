@@ -1194,7 +1194,9 @@ export function GenerateTestsPage() {
           )}
 
           {/* ───────── QUICK MODE (deprecated — kept as dead code; never reached) ───────── */}
-          {false && mode === 'quick' && (
+          {
+            // eslint-disable-next-line no-constant-binary-expression
+            false && mode === 'quick' && (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2 text-base font-semibold text-[#1e1b4b]">
