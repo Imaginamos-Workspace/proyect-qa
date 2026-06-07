@@ -4,3 +4,4 @@ export * from './test-run.types';
 export * from './report.types';
 export * from './jira.types';
 export * from './ai.types';
+export * from './scrum.types';

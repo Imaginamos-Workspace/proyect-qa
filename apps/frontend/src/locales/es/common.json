@@ -6,6 +6,7 @@
     "groupIntegration": "INTEGRACION",
     "groupConfig": "CONFIGURACION",
     "dashboard": "Panel",
+    "board": "Tablero",
     "projects": "Proyectos",
     "testCases": "Casos de Prueba",
     "testRunner": "Ejecutor de Pruebas",
@@ -20,6 +21,20 @@
     "home": "Inicio",
     "search": "Buscar",
     "notifications": "Notificaciones"
+  },
+  "board": {
+    "title": "Tablero",
+    "pickClient": "Elegí un cliente para ver su tablero.",
+    "error": "No se pudo cargar el tablero.",
+    "allSprints": "Todos los sprints",
+    "openInGithub": "Abrir en GitHub",
+    "notConfigured": {
+      "title": "Tablero no disponible",
+      "missing_github_token": "Falta configurar el token de GitHub (GITHUB_TOKEN) en el backend para leer el tablero del cliente.",
+      "board_not_found": "No se encontró un GitHub Project llamado «Cliente: …» para este cliente. Creá su tablero con projects:bootstrap.",
+      "github_error": "Hubo un error consultando GitHub. Reintentá en unos minutos.",
+      "client_not_found": "Cliente no encontrado."
+    }
   },
   "auth": {
     "welcomeBack": "Bienvenido de nuevo",

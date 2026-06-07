@@ -6,6 +6,7 @@
     "groupIntegration": "INTEGRATION",
     "groupConfig": "CONFIG",
     "dashboard": "Dashboard",
+    "board": "Board",
     "projects": "Projects",
     "testCases": "Test Cases",
     "testRunner": "Test Runner",
@@ -20,6 +21,20 @@
     "home": "Home",
     "search": "Search",
     "notifications": "Notifications"
+  },
+  "board": {
+    "title": "Board",
+    "pickClient": "Pick a client to see its board.",
+    "error": "Couldn't load the board.",
+    "allSprints": "All sprints",
+    "openInGithub": "Open in GitHub",
+    "notConfigured": {
+      "title": "Board unavailable",
+      "missing_github_token": "The backend is missing the GitHub token (GITHUB_TOKEN) needed to read the client's board.",
+      "board_not_found": "No GitHub Project named “Cliente: …” was found for this client. Create its board with projects:bootstrap.",
+      "github_error": "There was an error querying GitHub. Try again in a few minutes.",
+      "client_not_found": "Client not found."
+    }
   },
   "auth": {
     "welcomeBack": "Welcome Back",

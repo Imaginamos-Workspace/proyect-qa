@@ -12,6 +12,7 @@ import { AIModule } from './modules/ai/ai.module';
 import { ModulesModule } from './modules/modules/modules.module';
 import { IngestModule } from './modules/ingest/ingest.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { ScrumModule } from './modules/scrum/scrum.module';
 import { SupabaseModule } from './config/supabase.module';
 
 @Module({
@@ -30,6 +31,7 @@ import { SupabaseModule } from './config/supabase.module';
     ModulesModule,
     IngestModule,
     DashboardModule,
+    ScrumModule,
   ],
 })
 export class AppModule {}
