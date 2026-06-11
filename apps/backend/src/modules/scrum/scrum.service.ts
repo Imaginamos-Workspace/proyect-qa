@@ -44,7 +44,7 @@ export class ScrumService {
     config: ConfigService,
   ) {
     this.token = config.get<string>('GITHUB_TOKEN');
-    this.owner = config.get<string>('GITHUB_PROJECT_OWNER') ?? 'fridaKhalo';
+    this.owner = config.get<string>('GITHUB_PROJECT_OWNER') ?? 'Imaginamos-Workspace';
   }
 
   /** Clientes disponibles (mismo origen que el dashboard). */
@@ -120,12 +120,12 @@ export class ScrumService {
   /** Encuentra el Project del cliente por título "Cliente: <nombre>" (o que contenga el slug). */
   private async resolveProject(displayName: string, slug: string) {
     const data = await this.gql<{
-      user: { projectsV2: { nodes: { number: number; title: string; url: string }[] } } | null;
+      organization: { projectsV2: { nodes: { number: number; title: string; url: string }[] } } | null;
     }>(
-      `query($owner:String!){ user(login:$owner){ projectsV2(first:80){ nodes{ number title url } } } }`,
+      `query($owner:String!){ organization(login:$owner){ projectsV2(first:80){ nodes{ number title url } } } }`,
       { owner: this.owner },
     );
-    const nodes = data.user?.projectsV2?.nodes ?? [];
+    const nodes = data.organization?.projectsV2?.nodes ?? [];
     const want = `cliente: ${displayName}`.toLowerCase();
     return (
       nodes.find((n) => n.title.toLowerCase() === want) ??
@@ -144,7 +144,7 @@ export class ScrumService {
     let cursor: string | null = null;
     do {
       const data: any = await this.gql(ITEMS_QUERY, { owner: this.owner, number, cursor });
-      const items = data.user?.projectV2?.items;
+      const items = data.organization?.projectV2?.items;
       for (const item of items?.nodes ?? []) {
         const fields: Record<string, string> = {};
         for (const fv of item.fieldValues?.nodes ?? []) {
@@ -204,7 +204,7 @@ export class ScrumService {
 // agrega en una iteración futura).
 const ITEMS_QUERY = `
 query($owner:String!, $number:Int!, $cursor:String) {
-  user(login:$owner) {
+  organization(login:$owner) {
     projectV2(number:$number) {
       items(first:100, after:$cursor) {
         pageInfo { hasNextPage endCursor }

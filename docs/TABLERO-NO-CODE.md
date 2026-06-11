@@ -61,7 +61,7 @@ El backend lee GitHub Projects con un token de **solo lectura**:
    (`read:project`).
 2. En el backend (Vercel u donde corra), seteá las variables:
    - `GITHUB_TOKEN` = el PAT.
-   - `GITHUB_PROJECT_OWNER` = `fridaKhalo` (o la cuenta/organización dueña de los
+   - `GITHUB_PROJECT_OWNER` = `Imaginamos-Workspace` (la organización dueña de los
      Projects; es el default).
 3. Redeploy. El portal descubre el tablero de cada cliente por su título
    (`Cliente: <nombre>`) — no hay que mapear nada a mano.
