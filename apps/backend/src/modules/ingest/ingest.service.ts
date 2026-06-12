@@ -25,7 +25,16 @@ export class IngestService {
   async ingestRun(dto: IngestRunDto) {
     const suite = dto.suite || 'e2e';
 
-    // 1. Upsert del cliente (slug + links de reportes/diseños).
+    // 1. Upsert del cliente (slug + links de reportes/diseños + inventario).
+    // El inventario (pruebas ESCRITAS) se deriva de la corrida — specs del repo
+    // y tests de la suite — así el "estado de construcción de la regresión" se
+    // actualiza solo con cada corrida (qa:apply local o CI), sin cargas manuales.
+    const inventory = {
+      specs_total: dto.coverage?.specs_total ?? 0,
+      tests_total: (dto.tests ?? []).length,
+      modules: (dto.coverage?.modules ?? []).map((m) => ({ name: m.name, tests: m.total })),
+      updated_at: new Date().toISOString(),
+    };
     await this.supabase.from('qa_clients').upsert(
       {
         slug: dto.client_slug,
@@ -33,6 +42,7 @@ export class IngestService {
         reports_url: dto.reports_url ?? null,
         designs_url: dto.designs_url ?? null,
         enabled: true,
+        ...(inventory.tests_total || inventory.specs_total ? { inventory } : {}),
         updated_at: new Date().toISOString(),
       },
       { onConflict: 'slug' },
