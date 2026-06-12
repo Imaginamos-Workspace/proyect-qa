@@ -54,12 +54,15 @@ export function BoardPage() {
 
   const assigneeOptions: FilterOption[] = useMemo(() => {
     const map = new Map<string, FilterOption>();
-    for (const c of allCards)
-      for (const a of c.assignees)
-        if (!map.has(a.login))
-          map.set(a.login, { value: a.login, label: a.login, adornment: <Avatar login={a.login} url={a.avatarUrl} size={20} /> });
+    const add = (login: string, avatarUrl: string | null) => {
+      if (!map.has(login))
+        map.set(login, { value: login, label: login, adornment: <Avatar login={login} url={avatarUrl} size={20} /> });
+    };
+    // Miembros de la org (asignables) + cualquiera ya asignado a una tarjeta.
+    for (const m of board?.members ?? []) add(m.login, m.avatarUrl);
+    for (const c of allCards) for (const a of c.assignees) add(a.login, a.avatarUrl);
     return [...map.values()].sort((a, b) => a.label.localeCompare(b.label));
-  }, [allCards]);
+  }, [board, allCards]);
 
   const typeOptions: FilterOption[] = useMemo(() => {
     const present = new Set(allCards.map((c) => c.type));

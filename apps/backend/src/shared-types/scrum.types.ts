@@ -55,6 +55,7 @@ export interface ScrumBoard {
   epics: ScrumEpic[];
   sprints: string[];
   sprintsMeta: ScrumSprint[]; // fechas + estado abierto/cerrado de cada sprint
+  members: ScrumAssignee[]; // usuarios asignables del repo (miembros de la org)
   updated_at: string;
 }
 

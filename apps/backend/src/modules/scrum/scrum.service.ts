@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../../config/supabase.module';
 import type {
+  ScrumAssignee,
   ScrumBoard,
   ScrumCard,
   ScrumColumn,
@@ -86,6 +87,7 @@ export class ScrumService {
       epics: [],
       sprints: [],
       sprintsMeta: [],
+      members: [],
       updated_at: new Date().toISOString(),
     };
 
@@ -149,6 +151,7 @@ export class ScrumService {
     const epics: ScrumEpic[] = [];
     const sprints = new Set<string>();
     const sprintsMeta = await this.fetchSprints(number);
+    const members = await this.fetchMembers(base.client_slug);
 
     let cursor: string | null = null;
     do {
@@ -206,8 +209,24 @@ export class ScrumService {
       // respeta el orden cronológico); si falta, derivamos de los items.
       sprints: sprintsMeta.length ? sprintsMeta.map((s) => s.title) : Array.from(sprints).sort(),
       sprintsMeta,
+      members,
       updated_at: new Date().toISOString(),
     };
+  }
+
+  /** Usuarios asignables del repo del cliente (miembros de la org con acceso). */
+  private async fetchMembers(slug: string): Promise<ScrumAssignee[]> {
+    try {
+      const data = await this.gql<{
+        repository: { assignableUsers: { nodes: { login: string; avatarUrl: string | null }[] } } | null;
+      }>(MEMBERS_QUERY, { owner: this.owner, name: `qa-${slug}` });
+      return (data.repository?.assignableUsers?.nodes ?? []).map((u) => ({
+        login: u.login,
+        avatarUrl: u.avatarUrl,
+      }));
+    } catch {
+      return []; // sin acceso al repo o repo inexistente → degradamos sin romper
+    }
   }
 
   /** Iteraciones del campo Sprint (con fechas y estado abierto/cerrado). */
@@ -248,6 +267,15 @@ export class ScrumService {
     }
   }
 }
+
+// Usuarios asignables del repo del cliente = miembros de la org con acceso al
+// repo. Pueblan el filtro "Persona" aunque ningún issue tenga asignados aún.
+const MEMBERS_QUERY = `
+query($owner:String!, $name:String!) {
+  repository(owner:$owner, name:$name) {
+    assignableUsers(first:50) { nodes { login avatarUrl } }
+  }
+}`;
 
 // Config del campo Sprint (iteración): iteraciones activas + completadas con
 // fechas. Permite mostrar rango de fechas y estado abierto/cerrado por sprint.
