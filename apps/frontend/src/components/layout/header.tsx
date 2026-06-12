@@ -1,7 +1,12 @@
 import { useLocation } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '@/stores/auth.store';
-import { Bell, Search, User, Globe } from 'lucide-react';
+import { Bell, Search, User, Globe, Menu } from 'lucide-react';
+
+interface HeaderProps {
+  /** Abre el drawer del sidebar en mobile. */
+  onMenuClick?: () => void;
+}
 
 function Breadcrumb() {
   const { t } = useTranslation();
@@ -9,16 +14,16 @@ function Breadcrumb() {
   const segments = location.pathname.split('/').filter(Boolean);
 
   return (
-    <div className="flex items-center gap-2 text-sm">
-      <span className="text-muted-foreground">{t('header.home')}</span>
+    <div className="flex min-w-0 items-center gap-2 text-sm">
+      <span className="hidden text-muted-foreground sm:inline">{t('header.home')}</span>
       {segments.map((segment, index) => (
-        <span key={segment} className="flex items-center gap-2">
-          <span className="text-muted-foreground">/</span>
+        <span key={segment} className="flex min-w-0 items-center gap-2">
+          <span className="hidden text-muted-foreground sm:inline">/</span>
           <span
             className={
               index === segments.length - 1
-                ? 'font-medium text-foreground'
-                : 'text-muted-foreground'
+                ? 'truncate font-medium text-foreground'
+                : 'hidden truncate text-muted-foreground sm:inline'
             }
           >
             {segment.charAt(0).toUpperCase() + segment.slice(1).replace(/-/g, ' ')}
@@ -50,16 +55,27 @@ function LanguageSwitcher() {
   );
 }
 
-export function Header() {
+export function Header({ onMenuClick }: HeaderProps) {
+  const { t } = useTranslation();
   const user = useAuthStore((s) => s.user);
 
   return (
-    <header className="flex h-16 items-center justify-between border-b border-purple-100 bg-white px-6 shadow-sm">
-      <Breadcrumb />
+    <header className="flex h-16 items-center justify-between gap-2 border-b border-purple-100 bg-white px-4 shadow-sm sm:px-6">
+      <div className="flex min-w-0 items-center gap-2">
+        {/* Hamburguesa (solo mobile) */}
+        <button
+          onClick={onMenuClick}
+          className="-ml-1 rounded-md p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground lg:hidden"
+          aria-label={t('nav.openMenu', 'Abrir menú')}
+        >
+          <Menu className="h-5 w-5" />
+        </button>
+        <Breadcrumb />
+      </div>
 
-      <div className="flex items-center gap-3">
+      <div className="flex shrink-0 items-center gap-1 sm:gap-3">
         <LanguageSwitcher />
-        <button className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
+        <button className="hidden rounded-md p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground sm:inline-flex">
           <Search className="h-5 w-5" />
         </button>
         <button className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground">
@@ -70,7 +86,9 @@ export function Header() {
             <User className="h-4 w-4 text-white" />
           </div>
           {user?.email && (
-            <span className="text-sm text-muted-foreground">{user.email}</span>
+            <span className="hidden max-w-[12rem] truncate text-sm text-muted-foreground md:inline">
+              {user.email}
+            </span>
           )}
         </div>
       </div>
