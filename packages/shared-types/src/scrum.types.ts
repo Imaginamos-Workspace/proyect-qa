@@ -37,6 +37,13 @@ export interface ScrumEpic {
   url: string | null;
 }
 
+export interface ScrumSprint {
+  title: string;
+  startDate: string | null; // ISO yyyy-mm-dd
+  endDate: string | null; // ISO yyyy-mm-dd (start + duración)
+  completed: boolean; // true = cerrado (iteración completada) · false = abierto
+}
+
 export interface ScrumBoard {
   client_slug: string;
   client_name: string;
@@ -47,6 +54,7 @@ export interface ScrumBoard {
   columns: ScrumColumn[];
   epics: ScrumEpic[];
   sprints: string[];
+  sprintsMeta: ScrumSprint[]; // fechas + estado abierto/cerrado de cada sprint
   updated_at: string;
 }
 

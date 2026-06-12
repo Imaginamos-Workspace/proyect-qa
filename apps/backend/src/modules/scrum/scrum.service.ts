@@ -9,7 +9,14 @@ import type {
   ScrumEpic,
   ScrumIssueType,
   ScrumPriority,
+  ScrumSprint,
 } from '../../shared-types';
+
+interface RawIteration {
+  title: string;
+  startDate: string | null;
+  duration: number | null;
+}
 
 const GITHUB_GRAPHQL = 'https://api.github.com/graphql';
 // Orden de columnas del kanban (coincide con el Status del board, rules/96).
@@ -78,6 +85,7 @@ export class ScrumService {
       columns: COLUMN_ORDER.map((k) => ({ key: k, title: k, cards: [] })),
       epics: [],
       sprints: [],
+      sprintsMeta: [],
       updated_at: new Date().toISOString(),
     };
 
@@ -140,6 +148,7 @@ export class ScrumService {
     );
     const epics: ScrumEpic[] = [];
     const sprints = new Set<string>();
+    const sprintsMeta = await this.fetchSprints(number);
 
     let cursor: string | null = null;
     do {
@@ -193,11 +202,70 @@ export class ScrumService {
       project_url: url,
       columns: COLUMN_ORDER.map((k) => columns.get(k)!),
       epics,
-      sprints: Array.from(sprints).sort(),
+      // Lista de sprints: preferimos la config de iteraciones (incluye vacíos y
+      // respeta el orden cronológico); si falta, derivamos de los items.
+      sprints: sprintsMeta.length ? sprintsMeta.map((s) => s.title) : Array.from(sprints).sort(),
+      sprintsMeta,
       updated_at: new Date().toISOString(),
     };
   }
+
+  /** Iteraciones del campo Sprint (con fechas y estado abierto/cerrado). */
+  private async fetchSprints(number: number): Promise<ScrumSprint[]> {
+    try {
+      const data = await this.gql<{
+        organization: {
+          projectV2: {
+            field: {
+              configuration?: {
+                iterations: RawIteration[];
+                completedIterations: RawIteration[];
+              };
+            } | null;
+          } | null;
+        } | null;
+      }>(SPRINTS_QUERY, { owner: this.owner, number });
+
+      const cfg = data.organization?.projectV2?.field?.configuration;
+      if (!cfg) return [];
+
+      const toSprint = (it: RawIteration, completed: boolean): ScrumSprint => {
+        let endDate: string | null = null;
+        if (it.startDate && it.duration) {
+          const d = new Date(`${it.startDate}T00:00:00Z`);
+          d.setUTCDate(d.getUTCDate() + it.duration - 1);
+          endDate = d.toISOString().slice(0, 10);
+        }
+        return { title: it.title, startDate: it.startDate, endDate, completed };
+      };
+
+      return [
+        ...(cfg.completedIterations ?? []).map((it) => toSprint(it, true)),
+        ...(cfg.iterations ?? []).map((it) => toSprint(it, false)),
+      ].sort((a, b) => (a.startDate ?? '').localeCompare(b.startDate ?? ''));
+    } catch {
+      return []; // si el campo no es de iteración o no hay acceso, degradamos sin romper
+    }
+  }
 }
+
+// Config del campo Sprint (iteración): iteraciones activas + completadas con
+// fechas. Permite mostrar rango de fechas y estado abierto/cerrado por sprint.
+const SPRINTS_QUERY = `
+query($owner:String!, $number:Int!) {
+  organization(login:$owner) {
+    projectV2(number:$number) {
+      field(name:"Sprint") {
+        ... on ProjectV2IterationField {
+          configuration {
+            iterations { title startDate duration }
+            completedIterations { title startDate duration }
+          }
+        }
+      }
+    }
+  }
+}`;
 
 // Items del Project con sus campos y el contenido del issue. Sin `parent` para
 // que la query sea robusta entre variantes de la API (la jerarquía de épicas se
