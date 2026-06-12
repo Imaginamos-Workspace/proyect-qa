@@ -19,8 +19,21 @@ const KIND_VARIANT: Record<Regression['kind'], 'destructive' | 'success' | 'warn
 export function ClientDetailPage() {
   const { t } = useTranslation();
   const { slug = '' } = useParams();
-  const { data: client, isLoading } = useClient(slug);
+  const { data: client, isLoading, isError, refetch } = useClient(slug);
 
+  if (isError) {
+    return (
+      <div className="flex flex-col items-center gap-3 py-16 text-center">
+        <p className="text-sm text-muted-foreground">No se pudo cargar el cliente (timeout o error de red).</p>
+        <button
+          onClick={() => refetch()}
+          className="rounded-lg border border-border px-3 py-1.5 text-sm font-medium hover:bg-muted"
+        >
+          Reintentar
+        </button>
+      </div>
+    );
+  }
   if (isLoading) {
     return (
       <div className="space-y-6">

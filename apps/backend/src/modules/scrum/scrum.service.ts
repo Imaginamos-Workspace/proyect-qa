@@ -10,6 +10,7 @@ import type {
   ScrumEpic,
   ScrumIssueType,
   ScrumPriority,
+  ScrumQaInfo,
   ScrumSprint,
 } from '../../shared-types';
 
@@ -88,6 +89,7 @@ export class ScrumService {
       sprints: [],
       sprintsMeta: [],
       members: [],
+      qa: null,
       updated_at: new Date().toISOString(),
     };
 
@@ -152,6 +154,7 @@ export class ScrumService {
     const sprints = new Set<string>();
     const sprintsMeta = await this.fetchSprints(number);
     const members = await this.fetchMembers(base.client_slug);
+    const qa = await this.fetchQaInfo(base.client_slug);
 
     let cursor: string | null = null;
     do {
@@ -210,8 +213,35 @@ export class ScrumService {
       sprints: sprintsMeta.length ? sprintsMeta.map((s) => s.title) : Array.from(sprints).sort(),
       sprintsMeta,
       members,
+      qa,
       updated_at: new Date().toISOString(),
     };
+  }
+
+  /** Trazabilidad pruebas↔historias de la última corrida (qa_runs.coverage). */
+  private async fetchQaInfo(slug: string): Promise<ScrumQaInfo | null> {
+    try {
+      const { data: run } = await this.supabase
+        .from('qa_runs')
+        .select('coverage, report_url, created_at')
+        .eq('client_slug', slug)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!run) return null;
+      const cov = (run.coverage ?? {}) as {
+        story_map?: ScrumQaInfo['story_map'];
+        unmapped_tests?: string[];
+      };
+      return {
+        report_url: run.report_url ?? null,
+        run_at: run.created_at ?? null,
+        story_map: cov.story_map ?? [],
+        unmapped_tests: cov.unmapped_tests ?? [],
+      };
+    } catch {
+      return null; // sin corridas o sin acceso → el board degrada sin romper
+    }
   }
 
   /** Usuarios asignables del repo del cliente (miembros de la org con acceso). */

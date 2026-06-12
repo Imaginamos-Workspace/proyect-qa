@@ -44,6 +44,22 @@ export interface ScrumSprint {
   completed: boolean; // true = cerrado (iteración completada) · false = abierto
 }
 
+/** Resumen de pruebas ligado a una historia (#N del issue) — última corrida. */
+export interface ScrumStoryTests {
+  story: number;
+  total: number;
+  passed: number;
+  failed: number;
+}
+
+/** Trazabilidad de la última corrida de QA, para pintar pruebas/evidencia en el board. */
+export interface ScrumQaInfo {
+  report_url: string | null; // evidencia (reporte HTML)
+  run_at: string | null;
+  story_map: ScrumStoryTests[]; // historias CON pruebas y su resultado
+  unmapped_tests: string[]; // pruebas SIN historia ligada (mapeo pendiente)
+}
+
 export interface ScrumBoard {
   client_slug: string;
   client_name: string;
@@ -56,6 +72,7 @@ export interface ScrumBoard {
   sprints: string[];
   sprintsMeta: ScrumSprint[]; // fechas + estado abierto/cerrado de cada sprint
   members: ScrumAssignee[]; // usuarios asignables del repo (miembros de la org)
+  qa: ScrumQaInfo | null; // trazabilidad pruebas↔historias de la última corrida
   updated_at: string;
 }
 

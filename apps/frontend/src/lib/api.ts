@@ -18,9 +18,12 @@ async function request<T>(
   options: RequestInit = {},
 ): Promise<T> {
   const headers = await getAuthHeaders();
+  // Timeout duro: sin esto un fetch colgado deja la UI en "cargando" infinito
+  // (skeletons eternos). 20s cubre cold-starts de Vercel.
   const response = await fetch(`${API_URL}${path}`, {
     ...options,
     headers: { ...headers, ...options.headers },
+    signal: options.signal ?? AbortSignal.timeout(20_000),
   });
 
   if (!response.ok) {

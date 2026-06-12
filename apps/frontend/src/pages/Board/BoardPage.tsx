@@ -13,7 +13,8 @@ import {
   FilterX,
 } from 'lucide-react';
 import { useScrumBoards, useScrumBoard } from '@/hooks/use-scrum';
-import type { ScrumCard, ScrumIssueType } from '@qa/shared-types';
+import type { ScrumCard, ScrumIssueType, ScrumStoryTests } from '@qa/shared-types';
+import { TestsBadge, TraceabilityButton } from './board-traceability';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
@@ -91,6 +92,12 @@ export function BoardPage() {
   const visibleColumns = (board?.columns ?? [])
     .filter((col) => statuses.size === 0 || statuses.has(col.key))
     .map((col) => ({ ...col, cards: col.cards.filter(matches) }));
+
+  // Trazabilidad: resultado de pruebas por historia (#N) de la última corrida.
+  const testsByStory = useMemo(
+    () => new Map((board?.qa?.story_map ?? []).map((e) => [e.story, e])),
+    [board],
+  );
 
   const totalShown = visibleColumns.reduce((n, c) => n + c.cards.length, 0);
   const activeFilters = search.length + sprint.length + assignees.size + types.size + statuses.size;
@@ -174,6 +181,7 @@ export function BoardPage() {
                 <FilterX className="h-4 w-4" /> Limpiar
               </button>
             )}
+            <TraceabilityButton board={board} />
             <div className="ml-auto flex items-center gap-3 pr-1 text-xs text-muted-foreground">
               <span>{totalShown} tarjeta{totalShown === 1 ? '' : 's'}</span>
               {board.project_url && (
@@ -210,7 +218,14 @@ export function BoardPage() {
                   {col.cards.length === 0 ? (
                     <p className="px-1 py-8 text-center text-xs text-muted-foreground/60">—</p>
                   ) : (
-                    col.cards.map((card) => <IssueCard key={card.id} card={card} />)
+                    col.cards.map((card) => (
+                      <IssueCard
+                        key={card.id}
+                        card={card}
+                        qaEntry={card.number != null ? testsByStory.get(card.number) : undefined}
+                        reportUrl={board.qa?.report_url}
+                      />
+                    ))
                   )}
                 </div>
               </div>
@@ -223,7 +238,15 @@ export function BoardPage() {
 }
 
 /* ── Tarjeta de issue (estilo Jira) ─────────────────────────────────────── */
-function IssueCard({ card }: { card: ScrumCard }) {
+function IssueCard({
+  card,
+  qaEntry,
+  reportUrl,
+}: {
+  card: ScrumCard;
+  qaEntry?: ScrumStoryTests;
+  reportUrl?: string | null;
+}) {
   const inner = (
     <Card className="cursor-pointer border-border/70 transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md">
       <CardContent className="space-y-2 p-3">
@@ -248,6 +271,7 @@ function IssueCard({ card }: { card: ScrumCard }) {
         <div className="flex items-center gap-2">
           <IssueTypeIcon type={card.type} />
           <IssueKey number={card.number} />
+          <TestsBadge entry={qaEntry} reportUrl={reportUrl} />
           <div className="ml-auto flex items-center gap-1.5">
             <PriorityFlag priority={card.priority} />
             <EstimateChip estimate={card.estimate} />

@@ -16,11 +16,23 @@ class CoverageModuleDto {
   @IsInt() @Min(0) passed: number;
 }
 
+class StoryMapEntryDto {
+  @IsInt() @Min(1) story: number;
+  @IsInt() @Min(0) total: number;
+  @IsInt() @Min(0) passed: number;
+  @IsInt() @Min(0) failed: number;
+}
+
 class RunCoverageDto {
   @IsInt() @Min(0) specs_total: number;
   @IsInt() @Min(0) specs_covered: number;
   @IsArray() @ValidateNested({ each: true }) @Type(() => CoverageModuleDto)
   modules: CoverageModuleDto[];
+  // Trazabilidad test→historia (board): qué historias tienen pruebas y cómo van.
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => StoryMapEntryDto)
+  story_map?: StoryMapEntryDto[];
+  // Títulos de pruebas SIN historia ligada (panel de mapeo pendiente).
+  @IsOptional() @IsArray() @IsString({ each: true }) unmapped_tests?: string[];
 }
 
 class IngestTestDto {
@@ -28,6 +40,8 @@ class IngestTestDto {
   @IsString() title: string;
   @IsOptional() @IsString() file?: string;
   @IsIn(['passed', 'failed', 'skipped', 'flaky']) status: string;
+  @IsOptional() @IsString() spec?: string;
+  @IsOptional() @IsInt() story?: number;
 }
 
 export class IngestRunDto {
