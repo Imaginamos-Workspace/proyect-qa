@@ -1,4 +1,4 @@
-import { Inject, Injectable, Logger } from '@nestjs/common';
+import { Inject, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../../config/supabase.module';
@@ -216,6 +216,45 @@ export class ScrumService {
       qa,
       updated_at: new Date().toISOString(),
     };
+  }
+
+  /** Asigna (o desasigna) un responsable a un issue del cliente. Requiere un
+   *  token con permiso de ESCRITURA (Issues:write): GITHUB_WRITE_TOKEN, o el
+   *  GITHUB_TOKEN si se elevó. login vacío/null = desasignar. */
+  async assignIssue(slug: string, issueNumber: number, login: string | null) {
+    const token = process.env.GITHUB_WRITE_TOKEN || this.token;
+    if (!token) throw new Error('GitHub token no configurado en el servidor.');
+    const repo = `${this.owner}/qa-${slug}`;
+    const headers = {
+      Authorization: `Bearer ${token}`,
+      Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json',
+      'User-Agent': 'qa-portal-scrum',
+    };
+    const issueUrl = `https://api.github.com/repos/${repo}/issues/${issueNumber}`;
+    const assigneesUrl = `${issueUrl}/assignees`;
+
+    // Estado actual → dejamos como único responsable a `login` (estilo Jira).
+    const cur = await fetch(issueUrl, { headers, signal: AbortSignal.timeout(10_000) });
+    if (!cur.ok) throw new Error(`No se pudo leer el issue #${issueNumber} (${cur.status}).`);
+    const current: string[] = ((await cur.json()).assignees ?? []).map((a: { login: string }) => a.login);
+
+    const target = login ? login.replace(/^@/, '').trim() : '';
+    const toRemove = current.filter((l) => l !== target);
+    if (toRemove.length) {
+      await fetch(assigneesUrl, { method: 'DELETE', headers, body: JSON.stringify({ assignees: toRemove }), signal: AbortSignal.timeout(10_000) });
+    }
+    if (target) {
+      const res = await fetch(assigneesUrl, { method: 'POST', headers, body: JSON.stringify({ assignees: [target] }), signal: AbortSignal.timeout(10_000) });
+      if (res.status === 403 || res.status === 404) {
+        throw new UnauthorizedException(
+          'El token del portal no tiene permiso de escritura (Issues:write). Configurá GITHUB_WRITE_TOKEN en qa-backend.',
+        );
+      }
+      if (!res.ok) throw new Error(`GitHub rechazó la asignación (${res.status}).`);
+    }
+    this.cache.delete(slug); // invalidar cache → el board refleja el cambio
+    return { ok: true, issue: issueNumber, login: target || null };
   }
 
   /** Trazabilidad pruebas↔historias de la última corrida (qa_runs.coverage). */

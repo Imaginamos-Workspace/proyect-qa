@@ -15,6 +15,7 @@ import {
 import { useScrumBoards, useScrumBoard } from '@/hooks/use-scrum';
 import type { ScrumCard, ScrumIssueType, ScrumStoryTests } from '@qa/shared-types';
 import { TestsBadge, TraceabilityButton } from './board-traceability';
+import { AssigneePicker } from './board-assignee';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
@@ -266,6 +267,8 @@ export function BoardPage() {
                         card={card}
                         qaEntry={card.number != null ? testsByStory.get(card.number) : undefined}
                         reportUrl={board.qa?.report_url}
+                        slug={slug}
+                        members={board.members ?? []}
                       />
                     ))
                   )}
@@ -284,10 +287,14 @@ function IssueCard({
   card,
   qaEntry,
   reportUrl,
+  slug,
+  members,
 }: {
   card: ScrumCard;
   qaEntry?: ScrumStoryTests;
   reportUrl?: string | null;
+  slug: string;
+  members: import('@qa/shared-types').ScrumAssignee[];
 }) {
   const inner = (
     <Card className="cursor-pointer border-border/70 transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md">
@@ -317,7 +324,7 @@ function IssueCard({
           <div className="ml-auto flex items-center gap-1.5">
             <PriorityFlag priority={card.priority} />
             <EstimateChip estimate={card.estimate} />
-            <AssigneeStack assignees={card.assignees} />
+            <AssigneePicker slug={slug} issueNumber={card.number} assignees={card.assignees} members={members} />
           </div>
         </div>
       </CardContent>
@@ -329,17 +336,6 @@ function IssueCard({
     </a>
   ) : (
     inner
-  );
-}
-
-function AssigneeStack({ assignees }: { assignees: ScrumCard['assignees'] }) {
-  if (!assignees.length) return null;
-  return (
-    <div className="flex -space-x-1.5">
-      {assignees.slice(0, 3).map((a) => (
-        <Avatar key={a.login} login={a.login} url={a.avatarUrl} size={20} />
-      ))}
-    </div>
   );
 }
 
