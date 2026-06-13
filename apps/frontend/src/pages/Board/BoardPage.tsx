@@ -19,7 +19,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { IssueTypeIcon, PriorityFlag, IssueKey, EstimateChip } from '@/components/scrum/issue-bits';
-import { Avatar, SearchBox, FilterMenu, SprintBar, type FilterOption } from './board-toolbar';
+import { Avatar, SearchBox, FilterMenu, SprintSelect, type FilterOption } from './board-toolbar';
 
 const TYPE_LABEL: Record<ScrumIssueType, string> = {
   epic: 'Épica',
@@ -98,6 +98,31 @@ export function BoardPage() {
     () => new Map((board?.qa?.story_map ?? []).map((e) => [e.story, e])),
     [board],
   );
+
+  // Sprint activo + issues abiertos por sprint (para ordenar/marcar el selector).
+  const { activeSprint, openBySprint } = useMemo(() => {
+    const openBy = new Map<string, number>();
+    const doneKeys = new Set(['Done', 'done', 'Hecho', 'Listo']);
+    for (const col of board?.columns ?? []) {
+      if (doneKeys.has(col.key)) continue;
+      for (const c of col.cards) if (c.sprint) openBy.set(c.sprint, (openBy.get(c.sprint) ?? 0) + 1);
+    }
+    const meta = board?.sprintsMeta ?? [];
+    const today = new Date().toISOString().slice(0, 10);
+    // 1) activo por fecha: hoy dentro del rango y no cerrado.
+    let active =
+      meta.find((m) => !m.completed && m.startDate && m.endDate && m.startDate <= today && today <= m.endDate)?.title ?? null;
+    // 2) si las fechas están mal/ausentes: el sprint MÁS RECIENTE con issues abiertos.
+    if (!active) {
+      const withOpen = meta
+        .filter((m) => (openBy.get(m.title) ?? 0) > 0)
+        .sort((a, b) => (b.startDate || '').localeCompare(a.startDate || ''));
+      active = withOpen[0]?.title
+        ?? [...openBy.keys()].sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))[0]
+        ?? null;
+    }
+    return { activeSprint: active, openBySprint: openBy };
+  }, [board]);
 
   const totalShown = visibleColumns.reduce((n, c) => n + c.cards.length, 0);
   const activeFilters = search.length + sprint.length + assignees.size + types.size + statuses.size;
@@ -199,7 +224,24 @@ export function BoardPage() {
 
           {/* ── Sprints (con fechas + abierto/cerrado) ───────────────────── */}
           {board.sprints.length > 0 && (
-            <SprintBar sprints={board.sprints} meta={board.sprintsMeta ?? []} active={sprint} onPick={setSprint} />
+            <div className="flex flex-wrap items-center gap-2">
+              <SprintSelect
+                sprints={board.sprints}
+                meta={board.sprintsMeta ?? []}
+                value={sprint}
+                onPick={setSprint}
+                activeTitle={activeSprint}
+                openByTitle={openBySprint}
+              />
+              {activeSprint && sprint !== activeSprint && (
+                <button
+                  onClick={() => setSprint(activeSprint)}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-success/40 bg-success/10 px-3 text-sm font-medium text-success transition-colors hover:bg-success/20"
+                >
+                  Ir al sprint activo
+                </button>
+              )}
+            </div>
           )}
 
           {/* ── Kanban ───────────────────────────────────────────────────── */}

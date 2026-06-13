@@ -1,6 +1,6 @@
-import { type ReactNode } from 'react';
+import { type ReactNode, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
-import { Check, ChevronDown, Search, X, CalendarDays, CircleDot, CircleCheck } from 'lucide-react';
+import { Check, ChevronDown, Search, X, CalendarDays, CircleDot, CircleCheck, Rocket } from 'lucide-react';
 import type { ScrumAssignee, ScrumSprint } from '@qa/shared-types';
 import { cn } from '@/lib/utils';
 
@@ -150,80 +150,164 @@ function fmt(d: string | null): string {
   return `${day} ${MESES[Number(m) - 1] ?? ''}`;
 }
 
-export function SprintBar({
+// Selector de sprints: dropdown CON BUSCADOR, orden DESCENDENTE (recientes
+// arriba), el ACTIVO primero y marcado. Reemplaza la fila de chips (inservible
+// con 50+ sprints). `activeTitle` lo calcula el BoardPage (por fecha o, si las
+// fechas están mal, por el sprint reciente con issues abiertos).
+export function SprintSelect({
   sprints,
   meta,
-  active,
+  value,
   onPick,
+  activeTitle,
+  openByTitle,
 }: {
   sprints: string[];
   meta: ScrumSprint[];
-  active: string; // '' = todos
+  value: string; // '' = todos
   onPick: (s: string) => void;
+  activeTitle: string | null;
+  openByTitle: Map<string, number>;
 }) {
+  const [q, setQ] = useState('');
   const metaByTitle = new Map(meta.map((m) => [m.title, m]));
+
+  const options = sprints
+    .map((title) => {
+      const m = metaByTitle.get(title);
+      return {
+        title,
+        start: m?.startDate ?? '',
+        range: m?.startDate ? `${fmt(m.startDate)} – ${fmt(m.endDate)}` : null,
+        completed: m?.completed,
+        active: title === activeTitle,
+        open: openByTitle.get(title) ?? 0,
+      };
+    })
+    // Activo primero; luego DESCENDENTE por fecha (recientes arriba); luego nombre.
+    .sort((a, b) => {
+      if (a.active !== b.active) return a.active ? -1 : 1;
+      if (a.start !== b.start) return (b.start || '').localeCompare(a.start || '');
+      return b.title.localeCompare(a.title, undefined, { numeric: true });
+    });
+
+  const filtered = q ? options.filter((o) => o.title.toLowerCase().includes(q.toLowerCase())) : options;
+  const current = value ? options.find((o) => o.title === value) : null;
+
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <SprintChip label="Todos los sprints" active={active === ''} onClick={() => onPick('')} />
-      {sprints.map((s) => {
-        const m = metaByTitle.get(s);
-        const range = m?.startDate ? `${fmt(m.startDate)} – ${fmt(m.endDate)}` : null;
-        return (
-          <SprintChip
-            key={s}
-            label={s}
-            range={range}
-            completed={m?.completed}
-            active={active === s}
-            onClick={() => onPick(s)}
-          />
-        );
-      })}
-    </div>
+    <Popover.Root onOpenChange={(o) => !o && setQ('')}>
+      <Popover.Trigger asChild>
+        <button
+          className={cn(
+            'inline-flex h-9 max-w-[20rem] items-center gap-1.5 rounded-lg border px-3 text-sm font-medium transition-colors',
+            value ? 'border-primary/40 bg-primary/10 text-primary' : 'border-border bg-card text-foreground hover:bg-muted',
+          )}
+        >
+          <CalendarDays className="h-4 w-4 shrink-0 opacity-70" />
+          <span className="truncate">{value ? value : `Todos los sprints (${sprints.length})`}</span>
+          {current?.active && <Rocket className="h-3.5 w-3.5 shrink-0 text-success" />}
+          <ChevronDown className="ml-auto h-3.5 w-3.5 shrink-0 opacity-60" />
+        </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          align="start"
+          sideOffset={6}
+          className="z-50 w-[20rem] rounded-xl border border-border bg-card p-2 shadow-lg"
+        >
+          <div className="relative mb-1.5">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              autoFocus
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Buscar sprint…"
+              className="h-9 w-full rounded-lg border border-border bg-background pl-8 pr-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+            />
+          </div>
+          <div className="max-h-[22rem] overflow-y-auto">
+            <SprintRow label="Todos los sprints" sub={`${sprints.length} sprints`} selected={value === ''} onClick={() => onPick('')} />
+            {filtered.map((o) => (
+              <SprintRow
+                key={o.title}
+                label={o.title}
+                sub={o.range}
+                active={o.active}
+                completed={o.completed}
+                open={o.open}
+                selected={value === o.title}
+                onClick={() => onPick(o.title)}
+              />
+            ))}
+            {filtered.length === 0 && (
+              <p className="px-2 py-4 text-center text-xs text-muted-foreground">Sin resultados</p>
+            )}
+          </div>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
 
-function SprintChip({
+function SprintRow({
   label,
-  range,
-  completed,
+  sub,
   active,
+  completed,
+  open = 0,
+  selected,
   onClick,
 }: {
   label: string;
-  range?: string | null;
+  sub?: string | null;
+  active?: boolean;
   completed?: boolean;
-  active: boolean;
+  open?: number;
+  selected: boolean;
   onClick: () => void;
 }) {
   return (
-    <button
-      onClick={onClick}
-      className={cn(
-        'group inline-flex items-center gap-2 rounded-lg border px-3 py-1.5 text-left text-xs transition-colors',
-        active ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-card text-foreground hover:bg-muted',
-      )}
-    >
-      <span className="flex flex-col leading-tight">
-        <span className="flex items-center gap-1.5 font-semibold">
-          {label}
-          {completed !== undefined &&
-            (completed ? (
+    <Popover.Close asChild>
+      <button
+        onClick={onClick}
+        className={cn(
+          'flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-muted',
+          selected && 'bg-muted',
+          active && 'ring-1 ring-success/40',
+        )}
+      >
+        <Check className={cn('mt-0.5 h-3.5 w-3.5 shrink-0', selected ? 'text-primary opacity-100' : 'opacity-0')} strokeWidth={3} />
+        <span className="min-w-0 flex-1">
+          <span className="flex flex-wrap items-center gap-1.5">
+            <span className="truncate text-sm font-medium text-foreground">{label}</span>
+            {active && (
+              <span className="inline-flex items-center gap-0.5 rounded-full bg-success/15 px-1.5 py-0.5 text-[9px] font-bold uppercase text-success">
+                <Rocket className="h-2.5 w-2.5" /> Activo
+              </span>
+            )}
+            {!active && completed === true && (
               <span className="inline-flex items-center gap-0.5 rounded-full bg-muted px-1.5 py-0.5 text-[9px] font-bold uppercase text-muted-foreground">
                 <CircleCheck className="h-2.5 w-2.5" /> Cerrado
               </span>
-            ) : (
-              <span className="inline-flex items-center gap-0.5 rounded-full bg-success/15 px-1.5 py-0.5 text-[9px] font-bold uppercase text-success">
+            )}
+            {!active && completed === false && (
+              <span className="inline-flex items-center gap-0.5 rounded-full bg-info/15 px-1.5 py-0.5 text-[9px] font-bold uppercase text-info">
                 <CircleDot className="h-2.5 w-2.5" /> Abierto
               </span>
-            ))}
-        </span>
-        {range && (
-          <span className="flex items-center gap-1 text-[10px] font-normal text-muted-foreground">
-            <CalendarDays className="h-2.5 w-2.5" /> {range}
+            )}
           </span>
-        )}
-      </span>
-    </button>
+          {(sub || open > 0) && (
+            <span className="mt-0.5 flex items-center gap-1 text-[11px] text-muted-foreground">
+              {sub && (
+                <>
+                  <CalendarDays className="h-2.5 w-2.5" /> {sub}
+                </>
+              )}
+              {open > 0 && <span className="font-medium text-amber-600">· {open} abiertas</span>}
+            </span>
+          )}
+        </span>
+      </button>
+    </Popover.Close>
   );
 }
