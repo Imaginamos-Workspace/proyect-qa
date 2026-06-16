@@ -103,9 +103,11 @@ export function BoardPage() {
   // Sprint activo + issues abiertos por sprint (para ordenar/marcar el selector).
   const { activeSprint, openBySprint } = useMemo(() => {
     const openBy = new Map<string, number>();
-    const doneKeys = new Set(['Done', 'done', 'Hecho', 'Listo']);
+    // Columnas "terminadas" detectadas por nombre (dinámico): el workflow es el del
+    // cliente (p. ej. "Listo en Staging", "Finalizada"), no una lista fija.
+    const isDone = (key: string) => /\b(done|hecho|listo|complet|cerrad|finaliz|resuel|staging)/i.test(key);
     for (const col of board?.columns ?? []) {
-      if (doneKeys.has(col.key)) continue;
+      if (isDone(col.key)) continue;
       for (const c of col.cards) if (c.sprint) openBy.set(c.sprint, (openBy.get(c.sprint) ?? 0) + 1);
     }
     const meta = board?.sprintsMeta ?? [];

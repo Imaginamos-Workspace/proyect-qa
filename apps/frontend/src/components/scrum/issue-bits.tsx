@@ -37,16 +37,19 @@ export function IssueTypeIcon({ type, className }: { type: ScrumIssueType; class
 }
 
 /* ── Píldora de estado (columna) ────────────────────────────────────────── */
-const STATUS_TONE: Record<string, string> = {
-  Backlog: 'bg-muted text-muted-foreground',
-  Todo: 'bg-muted text-muted-foreground',
-  'In Progress': 'bg-info/15 text-info',
-  'In Review': 'bg-primary/15 text-primary',
-  Done: 'bg-success/15 text-success',
-};
+// Tono DERIVADO del nombre del estado (por categoría), no de una lista fija: el
+// workflow es el del cliente (puede estar en español: "Pruebas QA", "Listo en
+// Staging"…) y aún así la píldora toma el color correcto. Sin hardcode de columnas.
+function statusTone(status: string): string {
+  const k = status.toLowerCase();
+  if (/(done|hecho|listo|complet|cerrad|finaliz|resuel|staging)/.test(k)) return 'bg-success/15 text-success';
+  if (/(review|revisi|pull|qa|prueba|test|aprob)/.test(k)) return 'bg-primary/15 text-primary';
+  if (/(progress|curso|progreso|doing|haciendo|desarrollo|deploy)/.test(k)) return 'bg-info/15 text-info';
+  return 'bg-muted text-muted-foreground'; // por hacer / to do / backlog / nuevo
+}
 export function StatusPill({ status }: { status: string | null }) {
   if (!status) return null;
-  const tone = STATUS_TONE[status] ?? 'bg-muted text-muted-foreground';
+  const tone = statusTone(status);
   return (
     <span className={cn('rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide', tone)}>
       {status}

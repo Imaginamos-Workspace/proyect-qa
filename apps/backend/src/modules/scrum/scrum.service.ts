@@ -21,7 +21,9 @@ interface RawIteration {
 }
 
 const GITHUB_GRAPHQL = 'https://api.github.com/graphql';
-// Orden de columnas del kanban (coincide con el Status del board, rules/96).
+// Fallback de columnas si el board no tiene campo Status o falla la consulta. El
+// orden REAL es dinámico: sale de las opciones del Status del board (fetchStatusColumns),
+// sembradas desde el workflow del cliente extraído de Jira (rules/96).
 const COLUMN_ORDER = ['Backlog', 'Todo', 'In Progress', 'In Review', 'Done'];
 const CACHE_TTL_MS = 60_000;
 
@@ -146,9 +148,33 @@ export class ScrumService {
     );
   }
 
+  /**
+   * Columnas del kanban = opciones del campo "Status" del board, EN SU ORDEN.
+   * Es DINÁMICO por cliente: refleja el workflow real de su Jira (p. ej. "Por
+   * hacer", "En curso", "Pruebas QA", "Listo en Staging") en vez de una lista fija
+   * en inglés. Las opciones las siembra `roadmap:sync` desde el `workflow` del
+   * roadmap, extraído del export de Jira. Fallback a la lista genérica si el board
+   * no tiene el campo o la consulta falla.
+   */
+  private async fetchStatusColumns(number: number): Promise<string[]> {
+    try {
+      const data = await this.gql<{
+        organization: { projectV2: { field: { options?: { name: string }[] } | null } | null } | null;
+      }>(
+        `query($owner:String!,$number:Int!){ organization(login:$owner){ projectV2(number:$number){ field(name:"Status"){ ... on ProjectV2SingleSelectField { options { name } } } } } }`,
+        { owner: this.owner, number },
+      );
+      const names = (data.organization?.projectV2?.field?.options ?? []).map((o) => o.name).filter(Boolean);
+      return names.length ? names : COLUMN_ORDER;
+    } catch {
+      return COLUMN_ORDER;
+    }
+  }
+
   private async buildBoard(base: ScrumBoard, number: number, url: string): Promise<ScrumBoard> {
+    const columnKeys = await this.fetchStatusColumns(number);
     const columns = new Map<string, ScrumColumn>(
-      COLUMN_ORDER.map((k) => [k, { key: k, title: k, cards: [] as ScrumCard[] }]),
+      columnKeys.map((k) => [k, { key: k, title: k, cards: [] as ScrumCard[] }]),
     );
     const epics: ScrumEpic[] = [];
     const sprints = new Set<string>();
@@ -195,7 +221,7 @@ export class ScrumService {
         if (type === 'epic') {
           epics.push({ number: card.number, title: card.title, url: card.url });
         }
-        const colKey = status && columns.has(status) ? status : 'Backlog';
+        const colKey = status && columns.has(status) ? status : columnKeys[0];
         columns.get(colKey)!.cards.push(card);
       }
       cursor = items?.pageInfo?.hasNextPage ? items.pageInfo.endCursor : null;
@@ -206,7 +232,7 @@ export class ScrumService {
       configured: true,
       project_number: number,
       project_url: url,
-      columns: COLUMN_ORDER.map((k) => columns.get(k)!),
+      columns: columnKeys.map((k) => columns.get(k)!),
       epics,
       // Lista de sprints: preferimos la config de iteraciones (incluye vacíos y
       // respeta el orden cronológico); si falta, derivamos de los items.
