@@ -39,10 +39,29 @@ export interface Regression {
   created_at: string;
 }
 
+export interface UniverseModule {
+  name: string;
+  epics?: string[];
+  stories_total: number;
+  automated: number;
+  status: 'pending' | 'partial' | 'covered';
+}
+
+export interface Universe {
+  total_modules: number;
+  covered_modules: number;
+  pct: number;
+  total_stories: number;
+  automated_stories: number;
+  modules: UniverseModule[];
+  updated_at?: string;
+}
+
 export interface Inventory {
   specs_total?: number;
   tests_total?: number;
   modules?: { name: string; tests: number }[];
+  universe?: Universe;
   updated_at?: string;
 }
 

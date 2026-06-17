@@ -9,6 +9,7 @@ import { StatCard } from '@/components/ui/stat-card';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton, StatCardSkeleton } from '@/components/ui/skeleton';
+import { RegressionProgress } from '@/components/clients/regression-progress';
 
 const KIND_VARIANT: Record<Regression['kind'], 'destructive' | 'success' | 'warning'> = {
   new_fail: 'destructive',
@@ -158,6 +159,8 @@ export function ClientDetailPage() {
           )}
         </CardContent>
       </Card>
+
+      <RegressionProgress universe={client.inventory?.universe} />
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>

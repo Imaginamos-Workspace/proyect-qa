@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../../config/supabase.module';
-import { IngestRunDto, IngestActivityDto } from './dto/ingest-run.dto';
+import { IngestRunDto, IngestActivityDto, IngestUniverseDto } from './dto/ingest-run.dto';
 
 interface FailingTest {
   key: string;
@@ -170,5 +170,48 @@ export class IngestService {
     });
     if (error) throw error;
     return { ok: true };
+  }
+
+  /**
+   * Universo de módulos + avance de regresión (lo empuja coverage:universe del
+   * monorepo). Se guarda en qa_clients.inventory.universe SIN pisar el resto del
+   * inventario ni el display_name. Permite que el widget muestre el estado aunque
+   * todavía no haya corridas.
+   */
+  async ingestUniverse(dto: IngestUniverseDto) {
+    const universe = {
+      total_modules: dto.total_modules,
+      covered_modules: dto.covered_modules,
+      pct: dto.pct,
+      total_stories: dto.total_stories,
+      automated_stories: dto.automated_stories,
+      modules: dto.modules,
+      updated_at: new Date().toISOString(),
+    };
+    const { data: existing } = await this.supabase
+      .from('qa_clients')
+      .select('inventory')
+      .eq('slug', dto.client_slug)
+      .maybeSingle();
+
+    if (existing) {
+      const inventory = { ...(existing.inventory ?? {}), universe };
+      const { error } = await this.supabase
+        .from('qa_clients')
+        .update({ inventory, updated_at: new Date().toISOString() })
+        .eq('slug', dto.client_slug);
+      if (error) throw error;
+    } else {
+      const { error } = await this.supabase.from('qa_clients').insert({
+        slug: dto.client_slug,
+        display_name: dto.client_name || dto.client_slug,
+        enabled: true,
+        inventory: { universe },
+        updated_at: new Date().toISOString(),
+      });
+      if (error) throw error;
+    }
+    this.logger.log(`Universe ${dto.client_slug}: ${dto.covered_modules}/${dto.total_modules} módulos (${dto.pct}%)`);
+    return { ok: true, pct: dto.pct, total_modules: dto.total_modules };
   }
 }

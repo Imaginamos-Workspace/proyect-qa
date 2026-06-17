@@ -73,6 +73,33 @@ export class IngestRunDto {
   tests?: IngestTestDto[];
 }
 
+/** Un módulo del UNIVERSO de cobertura (denominador del % real de regresión). */
+class UniverseModuleDto {
+  @IsString() name: string;
+  @IsOptional() @IsArray() @IsString({ each: true }) epics?: string[];
+  @IsInt() @Min(0) stories_total: number;
+  @IsInt() @Min(0) automated: number;
+  @IsIn(['pending', 'partial', 'covered']) status: string;
+}
+
+/**
+ * Universo de módulos + avance de regresión por cliente. Lo empuja el monorepo
+ * (coverage:universe) independiente de una corrida, para que el widget muestre el
+ * estado aunque el QA todavía no haya automatizado nada. Se guarda en
+ * qa_clients.inventory.universe.
+ */
+export class IngestUniverseDto {
+  @IsString() client_slug: string;
+  @IsOptional() @IsString() client_name?: string;
+  @IsInt() @Min(0) total_modules: number;
+  @IsInt() @Min(0) covered_modules: number;
+  @IsInt() @Min(0) pct: number;
+  @IsInt() @Min(0) total_stories: number;
+  @IsInt() @Min(0) automated_stories: number;
+  @IsArray() @ValidateNested({ each: true }) @Type(() => UniverseModuleDto)
+  modules: UniverseModuleDto[];
+}
+
 export class IngestActivityDto {
   @IsString() actor_login: string;
   @IsIn(['test', 'design', 'bug', 'commit', 'run']) kind: string;
