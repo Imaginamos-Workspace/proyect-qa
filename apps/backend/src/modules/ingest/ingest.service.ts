@@ -1,7 +1,8 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../../config/supabase.module';
-import { IngestRunDto, IngestActivityDto, IngestUniverseDto, IngestCredentialsDto } from './dto/ingest-run.dto';
+import { IngestRunDto, IngestActivityDto, IngestUniverseDto, IngestCredentialsDto, IngestUniverseMapDto } from './dto/ingest-run.dto';
+import { AIService } from '../ai/ai.service';
 
 interface FailingTest {
   key: string;
@@ -20,6 +21,7 @@ export class IngestService {
 
   constructor(
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
+    private readonly aiService: AIService,
   ) {}
 
   async ingestRun(dto: IngestRunDto) {
@@ -206,10 +208,21 @@ export class IngestService {
       modules: dto.modules,
       updated_at: new Date().toISOString(),
     };
+    await this.storeUniverse(dto.client_slug, dto.client_name, universe);
+    this.logger.log(`Universe ${dto.client_slug}: ${dto.covered_modules}/${dto.total_modules} módulos (${dto.pct}%)`);
+    return { ok: true, pct: dto.pct, total_modules: dto.total_modules };
+  }
+
+  /** Guarda el universo en qa_clients.inventory.universe sin pisar el resto. */
+  private async storeUniverse(
+    slug: string,
+    clientName: string | undefined,
+    universe: Record<string, unknown>,
+  ): Promise<void> {
     const { data: existing } = await this.supabase
       .from('qa_clients')
       .select('inventory')
-      .eq('slug', dto.client_slug)
+      .eq('slug', slug)
       .maybeSingle();
 
     if (existing) {
@@ -217,20 +230,42 @@ export class IngestService {
       const { error } = await this.supabase
         .from('qa_clients')
         .update({ inventory, updated_at: new Date().toISOString() })
-        .eq('slug', dto.client_slug);
+        .eq('slug', slug);
       if (error) throw error;
     } else {
       const { error } = await this.supabase.from('qa_clients').insert({
-        slug: dto.client_slug,
-        display_name: dto.client_name || dto.client_slug,
+        slug,
+        display_name: clientName || slug,
         enabled: true,
         inventory: { universe },
         updated_at: new Date().toISOString(),
       });
       if (error) throw error;
     }
-    this.logger.log(`Universe ${dto.client_slug}: ${dto.covered_modules}/${dto.total_modules} módulos (${dto.pct}%)`);
-    return { ok: true, pct: dto.pct, total_modules: dto.total_modules };
+  }
+
+  /**
+   * Mapea la automatización del QA a los módulos del universo CON IA (Gemini, en el
+   * backend) y guarda la cobertura. El monorepo manda solo los nombres de módulo y los
+   * títulos de los tests (no necesita la key). Numerador = automatización QA.
+   */
+  async ingestUniverseMap(dto: IngestUniverseMapDto) {
+    const moduleNames = dto.modules.map((m) => m.trim()).filter(Boolean);
+    const mapped = await this.aiService.mapModuleCoverage(moduleNames, dto.tests ?? []);
+    const covered = mapped.filter((m) => m.status === 'covered').length;
+    const pct = mapped.length ? Math.round((covered / mapped.length) * 100) : 0;
+    const universe = {
+      total_modules: mapped.length,
+      covered_modules: covered,
+      pct,
+      total_stories: 0,
+      automated_stories: mapped.reduce((n, m) => n + m.automated, 0),
+      modules: mapped.map((m) => ({ name: m.name, epics: [], stories_total: 0, automated: m.automated, status: m.status })),
+      updated_at: new Date().toISOString(),
+    };
+    await this.storeUniverse(dto.client_slug, dto.client_name, universe);
+    this.logger.log(`UniverseMap ${dto.client_slug}: ${covered}/${mapped.length} módulos covered (${pct}%)`);
+    return { ok: true, pct, covered_modules: covered, total_modules: mapped.length };
   }
 
   /**

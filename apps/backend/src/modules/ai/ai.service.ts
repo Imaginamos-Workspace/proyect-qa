@@ -66,6 +66,58 @@ export class AIService {
   }
 
   /**
+   * Mapea la AUTOMATIZACIÓN del QA a los módulos del universo: dado el listado de
+   * módulos y los tests automatizados (archivo + títulos), decide por módulo si está
+   * covered/partial/pending. Lo usa el numerador del widget de regresión. Corre en
+   * el backend (donde vive GEMINI_API_KEY). Si Gemini falla, cae a una heurística.
+   */
+  async mapModuleCoverage(
+    modules: string[],
+    tests: { file: string; titles: string[] }[],
+  ): Promise<{ name: string; status: 'covered' | 'partial' | 'pending'; automated: number }[]> {
+    const testLines = tests.flatMap((t) => t.titles.map((ti) => `${t.file}: ${ti}`));
+    if (!testLines.length) {
+      return modules.map((name) => ({ name, status: 'pending' as const, automated: 0 }));
+    }
+
+    const prompt =
+      'Eres un analista de QA. Tengo el UNIVERSO de módulos de un producto y la lista de ' +
+      'TESTS AUTOMATIZADOS (título + archivo). Decidí, para CADA módulo, su estado:\n' +
+      '- "covered": tiene flujos/E2E claramente cubiertos.\n' +
+      '- "partial": solo cobertura tangencial (smoke, API suelta, un caso aislado).\n' +
+      '- "pending": ningún test lo cubre.\n' +
+      'Contá en "automated" cuántos tests corresponden a ese módulo. Devolvé SOLO un JSON ' +
+      'array de {"name","status","automated"} con EXACTAMENTE los nombres dados.\n\n' +
+      'MÓDULOS:\n' + modules.map((m) => `- ${m}`).join('\n') +
+      '\n\nTESTS:\n' + testLines.join('\n');
+
+    try {
+      const raw = await this.gemini.generateRaw({ prompt, temperature: 0, responseMimeType: 'application/json' });
+      const match = raw.match(/\[[\s\S]*\]/);
+      if (!match) throw new Error('respuesta no-JSON');
+      const arr = JSON.parse(match[0]) as { name: string; status: string; automated?: number }[];
+      const byName = new Map(arr.map((x) => [String(x.name).trim().toLowerCase(), x]));
+      const VALID = new Set(['covered', 'partial', 'pending']);
+      return modules.map((name) => {
+        const hit = byName.get(name.toLowerCase());
+        const status = (hit && VALID.has(hit.status) ? hit.status : 'pending') as 'covered' | 'partial' | 'pending';
+        const automated = Number(hit?.automated) > 0 ? Number(hit!.automated) : status === 'pending' ? 0 : 1;
+        return { name, status, automated };
+      });
+    } catch {
+      // Heurística: coincidencia de palabras del módulo en los títulos de los tests.
+      const stop = new Set(['de', 'del', 'la', 'el', 'los', 'las', 'gestion', 'gestión', 'sistema', 'componentes', 'comunes']);
+      const hay = testLines.map((l) => l.toLowerCase());
+      return modules.map((name) => {
+        const words = name.toLowerCase().split(/[^a-záéíóúñ0-9]+/i).filter((w) => w.length >= 4 && !stop.has(w));
+        const hits = hay.filter((l) => l.includes(name.toLowerCase()) || words.some((w) => l.includes(w))).length;
+        const status = hits >= 2 ? 'covered' : hits === 1 ? 'partial' : 'pending';
+        return { name, status: status as 'covered' | 'partial' | 'pending', automated: hits };
+      });
+    }
+  }
+
+  /**
    * Issue a scoped heal token for a specific test case. Requires Supabase
    * session (the controller enforces auth). The token is consumed by the
    * public /ai/heal-iterate endpoint to authorize that one test case.

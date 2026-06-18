@@ -142,6 +142,25 @@ export class IngestCredentialsDto {
   qa_users?: QaUserDto[];
 }
 
+/** Un archivo de test con sus títulos (test/describe), para el mapeo IA. */
+class TestSignalDto {
+  @IsString() file: string;
+  @IsArray() @IsString({ each: true }) titles: string[];
+}
+
+/**
+ * Insumos para que el BACKEND mapee la automatización a los módulos con IA (Gemini).
+ * El monorepo manda solo los nombres de módulo (universo) y los títulos de los tests;
+ * el backend hace el mapeo (donde vive GEMINI_API_KEY) y guarda la cobertura.
+ */
+export class IngestUniverseMapDto {
+  @IsString() client_slug: string;
+  @IsOptional() @IsString() client_name?: string;
+  @IsArray() @IsString({ each: true }) modules: string[];
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => TestSignalDto)
+  tests?: TestSignalDto[];
+}
+
 export class IngestActivityDto {
   @IsString() actor_login: string;
   @IsIn(['test', 'design', 'bug', 'commit', 'run']) kind: string;
