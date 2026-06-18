@@ -21,6 +21,9 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { IssueTypeIcon, PriorityFlag, IssueKey, EstimateChip } from '@/components/scrum/issue-bits';
 import { Avatar, SearchBox, FilterMenu, SprintSelect, type FilterOption } from './board-toolbar';
+import { useClient } from '@/hooks/use-dashboard';
+import { RegressionProgress } from '@/components/clients/regression-progress';
+import { ClientCredentials } from '@/components/clients/client-credentials';
 
 const TYPE_LABEL: Record<ScrumIssueType, string> = {
   epic: 'Épica',
@@ -37,6 +40,9 @@ export function BoardPage() {
   const navigate = useNavigate();
   const { data: boards } = useScrumBoards();
   const { data: board, isLoading } = useScrumBoard(slug);
+  // Inventario del cliente (universo de regresión + credenciales) para los paneles
+  // del tablero. Es un fetch aparte del board (dashboard), cacheado por react-query.
+  const { data: client } = useClient(slug);
 
   // ── Estado de filtros ──────────────────────────────────────────────────
   const [search, setSearch] = useState('');
@@ -247,6 +253,12 @@ export function BoardPage() {
               )}
             </div>
           )}
+
+          {/* ── Regresión + credenciales del cliente ─────────────────────── */}
+          <div className="grid gap-4 lg:grid-cols-2">
+            <RegressionProgress universe={client?.inventory?.universe} slug={slug} />
+            <ClientCredentials credentials={client?.inventory?.credentials} />
+          </div>
 
           {/* ── Kanban ───────────────────────────────────────────────────── */}
           <div className="flex gap-4 overflow-x-auto pb-3">
