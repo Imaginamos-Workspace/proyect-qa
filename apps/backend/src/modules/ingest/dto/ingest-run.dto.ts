@@ -116,6 +116,32 @@ export class IngestUniverseDto {
   modules: UniverseModuleDto[];
 }
 
+/** Usuario de prueba del catálogo QA_USERS (.env del cliente). */
+class QaUserDto {
+  @IsOptional() @IsString() alias?: string;
+  @IsString() username: string;
+  @IsString() password: string;
+  @IsOptional() @IsString() role?: string;
+}
+
+/**
+ * Credenciales y entornos de un cliente, para el panel del dashboard. Lo empuja
+ * el monorepo (qa:creds-sync) leyendo projects/<c>/.env (git-crypt) y los
+ * environments de project.meta.json. Se guarda EN CLARO en qa_clients.inventory
+ * .credentials (decisión de producto: portal tras login de lista blanca). No
+ * pisa el resto del inventario.
+ */
+export class IngestCredentialsDto {
+  @IsString() client_slug: string;
+  @IsOptional() @IsString() client_name?: string;
+  @IsOptional() @IsString() base_url?: string;
+  @IsOptional() @IsString() api_url?: string;
+  // Entornos { dev|qa|...: { api?, web?, openapi?, ... } } — forma libre (URLs).
+  @IsOptional() @IsObject() environments?: Record<string, Record<string, string>>;
+  @IsOptional() @IsArray() @ValidateNested({ each: true }) @Type(() => QaUserDto)
+  qa_users?: QaUserDto[];
+}
+
 export class IngestActivityDto {
   @IsString() actor_login: string;
   @IsIn(['test', 'design', 'bug', 'commit', 'run']) kind: string;

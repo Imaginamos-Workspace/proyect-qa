@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../../config/supabase.module';
-import { IngestRunDto, IngestActivityDto, IngestUniverseDto } from './dto/ingest-run.dto';
+import { IngestRunDto, IngestActivityDto, IngestUniverseDto, IngestCredentialsDto } from './dto/ingest-run.dto';
 
 interface FailingTest {
   key: string;
@@ -231,5 +231,46 @@ export class IngestService {
     }
     this.logger.log(`Universe ${dto.client_slug}: ${dto.covered_modules}/${dto.total_modules} módulos (${dto.pct}%)`);
     return { ok: true, pct: dto.pct, total_modules: dto.total_modules };
+  }
+
+  /**
+   * Credenciales + entornos del cliente (panel del dashboard). Lo empuja el
+   * monorepo (qa:creds-sync) desde projects/<c>/.env + project.meta.json. Se
+   * guarda en qa_clients.inventory.credentials SIN pisar universe ni el resto
+   * del inventario. En claro (portal tras login de lista blanca).
+   */
+  async ingestCredentials(dto: IngestCredentialsDto) {
+    const credentials = {
+      base_url: dto.base_url ?? null,
+      api_url: dto.api_url ?? null,
+      environments: dto.environments ?? {},
+      qa_users: dto.qa_users ?? [],
+      updated_at: new Date().toISOString(),
+    };
+    const { data: existing } = await this.supabase
+      .from('qa_clients')
+      .select('inventory')
+      .eq('slug', dto.client_slug)
+      .maybeSingle();
+
+    if (existing) {
+      const inventory = { ...(existing.inventory ?? {}), credentials };
+      const { error } = await this.supabase
+        .from('qa_clients')
+        .update({ inventory, updated_at: new Date().toISOString() })
+        .eq('slug', dto.client_slug);
+      if (error) throw error;
+    } else {
+      const { error } = await this.supabase.from('qa_clients').insert({
+        slug: dto.client_slug,
+        display_name: dto.client_name || dto.client_slug,
+        enabled: true,
+        inventory: { credentials },
+        updated_at: new Date().toISOString(),
+      });
+      if (error) throw error;
+    }
+    this.logger.log(`Credentials ${dto.client_slug}: ${credentials.qa_users.length} usuarios, ${Object.keys(credentials.environments).length} entornos`);
+    return { ok: true, qa_users: credentials.qa_users.length, environments: Object.keys(credentials.environments).length };
   }
 }

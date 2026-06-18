@@ -57,11 +57,27 @@ export interface Universe {
   updated_at?: string;
 }
 
+export interface QaUser {
+  alias?: string;
+  username: string;
+  password: string;
+  role?: string;
+}
+
+export interface Credentials {
+  base_url?: string | null;
+  api_url?: string | null;
+  environments?: Record<string, Record<string, string>>;
+  qa_users?: QaUser[];
+  updated_at?: string;
+}
+
 export interface Inventory {
   specs_total?: number;
   tests_total?: number;
   modules?: { name: string; tests: number }[];
   universe?: Universe;
+  credentials?: Credentials;
   updated_at?: string;
 }
 

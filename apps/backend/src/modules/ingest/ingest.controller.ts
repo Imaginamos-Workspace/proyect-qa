@@ -2,7 +2,7 @@ import { Body, Controller, Post, UseGuards } from '@nestjs/common';
 import { IngestService } from './ingest.service';
 import { IngestApiKeyGuard } from './guards/ingest-api-key.guard';
 import { Public } from '../auth/decorators/public.decorator';
-import { IngestRunDto, IngestActivityDto, IngestUniverseDto } from './dto/ingest-run.dto';
+import { IngestRunDto, IngestActivityDto, IngestUniverseDto, IngestCredentialsDto } from './dto/ingest-run.dto';
 
 /**
  * Endpoints de ingesta máquina-a-máquina. Los llama el CI del monorepo, no un
@@ -28,5 +28,10 @@ export class IngestController {
   @Post('universe')
   ingestUniverse(@Body() dto: IngestUniverseDto) {
     return this.ingestService.ingestUniverse(dto);
+  }
+
+  @Post('credentials')
+  ingestCredentials(@Body() dto: IngestCredentialsDto) {
+    return this.ingestService.ingestCredentials(dto);
   }
 }
