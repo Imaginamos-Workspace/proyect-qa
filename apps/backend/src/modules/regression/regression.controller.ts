@@ -18,6 +18,12 @@ export class RegressionController {
     return this.regression.run(slug, body?.suite);
   }
 
+  /** Escanea el sitio del cliente y auto-genera el universo de módulos. */
+  @Post(':slug/scrape-modules')
+  scrapeModules(@Param('slug') slug: string, @Body() body: { url?: string; force?: boolean }) {
+    return this.regression.scrapeModules(slug, body?.url, body?.force);
+  }
+
   /** Últimas corridas del workflow (estado/enlace para el widget). */
   @Get('runs')
   listRuns(@Query('limit') limit?: string) {

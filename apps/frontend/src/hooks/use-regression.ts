@@ -34,6 +34,17 @@ export function useRunRegression(slug: string) {
   });
 }
 
+/**
+ * Dispara el escaneo del sitio del cliente para auto-generar el universo de módulos
+ * (modules-scrape.yml). `url` opcional sobrescribe el BASE_URL del .env.
+ */
+export function useScrapeModules(slug: string) {
+  return useMutation({
+    mutationFn: (opts?: { url?: string; force?: boolean }) =>
+      api.post<RunRegressionResult>(`/regression/${slug}/scrape-modules`, opts ?? {}),
+  });
+}
+
 /** Últimas corridas del workflow, para mostrar estado/enlace en el widget. */
 export function useRegressionRuns(enabled = true) {
   return useQuery({

@@ -13,6 +13,7 @@ import { ConfigService } from '@nestjs/config';
  */
 const GITHUB_API = 'https://api.github.com';
 const WORKFLOW_FILE = 'qa-regression.yml';
+const SCRAPE_WORKFLOW_FILE = 'modules-scrape.yml';
 // Espejo de los `type: choice` de qa-regression.yml (input `suite`).
 const ALLOWED_SUITES = ['e2e', 'perf', 'security', 'mobile-android', 'both'] as const;
 type Suite = (typeof ALLOWED_SUITES)[number];
@@ -71,33 +72,24 @@ export class RegressionService {
     return s as Suite;
   }
 
-  /** Dispara qa-regression.yml para un cliente. Devuelve el enlace a Actions. */
-  async run(slug: string, suite?: string): Promise<{ ok: true; suite: Suite; actions_url: string }> {
-    const project = (slug ?? '').trim();
-    if (!project) throw new BadRequestException('Falta el slug del cliente.');
-    const chosen = this.normalizeSuite(suite);
-
-    const url = `${GITHUB_API}/repos/${this.owner}/${this.repo}/actions/workflows/${WORKFLOW_FILE}/dispatches`;
+  /** Dispara un workflow_dispatch del monorepo y devuelve el enlace a Actions. */
+  private async dispatch(workflowFile: string, inputs: Record<string, string>): Promise<string> {
+    const url = `${GITHUB_API}/repos/${this.owner}/${this.repo}/actions/workflows/${workflowFile}/dispatches`;
     let res: Response;
     try {
       res = await fetch(url, {
         method: 'POST',
         headers: this.headers(),
-        body: JSON.stringify({ ref: this.ref, inputs: { project, suite: chosen } }),
+        body: JSON.stringify({ ref: this.ref, inputs }),
         signal: AbortSignal.timeout(10_000),
       });
     } catch (err) {
-      this.logger.error(`workflow_dispatch falló (${project}/${chosen}): ${String(err)}`);
+      this.logger.error(`workflow_dispatch ${workflowFile} falló: ${String(err)}`);
       throw new ServiceUnavailableException('No se pudo contactar a GitHub Actions.');
     }
 
     if (res.status === 204) {
-      this.logger.log(`Regresión disparada: ${project} · ${chosen}`);
-      return {
-        ok: true,
-        suite: chosen,
-        actions_url: `https://github.com/${this.owner}/${this.repo}/actions/workflows/${WORKFLOW_FILE}`,
-      };
+      return `https://github.com/${this.owner}/${this.repo}/actions/workflows/${workflowFile}`;
     }
 
     const detail = await res.text().catch(() => '');
@@ -108,11 +100,42 @@ export class RegressionService {
     }
     if (res.status === 422) {
       throw new BadRequestException(
-        `GitHub rechazó la corrida (422): el cliente "${project}" no es una opción del workflow, o la rama/inputs son inválidos.`,
+        `GitHub rechazó el dispatch (422): el cliente no es una opción del workflow ${workflowFile}, o la rama/inputs son inválidos.`,
       );
     }
-    this.logger.error(`workflow_dispatch ${res.status}: ${detail}`);
-    throw new ServiceUnavailableException(`GitHub respondió ${res.status} al disparar la regresión.`);
+    this.logger.error(`workflow_dispatch ${workflowFile} ${res.status}: ${detail}`);
+    throw new ServiceUnavailableException(`GitHub respondió ${res.status} al disparar el workflow.`);
+  }
+
+  /** Dispara qa-regression.yml para un cliente. Devuelve el enlace a Actions. */
+  async run(slug: string, suite?: string): Promise<{ ok: true; suite: Suite; actions_url: string }> {
+    const project = (slug ?? '').trim();
+    if (!project) throw new BadRequestException('Falta el slug del cliente.');
+    const chosen = this.normalizeSuite(suite);
+    const actions_url = await this.dispatch(WORKFLOW_FILE, { project, suite: chosen });
+    this.logger.log(`Regresión disparada: ${project} · ${chosen}`);
+    return { ok: true, suite: chosen, actions_url };
+  }
+
+  /**
+   * Dispara modules-scrape.yml: escanea el sitio del cliente (login con QA_USERS) y
+   * auto-genera el universo de módulos (modules.md + universo baseline en el portal).
+   * `url` opcional sobrescribe BASE_URL del .env.
+   */
+  async scrapeModules(slug: string, url?: string, force?: boolean): Promise<{ ok: true; actions_url: string }> {
+    const project = (slug ?? '').trim();
+    if (!project) throw new BadRequestException('Falta el slug del cliente.');
+    const inputs: Record<string, string> = { project };
+    if (url && url.trim()) {
+      if (!/^https?:\/\//i.test(url.trim())) {
+        throw new BadRequestException('La URL debe empezar con http(s)://');
+      }
+      inputs.url = url.trim();
+    }
+    if (force) inputs.force = 'true';
+    const actions_url = await this.dispatch(SCRAPE_WORKFLOW_FILE, inputs);
+    this.logger.log(`Scrape de módulos disparado: ${project}${url ? ` (${url})` : ''}`);
+    return { ok: true, actions_url };
   }
 
   /** Últimas corridas del workflow (para reflejar el estado en el widget). */

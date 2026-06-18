@@ -1,11 +1,13 @@
 import { useState } from 'react';
-import { CheckCircle2, CircleDashed, CircleDot, Loader2, Play, XCircle } from 'lucide-react';
+import { CheckCircle2, CircleDashed, CircleDot, Loader2, Play, ScanSearch, XCircle } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import type { Universe, UniverseModule } from '@/hooks/use-dashboard';
 import {
   useRegressionRuns,
   useRunRegression,
+  useScrapeModules,
   type RegressionRun,
   type RegressionSuite,
 } from '@/hooks/use-regression';
@@ -53,10 +55,12 @@ export function RegressionProgress({ universe, slug }: { universe?: Universe; sl
         {header}
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            Aún no se definió el universo de módulos de este producto. El QA lo siembra con{' '}
-            <code className="rounded bg-muted px-1 py-0.5 text-xs">npm run modules:seed -- &lt;cliente&gt;</code>{' '}
-            y lo sincroniza con <code className="rounded bg-muted px-1 py-0.5 text-xs">qa:universe-sync</code>.
+            Aún no se definió el universo de módulos de este producto. Escaneá el sitio para
+            detectarlos automáticamente, o sembralo desde la consola con{' '}
+            <code className="rounded bg-muted px-1 py-0.5 text-xs">npm run modules:seed</code> /{' '}
+            <code className="rounded bg-muted px-1 py-0.5 text-xs">modules:scrape</code>.
           </p>
+          <ScrapeControl slug={slug} />
           <RunControl slug={slug} />
         </CardContent>
       </Card>
@@ -121,6 +125,51 @@ export function RegressionProgress({ universe, slug }: { universe?: Universe; sl
         <RunControl slug={slug} />
       </CardContent>
     </Card>
+  );
+}
+
+/**
+ * Acción para DEFINIR el universo escaneando el sitio: dispara modules-scrape.yml
+ * (Playwright + Gemini) que detecta los módulos y empuja el universo baseline.
+ * Usa los usuarios de prueba (QA_USERS) del cliente para loguearse; la URL es
+ * opcional (por defecto BASE_URL del .env).
+ */
+function ScrapeControl({ slug }: { slug: string }) {
+  const [url, setUrl] = useState('');
+  const scrape = useScrapeModules(slug);
+  return (
+    <div className="space-y-2 rounded-lg border border-dashed border-border p-3">
+      <Input
+        type="url"
+        placeholder="URL a escanear (opcional, usa BASE_URL si se deja vacío)"
+        value={url}
+        onChange={(e) => setUrl(e.target.value)}
+        disabled={scrape.isPending}
+        className="h-9 text-sm"
+      />
+      <Button
+        onClick={() => scrape.mutate(url.trim() ? { url: url.trim() } : undefined)}
+        disabled={scrape.isPending}
+        variant="outline"
+        className="w-full gap-2"
+      >
+        {scrape.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <ScanSearch className="h-4 w-4" />}
+        Escanear sitio para detectar módulos
+      </Button>
+      <p className="text-[11px] text-muted-foreground">
+        Loguea con los usuarios de prueba del cliente y detecta los módulos con IA. Tarda unos minutos.
+      </p>
+      {scrape.isSuccess && (
+        <p className="text-xs text-success">
+          Escaneo disparado.{' '}
+          <a href={scrape.data.actions_url} target="_blank" rel="noreferrer" className="underline">
+            Ver en GitHub Actions →
+          </a>{' '}
+          Al terminar, recargá para ver el universo.
+        </p>
+      )}
+      {scrape.isError && <p className="text-xs text-destructive">{(scrape.error as Error).message}</p>}
+    </div>
   );
 }
 
