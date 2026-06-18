@@ -23,6 +23,19 @@ class StoryMapEntryDto {
   @IsInt() @Min(0) failed: number;
 }
 
+// Universo de regresión anidado en una corrida (coverage:universe del monorepo).
+// Misma forma que IngestUniverseDto pero SIN datos de cliente: la corrida ya los trae.
+// Permite que cada run refresque el % del widget en un solo upsert (ver ingestRun).
+class RunUniverseDto {
+  @IsInt() @Min(0) total_modules: number;
+  @IsInt() @Min(0) covered_modules: number;
+  @IsInt() @Min(0) pct: number;
+  @IsInt() @Min(0) total_stories: number;
+  @IsInt() @Min(0) automated_stories: number;
+  @IsArray() @ValidateNested({ each: true }) @Type(() => UniverseModuleDto)
+  modules: UniverseModuleDto[];
+}
+
 class RunCoverageDto {
   @IsInt() @Min(0) specs_total: number;
   @IsInt() @Min(0) specs_covered: number;
@@ -33,6 +46,9 @@ class RunCoverageDto {
   story_map?: StoryMapEntryDto[];
   // Títulos de pruebas SIN historia ligada (panel de mapeo pendiente).
   @IsOptional() @IsArray() @IsString({ each: true }) unmapped_tests?: string[];
+  // Universo de cobertura recalculado en esta corrida (auto-sync del % de regresión).
+  @IsOptional() @IsObject() @ValidateNested() @Type(() => RunUniverseDto)
+  universe?: RunUniverseDto;
 }
 
 class IngestTestDto {

@@ -29,12 +29,30 @@ export class IngestService {
     // El inventario (pruebas ESCRITAS) se deriva de la corrida — specs del repo
     // y tests de la suite — así el "estado de construcción de la regresión" se
     // actualiza solo con cada corrida (qa:apply local o CI), sin cargas manuales.
+    // El universo (denominador del % de regresión) NO debe perderse al sobrescribir
+    // el inventario: si la corrida trae uno fresco (coverage.universe) lo guardamos,
+    // si no, conservamos el que ya estaba (lo sembró qa:universe-sync). Antes, este
+    // upsert pisaba inventory y borraba universe en cada corrida.
+    const { data: existingClient } = await this.supabase
+      .from('qa_clients')
+      .select('inventory')
+      .eq('slug', dto.client_slug)
+      .maybeSingle();
+    const existingUniverse = (existingClient?.inventory as { universe?: unknown } | null)?.universe;
+    const universe = dto.coverage?.universe
+      ? { ...dto.coverage.universe, updated_at: new Date().toISOString() }
+      : existingUniverse;
+
     const inventory = {
       specs_total: dto.coverage?.specs_total ?? 0,
       tests_total: (dto.tests ?? []).length,
       modules: (dto.coverage?.modules ?? []).map((m) => ({ name: m.name, tests: m.total })),
       updated_at: new Date().toISOString(),
+      ...(universe ? { universe } : {}),
     };
+    // Escribir inventory si hay specs/tests O si hay universo que preservar/refrescar.
+    const writeInventory =
+      inventory.tests_total || inventory.specs_total || universe;
     await this.supabase.from('qa_clients').upsert(
       {
         slug: dto.client_slug,
@@ -42,7 +60,7 @@ export class IngestService {
         reports_url: dto.reports_url ?? null,
         designs_url: dto.designs_url ?? null,
         enabled: true,
-        ...(inventory.tests_total || inventory.specs_total ? { inventory } : {}),
+        ...(writeInventory ? { inventory } : {}),
         updated_at: new Date().toISOString(),
       },
       { onConflict: 'slug' },
