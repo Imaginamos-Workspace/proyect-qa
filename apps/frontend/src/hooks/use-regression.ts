@@ -45,6 +45,17 @@ export function useScrapeModules(slug: string) {
   });
 }
 
+/**
+ * Dispara la construcción del universo a partir de los repos del cliente
+ * (modules-from-repos.yml): la IA infiere los módulos del backend/frontend.
+ */
+export function useBuildFromRepos(slug: string) {
+  return useMutation({
+    mutationFn: (repos: { backend_repo?: string; frontend_repo?: string }) =>
+      api.post<RunRegressionResult>(`/regression/${slug}/build-from-repos`, repos),
+  });
+}
+
 /** Últimas corridas del workflow, para mostrar estado/enlace en el widget. */
 export function useRegressionRuns(enabled = true) {
   return useQuery({

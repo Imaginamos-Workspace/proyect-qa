@@ -24,6 +24,12 @@ export class RegressionController {
     return this.regression.scrapeModules(slug, body?.url, body?.force);
   }
 
+  /** Construye el universo leyendo los repos backend/frontend del cliente (IA). */
+  @Post(':slug/build-from-repos')
+  buildFromRepos(@Param('slug') slug: string, @Body() body: { backend_repo?: string; frontend_repo?: string }) {
+    return this.regression.buildFromRepos(slug, body?.backend_repo, body?.frontend_repo);
+  }
+
   /** Últimas corridas del workflow (estado/enlace para el widget). */
   @Get('runs')
   listRuns(@Query('limit') limit?: string) {

@@ -23,7 +23,6 @@ import { IssueTypeIcon, PriorityFlag, IssueKey, EstimateChip } from '@/component
 import { Avatar, SearchBox, FilterMenu, SprintSelect, type FilterOption } from './board-toolbar';
 import { useClient } from '@/hooks/use-dashboard';
 import { RegressionProgress } from '@/components/clients/regression-progress';
-import { ClientCredentials } from '@/components/clients/client-credentials';
 
 const TYPE_LABEL: Record<ScrumIssueType, string> = {
   epic: 'Épica',
@@ -254,11 +253,12 @@ export function BoardPage() {
             </div>
           )}
 
-          {/* ── Regresión + credenciales del cliente ─────────────────────── */}
-          <div className="grid gap-4 lg:grid-cols-2">
-            <RegressionProgress universe={client?.inventory?.universe} slug={slug} />
-            <ClientCredentials credentials={client?.inventory?.credentials} />
-          </div>
+          {/* ── Widget único colapsable: regresión + acciones + credenciales ── */}
+          <RegressionProgress
+            universe={client?.inventory?.universe}
+            credentials={client?.inventory?.credentials}
+            slug={slug}
+          />
 
           {/* ── Kanban ───────────────────────────────────────────────────── */}
           <div className="flex gap-4 overflow-x-auto pb-3">

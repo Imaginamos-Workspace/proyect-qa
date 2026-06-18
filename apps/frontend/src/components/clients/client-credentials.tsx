@@ -11,29 +11,34 @@ import type { Credentials } from '@/hooks/use-dashboard';
  * monorepo con `qa:creds-sync` (lee projects/<c>/.env + project.meta.json).
  */
 export function ClientCredentials({ credentials }: { credentials?: Credentials }) {
+  return (
+    <Card>
+      <CardHeader className="pb-2"><CardTitle>Credenciales y entornos</CardTitle></CardHeader>
+      <CardContent>
+        <CredentialsBody credentials={credentials} />
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Cuerpo de credenciales SIN Card, para anidar en el widget de regresión colapsable. */
+export function CredentialsBody({ credentials }: { credentials?: Credentials }) {
   const hasEnvs = credentials && credentials.environments && Object.keys(credentials.environments).length > 0;
   const hasUsers = credentials && credentials.qa_users && credentials.qa_users.length > 0;
   const hasBase = credentials && (credentials.base_url || credentials.api_url);
 
   if (!credentials || (!hasEnvs && !hasUsers && !hasBase)) {
     return (
-      <Card>
-        <CardHeader className="pb-2"><CardTitle>Credenciales y entornos</CardTitle></CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">
-            Aún no se sincronizaron las credenciales de este cliente. El QA las publica con{' '}
-            <code className="rounded bg-muted px-1 py-0.5 text-xs">npm run qa:creds-sync -- &lt;cliente&gt;</code>.
-          </p>
-        </CardContent>
-      </Card>
+      <p className="text-sm text-muted-foreground">
+        Aún no se sincronizaron las credenciales de este cliente. El QA las publica con{' '}
+        <code className="rounded bg-muted px-1 py-0.5 text-xs">npm run qa:creds-sync -- &lt;cliente&gt;</code>.
+      </p>
     );
   }
 
   return (
-    <Card>
-      <CardHeader className="pb-2"><CardTitle>Credenciales y entornos</CardTitle></CardHeader>
-      <CardContent className="space-y-5">
-        {/* URLs base / API (del .env) */}
+    <div className="space-y-5">
+      {/* URLs base / API (del .env) */}
         {hasBase && (
           <Section icon={Globe} title="URLs">
             <div className="space-y-1.5">
@@ -91,8 +96,7 @@ export function ClientCredentials({ credentials }: { credentials?: Credentials }
             Sincronizado {new Date(credentials!.updated_at).toLocaleString()}
           </p>
         )}
-      </CardContent>
-    </Card>
+    </div>
   );
 }
 

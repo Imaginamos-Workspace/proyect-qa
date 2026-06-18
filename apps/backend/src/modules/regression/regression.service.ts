@@ -14,6 +14,7 @@ import { ConfigService } from '@nestjs/config';
 const GITHUB_API = 'https://api.github.com';
 const WORKFLOW_FILE = 'qa-regression.yml';
 const SCRAPE_WORKFLOW_FILE = 'modules-scrape.yml';
+const REPOS_WORKFLOW_FILE = 'modules-from-repos.yml';
 // Espejo de los `type: choice` de qa-regression.yml (input `suite`).
 const ALLOWED_SUITES = ['e2e', 'perf', 'security', 'mobile-android', 'both'] as const;
 type Suite = (typeof ALLOWED_SUITES)[number];
@@ -135,6 +136,31 @@ export class RegressionService {
     if (force) inputs.force = 'true';
     const actions_url = await this.dispatch(SCRAPE_WORKFLOW_FILE, inputs);
     this.logger.log(`Scrape de módulos disparado: ${project}${url ? ` (${url})` : ''}`);
+    return { ok: true, actions_url };
+  }
+
+  /**
+   * Dispara modules-from-repos.yml: la IA lee los repos backend/frontend del cliente
+   * e infiere el universo de módulos (modules.md + universo baseline). Al menos uno
+   * de los repos es obligatorio.
+   */
+  async buildFromRepos(
+    slug: string,
+    backendRepo?: string,
+    frontendRepo?: string,
+  ): Promise<{ ok: true; actions_url: string }> {
+    const project = (slug ?? '').trim();
+    if (!project) throw new BadRequestException('Falta el slug del cliente.');
+    const backend = (backendRepo ?? '').trim();
+    const frontend = (frontendRepo ?? '').trim();
+    if (!backend && !frontend) {
+      throw new BadRequestException('Indicá al menos un repositorio (backend o frontend).');
+    }
+    const inputs: Record<string, string> = { project };
+    if (backend) inputs.backend_repo = backend;
+    if (frontend) inputs.frontend_repo = frontend;
+    const actions_url = await this.dispatch(REPOS_WORKFLOW_FILE, inputs);
+    this.logger.log(`Build desde repos disparado: ${project} (${backend || '—'} / ${frontend || '—'})`);
     return { ok: true, actions_url };
   }
 
