@@ -47,7 +47,8 @@ export function BoardPage() {
 
   const toggle = (set: Set<string>, setter: (s: Set<string>) => void) => (v: string) => {
     const next = new Set(set);
-    next.has(v) ? next.delete(v) : next.add(v);
+    if (next.has(v)) next.delete(v);
+    else next.add(v);
     setter(next);
   };
 
