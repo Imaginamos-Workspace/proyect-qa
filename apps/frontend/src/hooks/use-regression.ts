@@ -1,0 +1,50 @@
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { api } from '@/lib/api';
+
+export type RegressionSuite = 'e2e' | 'perf' | 'security' | 'mobile-android' | 'both';
+
+export interface RegressionRun {
+  id: number;
+  status: string | null; // queued | in_progress | completed
+  conclusion: string | null; // success | failure | cancelled | null
+  event: string;
+  url: string;
+  created_at: string;
+  display_title: string;
+}
+
+export interface RunRegressionResult {
+  ok: true;
+  suite: RegressionSuite;
+  actions_url: string;
+}
+
+/** Dispara la regresión de un cliente (workflow_dispatch en el monorepo). */
+export function useRunRegression(slug: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (suite: RegressionSuite) =>
+      api.post<RunRegressionResult>(`/regression/${slug}/run`, { suite }),
+    onSuccess: () => {
+      // Dale a Actions un momento para registrar la corrida, luego refrescá.
+      setTimeout(() => {
+        queryClient.invalidateQueries({ queryKey: ['regression', 'runs'] });
+      }, 2500);
+    },
+  });
+}
+
+/** Últimas corridas del workflow, para mostrar estado/enlace en el widget. */
+export function useRegressionRuns(enabled = true) {
+  return useQuery({
+    queryKey: ['regression', 'runs'],
+    queryFn: () => api.get<RegressionRun[]>('/regression/runs?limit=5'),
+    enabled,
+    // Mientras haya una corrida en curso, refrescá cada 15s.
+    refetchInterval: (query) => {
+      const runs = query.state.data;
+      const running = runs?.some((r) => r.status !== 'completed');
+      return running ? 15_000 : false;
+    },
+  });
+}

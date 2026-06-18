@@ -160,7 +160,7 @@ export function ClientDetailPage() {
         </CardContent>
       </Card>
 
-      <RegressionProgress universe={client.inventory?.universe} />
+      <RegressionProgress universe={client.inventory?.universe} slug={client.slug} />
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>

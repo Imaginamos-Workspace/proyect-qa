@@ -13,6 +13,7 @@ import { ModulesModule } from './modules/modules/modules.module';
 import { IngestModule } from './modules/ingest/ingest.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { ScrumModule } from './modules/scrum/scrum.module';
+import { RegressionModule } from './modules/regression/regression.module';
 import { SupabaseModule } from './config/supabase.module';
 
 @Module({
@@ -32,6 +33,7 @@ import { SupabaseModule } from './config/supabase.module';
     IngestModule,
     DashboardModule,
     ScrumModule,
+    RegressionModule,
   ],
 })
 export class AppModule {}
