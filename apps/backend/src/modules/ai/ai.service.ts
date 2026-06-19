@@ -118,6 +118,49 @@ export class AIService {
   }
 
   /**
+   * Extrae la lista de MÓDULOS del producto a partir de SEÑALES: el texto de la
+   * navegación del sitio (kind='site') o nombres de carpetas de los repos
+   * (kind='repos'). Corre en el backend (Gemini). Fallback heurístico si falla.
+   */
+  async extractModules(signals: string[], kind: 'site' | 'repos'): Promise<string[]> {
+    const text = signals.join('\n').slice(0, 8000);
+    if (!text.trim()) return [];
+    const prompt =
+      kind === 'repos'
+        ? 'Eres un analista de QA. A partir de estos NOMBRES DE CARPETAS/MÓDULOS de los repos ' +
+          'backend/frontend de un producto, devolvé la lista de MÓDULOS funcionales en español, ' +
+          'legibles para negocio (p. ej. "Usuarios", "Facturación"). Unificá duplicados back/front, ' +
+          'ignorá utilitarios (common, shared, utils, core). SOLO un JSON array de strings.\n\nCARPETAS:\n' + text
+        : 'Eres un analista de QA. A partir del texto de la NAVEGACIÓN de una app web (menús, ' +
+          'sidebar, enlaces), extraé la lista de MÓDULOS/secciones funcionales (p. ej. "Usuarios", ' +
+          '"Facturación", "Reportes"). Ignorá UI que no sea módulo (logout, idioma, perfil, footer). ' +
+          'SOLO un JSON array de strings.\n\nNAVEGACIÓN:\n' + text;
+    try {
+      const raw = await this.gemini.generateRaw({ prompt, temperature: 0, responseMimeType: 'application/json' });
+      const match = raw.match(/\[[\s\S]*\]/);
+      if (!match) throw new Error('respuesta no-JSON');
+      const arr = JSON.parse(match[0]) as unknown[];
+      const out = [...new Set(arr.map((s) => String(s).trim()).filter(Boolean))];
+      if (out.length) return out.slice(0, 60);
+      throw new Error('lista vacía');
+    } catch {
+      // Heurística: líneas/segmentos cortos y únicos.
+      const seen = new Set<string>();
+      const out: string[] = [];
+      for (const raw of signals) {
+        const t = raw.trim();
+        if (t.length < 2 || t.length > 40) continue;
+        if (/^(login|logout|cerrar sesión|perfil|idioma|es|en|buscar|search|common|shared|utils|core)$/i.test(t)) continue;
+        const key = t.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(kind === 'repos' ? t.replace(/[-_]+/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) : t);
+      }
+      return out.slice(0, 40);
+    }
+  }
+
+  /**
    * Issue a scoped heal token for a specific test case. Requires Supabase
    * session (the controller enforces auth). The token is consumed by the
    * public /ai/heal-iterate endpoint to authorize that one test case.

@@ -161,6 +161,17 @@ export class IngestUniverseMapDto {
   tests?: TestSignalDto[];
 }
 
+/**
+ * Señales para que el BACKEND extraiga los módulos del universo con IA. kind='site'
+ * → texto de la navegación (scrape); kind='repos' → nombres de carpetas de los repos.
+ */
+export class IngestExtractModulesDto {
+  @IsString() client_slug: string;
+  @IsOptional() @IsString() client_name?: string;
+  @IsIn(['site', 'repos']) kind: string;
+  @IsArray() @IsString({ each: true }) signals: string[];
+}
+
 export class IngestActivityDto {
   @IsString() actor_login: string;
   @IsIn(['test', 'design', 'bug', 'commit', 'run']) kind: string;

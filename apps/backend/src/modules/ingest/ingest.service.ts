@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../../config/supabase.module';
-import { IngestRunDto, IngestActivityDto, IngestUniverseDto, IngestCredentialsDto, IngestUniverseMapDto } from './dto/ingest-run.dto';
+import { IngestRunDto, IngestActivityDto, IngestUniverseDto, IngestCredentialsDto, IngestUniverseMapDto, IngestExtractModulesDto } from './dto/ingest-run.dto';
 import { AIService } from '../ai/ai.service';
 
 interface FailingTest {
@@ -266,6 +266,29 @@ export class IngestService {
     await this.storeUniverse(dto.client_slug, dto.client_name, universe);
     this.logger.log(`UniverseMap ${dto.client_slug}: ${covered}/${mapped.length} módulos covered (${pct}%)`);
     return { ok: true, pct, covered_modules: covered, total_modules: mapped.length };
+  }
+
+  /**
+   * Extrae los módulos del universo con IA (Gemini, backend) a partir de señales
+   * del sitio o los repos, guarda un universo BASELINE (todos pending, 0%) y
+   * devuelve la lista de módulos (el monorepo la escribe en modules.md).
+   */
+  async extractModules(dto: IngestExtractModulesDto) {
+    const kind = dto.kind === 'repos' ? 'repos' : 'site';
+    const modules = await this.aiService.extractModules(dto.signals ?? [], kind);
+    if (!modules.length) return { ok: true, modules: [], total_modules: 0 };
+    const universe = {
+      total_modules: modules.length,
+      covered_modules: 0,
+      pct: 0,
+      total_stories: 0,
+      automated_stories: 0,
+      modules: modules.map((name) => ({ name, epics: [], stories_total: 0, automated: 0, status: 'pending' })),
+      updated_at: new Date().toISOString(),
+    };
+    await this.storeUniverse(dto.client_slug, dto.client_name, universe);
+    this.logger.log(`ExtractModules ${dto.client_slug} (${kind}): ${modules.length} módulos`);
+    return { ok: true, modules, total_modules: modules.length };
   }
 
   /**
