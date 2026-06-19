@@ -41,9 +41,14 @@ export class IngestService {
       .eq('slug', dto.client_slug)
       .maybeSingle();
     const existingUniverse = (existingClient?.inventory as { universe?: unknown } | null)?.universe;
-    const universe = dto.coverage?.universe
+    let universe = dto.coverage?.universe
       ? { ...dto.coverage.universe, updated_at: new Date().toISOString() }
       : existingUniverse;
+
+    // Numerador IA DINÁMICO: en cada corrida re-mapea la automatización (los tests
+    // que corrieron) a los módulos del universo con Gemini (backend). Así el % se
+    // actualiza solo en cada run, sin correr qa:universe-ai a mano. Best-effort.
+    universe = await this.aiMapUniverse(universe, dto.tests ?? []);
 
     const inventory = {
       specs_total: dto.coverage?.specs_total ?? 0,
@@ -211,6 +216,51 @@ export class IngestService {
     await this.storeUniverse(dto.client_slug, dto.client_name, universe);
     this.logger.log(`Universe ${dto.client_slug}: ${dto.covered_modules}/${dto.total_modules} módulos (${dto.pct}%)`);
     return { ok: true, pct: dto.pct, total_modules: dto.total_modules };
+  }
+
+  /**
+   * Re-mapea con IA la automatización (tests de la corrida) a los módulos del
+   * universo y recalcula covered/pct. Numerador = automatización QA, dinámico por
+   * corrida. Best-effort: ante cualquier fallo devuelve el universo sin tocar.
+   */
+  private async aiMapUniverse(
+    universe: unknown,
+    tests: { title: string; file?: string }[],
+  ): Promise<unknown> {
+    const u = universe as
+      | { modules?: { name: string; epics?: string[]; stories_total?: number }[] }
+      | undefined;
+    if (!u?.modules?.length || !tests.length) return universe;
+    try {
+      const grouped = Object.values(
+        tests.reduce<Record<string, { file: string; titles: string[] }>>((acc, t) => {
+          const f = t.file ?? '';
+          (acc[f] ??= { file: f, titles: [] }).titles.push(t.title);
+          return acc;
+        }, {}),
+      );
+      const mapped = await this.aiService.mapModuleCoverage(
+        u.modules.map((m) => m.name),
+        grouped,
+      );
+      const byName = new Map(mapped.map((m) => [m.name.toLowerCase(), m]));
+      const modules = u.modules.map((m) => {
+        const hit = byName.get(m.name.toLowerCase());
+        return { ...m, status: hit?.status ?? 'pending', automated: hit?.automated ?? 0 };
+      });
+      const covered = modules.filter((m) => m.status === 'covered').length;
+      return {
+        ...u,
+        modules,
+        covered_modules: covered,
+        pct: modules.length ? Math.round((covered / modules.length) * 100) : 0,
+        automated_stories: modules.reduce((n, m) => n + (m.automated || 0), 0),
+        updated_at: new Date().toISOString(),
+      };
+    } catch (e) {
+      this.logger.warn(`aiMapUniverse falló (${String(e)}) — conservo el universo previo.`);
+      return universe;
+    }
   }
 
   /** Guarda el universo en qa_clients.inventory.universe sin pisar el resto. */
