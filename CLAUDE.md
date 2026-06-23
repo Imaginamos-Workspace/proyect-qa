@@ -47,7 +47,7 @@ Same-shape sanitizer re-runs on the client as a last line of defense, including 
 
 ## Deployment
 - Frontend: Vercel (project `qa-frontend`, org `viviana-qas-projects`).
-- Backend: Vercel (project `qa-backend`, URL `https://qa-backend-iota.vercel.app/api`).
+- Backend: Vercel (project `qa-backend`, URL `https://qa-backend-theta.vercel.app/api`).
 - Database: Supabase (`tsnqqmsrydsfuaezkfkr`).
 
 ## Commit convention

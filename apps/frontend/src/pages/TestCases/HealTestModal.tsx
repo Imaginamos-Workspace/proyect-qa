@@ -24,7 +24,7 @@ interface Props {
 export function HealTestModal({ testCase, projectBaseUrl, onClose }: Props) {
   // /api suffix is part of the api client baseURL; heal-loop.mjs will append it.
   const backendUrlRaw = (
-    import.meta.env.VITE_API_URL || 'https://qa-backend-iota.vercel.app/api'
+    import.meta.env.VITE_API_URL || 'https://qa-backend-theta.vercel.app/api'
   ).trim();
   const backendUrl = backendUrlRaw.replace(/\/api\/?$/, '');
 

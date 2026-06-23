@@ -29,7 +29,7 @@ const args = parseArgs(process.argv.slice(2));
 const TEST_FILE = args.file || 'generated-tests.spec.ts';
 const TEST_ID = args['test-id'];
 const HEAL_TOKEN = args.token;
-const BACKEND = (args.backend || 'https://qa-backend-iota.vercel.app').replace(/\/$/, '');
+const BACKEND = (args.backend || 'https://qa-backend-theta.vercel.app').replace(/\/$/, '');
 
 if (!TEST_ID) {
   console.error('Usage: node heal-loop.mjs --test-id=<uuid> --token=<heal-token> [--backend=<url>] [--file=<spec>]');

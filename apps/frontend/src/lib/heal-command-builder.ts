@@ -32,7 +32,7 @@ interface HealCommandConfig {
   testCaseId: string;
   /** Scoped HMAC token issued by /ai/heal-token; valid 1 hour. */
   healToken: string;
-  /** Backend URL (e.g., https://qa-backend-iota.vercel.app). */
+  /** Backend URL (e.g., https://qa-backend-theta.vercel.app). */
   backendUrl: string;
   /** Project base URL for Playwright config. */
   projectBaseUrl: string;
