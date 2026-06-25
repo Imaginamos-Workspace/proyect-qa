@@ -115,11 +115,15 @@ export class ScrumService {
     return board;
   }
 
-  private async gql<T>(query: string, variables: Record<string, unknown>): Promise<T> {
+  private async gql<T>(
+    query: string,
+    variables: Record<string, unknown>,
+    token: string | undefined = this.token,
+  ): Promise<T> {
     const res = await fetch(GITHUB_GRAPHQL, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${this.token}`,
+        Authorization: `Bearer ${token}`,
         'Content-Type': 'application/json',
         'User-Agent': 'qa-portal-scrum',
       },
@@ -284,6 +288,54 @@ export class ScrumService {
     return { ok: true, issue: issueNumber, login: target || null };
   }
 
+  /** Mueve una tarjeta a otra columna = setea su campo `Status` en el board (como
+   *  arrastrar en Jira). Requiere un token con ESCRITURA de Projects
+   *  (GITHUB_WRITE_TOKEN). La autorización por ROL la hace el controller
+   *  (RolesService) ANTES de llamar acá. */
+  async moveCard(slug: string, issueNumber: number, statusName: string) {
+    const token = process.env.GITHUB_WRITE_TOKEN || this.token;
+    if (!token) throw new Error('GitHub token de escritura no configurado en el servidor.');
+
+    const { data: client } = await this.supabase
+      .from('qa_clients')
+      .select('display_name')
+      .eq('slug', slug)
+      .maybeSingle();
+    const project = await this.resolveProject(client?.display_name ?? slug, slug);
+    if (!project) throw new Error('No se encontró el board del cliente.');
+
+    // 1. El item del issue EN ESTE proyecto (+ node id del proyecto).
+    const itemData = await this.gql<{
+      repository: {
+        issue: { projectItems: { nodes: { id: string; project: { id: string; number: number } }[] } } | null;
+      } | null;
+    }>(ISSUE_ITEM_QUERY, { owner: this.owner, name: `qa-${slug}`, number: issueNumber }, token);
+    const item = (itemData.repository?.issue?.projectItems?.nodes ?? []).find(
+      (n) => n.project?.number === project.number,
+    );
+    if (!item) throw new Error(`El issue #${issueNumber} no está en el board del cliente.`);
+
+    // 2. El campo Status y la opción (columna) destino.
+    const fieldData = await this.gql<{
+      organization: {
+        projectV2: { field: { id: string; options?: { id: string; name: string }[] } | null } | null;
+      } | null;
+    }>(STATUS_FIELD_QUERY, { owner: this.owner, number: project.number }, token);
+    const field = fieldData.organization?.projectV2?.field;
+    const option = (field?.options ?? []).find((o) => o.name === statusName);
+    if (!field?.id || !option) throw new Error(`La columna "${statusName}" no existe en el board.`);
+
+    // 3. Setear el Status del item.
+    await this.gql(
+      MOVE_MUTATION,
+      { projectId: item.project.id, itemId: item.id, fieldId: field.id, optionId: option.id },
+      token,
+    );
+
+    this.cache.delete(slug); // el board refleja el nuevo estado
+    return { ok: true, issue: issueNumber, status: statusName };
+  }
+
   /** Trazabilidad pruebas↔historias de la última corrida (qa_runs.coverage). */
   private async fetchQaInfo(slug: string): Promise<ScrumQaInfo | null> {
     try {
@@ -420,4 +472,35 @@ query($owner:String!, $number:Int!, $cursor:String) {
       }
     }
   }
+}`;
+
+// El item de un issue DENTRO de un proyecto (para moverlo). Trae el node id del
+// item y del proyecto, filtrando por número de proyecto en el código.
+const ISSUE_ITEM_QUERY = `
+query($owner:String!, $name:String!, $number:Int!) {
+  repository(owner:$owner, name:$name) {
+    issue(number:$number) {
+      projectItems(first:10) { nodes { id project { id number } } }
+    }
+  }
+}`;
+
+// El campo Status del board: id + opciones (columnas) con su id, para resolver la
+// opción destino por nombre.
+const STATUS_FIELD_QUERY = `
+query($owner:String!, $number:Int!) {
+  organization(login:$owner) {
+    projectV2(number:$number) {
+      field(name:"Status") { ... on ProjectV2SingleSelectField { id options { id name } } }
+    }
+  }
+}`;
+
+// Setea el Status (columna) de un item del board.
+const MOVE_MUTATION = `
+mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $optionId:String!) {
+  updateProjectV2ItemFieldValue(input:{
+    projectId:$projectId, itemId:$itemId, fieldId:$fieldId,
+    value:{ singleSelectOptionId:$optionId }
+  }) { projectV2Item { id } }
 }`;

@@ -12,7 +12,7 @@ import {
   Columns3,
   FilterX,
 } from 'lucide-react';
-import { useScrumBoards, useScrumBoard } from '@/hooks/use-scrum';
+import { useScrumBoards, useScrumBoard, useScrumMe, useMoveCard } from '@/hooks/use-scrum';
 import type { ScrumCard, ScrumIssueType, ScrumStoryTests } from '@qa/shared-types';
 import { TestsBadge, TraceabilityButton } from './board-traceability';
 import { AssigneePicker } from './board-assignee';
@@ -43,6 +43,13 @@ export function BoardPage() {
   // Inventario del cliente (universo de regresión + credenciales) para los paneles
   // del tablero. Es un fetch aparte del board (dashboard), cacheado por react-query.
   const { data: client } = useClient(slug);
+
+  // ── Permiso + estado de drag-and-drop (mover tarjetas entre columnas) ───
+  const { data: me } = useScrumMe();
+  const canMove = !!me?.canMove;
+  const move = useMoveCard(slug);
+  const [dragIssue, setDragIssue] = useState<number | null>(null);
+  const [overCol, setOverCol] = useState<string | null>(null);
 
   // ── Estado de filtros ──────────────────────────────────────────────────
   const [search, setSearch] = useState('');
@@ -262,9 +269,33 @@ export function BoardPage() {
           />
 
           {/* ── Kanban ───────────────────────────────────────────────────── */}
+          {move.isError && (
+            <p className="mb-2 rounded-md bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
+              {move.error instanceof Error ? move.error.message : 'No se pudo mover la tarjeta.'}
+            </p>
+          )}
           <div className="flex gap-4 overflow-x-auto pb-3">
             {visibleColumns.map((col) => (
-              <div key={col.key} className="flex w-72 shrink-0 flex-col">
+              <div
+                key={col.key}
+                className="flex w-72 shrink-0 flex-col"
+                onDragOver={(e) => {
+                  if (canMove && dragIssue != null) {
+                    e.preventDefault();
+                    if (overCol !== col.key) setOverCol(col.key);
+                  }
+                }}
+                onDragLeave={() => setOverCol((c) => (c === col.key ? null : c))}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  const issue = dragIssue ?? Number(e.dataTransfer.getData('text/plain'));
+                  setOverCol(null);
+                  setDragIssue(null);
+                  if (canMove && issue && !Number.isNaN(issue) && !col.cards.some((c) => c.number === issue)) {
+                    move.mutate({ issue, status: col.key });
+                  }
+                }}
+              >
                 <div className="mb-2 flex items-center justify-between px-1">
                   <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
                     {col.title}
@@ -273,20 +304,46 @@ export function BoardPage() {
                     {col.cards.length}
                   </span>
                 </div>
-                <div className="flex flex-col gap-2 rounded-xl bg-muted/40 p-2">
+                <div
+                  className={cn(
+                    'flex min-h-[3rem] flex-col gap-2 rounded-xl bg-muted/40 p-2 transition-colors',
+                    overCol === col.key && canMove && 'bg-primary/5 ring-2 ring-primary/40',
+                  )}
+                >
                   {col.cards.length === 0 ? (
                     <p className="px-1 py-8 text-center text-xs text-muted-foreground/60">—</p>
                   ) : (
-                    col.cards.map((card) => (
-                      <IssueCard
-                        key={card.id}
-                        card={card}
-                        qaEntry={card.number != null ? testsByStory.get(card.number) : undefined}
-                        reportUrl={board.qa?.report_url}
-                        slug={slug}
-                        members={board.members ?? []}
-                      />
-                    ))
+                    col.cards.map((card) => {
+                      const draggable = canMove && card.number != null;
+                      return (
+                        <div
+                          key={card.id}
+                          draggable={draggable}
+                          onDragStart={(e) => {
+                            if (!draggable) return;
+                            setDragIssue(card.number as number);
+                            e.dataTransfer.effectAllowed = 'move';
+                            e.dataTransfer.setData('text/plain', String(card.number));
+                          }}
+                          onDragEnd={() => {
+                            setDragIssue(null);
+                            setOverCol(null);
+                          }}
+                          className={cn(
+                            draggable && 'cursor-grab active:cursor-grabbing',
+                            dragIssue === card.number && 'opacity-40',
+                          )}
+                        >
+                          <IssueCard
+                            card={card}
+                            qaEntry={card.number != null ? testsByStory.get(card.number) : undefined}
+                            reportUrl={board.qa?.report_url}
+                            slug={slug}
+                            members={board.members ?? []}
+                          />
+                        </div>
+                      );
+                    })
                   )}
                 </div>
               </div>

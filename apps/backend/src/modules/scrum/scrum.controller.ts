@@ -1,16 +1,57 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  ForbiddenException,
+  Get,
+  Param,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { ScrumService } from './scrum.service';
+import { RolesService } from './roles.service';
 import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard';
+
+// El guard pone el usuario de Supabase en request.user. De GitHub OAuth, el login
+// viene en user_metadata (user_name / preferred_username).
+interface RequestWithUser {
+  user?: { user_metadata?: Record<string, unknown> };
+}
+
+function githubLogin(req: RequestWithUser): string | null {
+  const m = req.user?.user_metadata ?? {};
+  return (
+    (m.user_name as string) ||
+    (m.preferred_username as string) ||
+    (m.nickname as string) ||
+    null
+  );
+}
 
 @Controller('scrum')
 @UseGuards(SupabaseAuthGuard)
 export class ScrumController {
-  constructor(private readonly scrum: ScrumService) {}
+  constructor(
+    private readonly scrum: ScrumService,
+    private readonly roles: RolesService,
+  ) {}
 
   /** Clientes con board disponible. */
   @Get('boards')
   listBoards() {
     return this.scrum.listBoards();
+  }
+
+  /** El usuario actual: login de GitHub, sus roles (team.json del monorepo) y si
+   *  puede mover tarjetas. El frontend usa `canMove` para habilitar el drag. */
+  @Get('me')
+  async me(@Req() req: RequestWithUser) {
+    const login = githubLogin(req);
+    const [roles, canMove] = await Promise.all([
+      this.roles.rolesFor(login),
+      this.roles.canMove(login),
+    ]);
+    return { login, roles, canMove };
   }
 
   /** Board normalizado de un cliente (kanban tipo Jira). */
@@ -26,5 +67,22 @@ export class ScrumController {
     @Body() body: { issue: number; login: string | null },
   ) {
     return this.scrum.assignIssue(slug, Number(body.issue), body.login ?? null);
+  }
+
+  /** Mueve una tarjeta a otra columna (cambia el Status), como arrastrar en Jira.
+   *  Gateado por ROL: solo roles de ejecución (team.json del monorepo) pueden. */
+  @Post('boards/:slug/move')
+  async move(
+    @Param('slug') slug: string,
+    @Body() body: { issue: number; status: string },
+    @Req() req: RequestWithUser,
+  ) {
+    const login = githubLogin(req);
+    if (!(await this.roles.canMove(login))) {
+      throw new ForbiddenException(
+        'Tu rol no tiene permiso para mover tarjetas en el board.',
+      );
+    }
+    return this.scrum.moveCard(slug, Number(body.issue), String(body.status));
   }
 }
