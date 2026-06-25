@@ -1,6 +1,7 @@
 {
   "installCommand": "pnpm install",
   "buildCommand": "pnpm run build",
+  "ignoreCommand": "npx turbo-ignore frontend",
   "outputDirectory": "apps/frontend/dist",
   "rewrites": [
     { "source": "/((?!api).*)", "destination": "/index.html" }
