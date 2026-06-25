@@ -2,7 +2,7 @@
 // El backend (ScrumModule) lo arma desde la API de GitHub; el frontend lo
 // renderiza como un kanban estilo Jira.
 
-export type ScrumIssueType = 'epic' | 'story' | 'task' | 'bug' | 'spike' | 'unknown';
+export type ScrumIssueType = 'epic' | 'story' | 'task' | 'bug' | 'incident' | 'spike' | 'unknown';
 export type ScrumPriority = 'high' | 'medium' | 'low' | null;
 
 export interface ScrumAssignee {

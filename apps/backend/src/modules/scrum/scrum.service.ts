@@ -28,7 +28,8 @@ const COLUMN_ORDER = ['Backlog', 'Todo', 'In Progress', 'In Review', 'Done'];
 const CACHE_TTL_MS = 60_000;
 
 const TYPE_MAP: Record<string, ScrumIssueType> = {
-  Épica: 'epic', Epica: 'epic', Historia: 'story', Tarea: 'task', Bug: 'bug', Spike: 'spike',
+  Épica: 'epic', Epica: 'epic', Historia: 'story', Tarea: 'task',
+  Bug: 'bug', Incidencia: 'incident', Spike: 'spike',
 };
 
 function mapType(tipo: string | null): ScrumIssueType {

@@ -29,6 +29,7 @@ const TYPE_LABEL: Record<ScrumIssueType, string> = {
   story: 'Historia',
   task: 'Tarea',
   bug: 'Bug',
+  incident: 'Incidencia',
   spike: 'Spike',
   unknown: 'Sin tipo',
 };

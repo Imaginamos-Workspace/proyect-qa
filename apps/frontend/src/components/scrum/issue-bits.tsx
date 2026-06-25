@@ -4,6 +4,7 @@ import {
   Bookmark,
   SquareCheckBig,
   Bug,
+  Flame,
   FlaskConical,
   Circle,
   ChevronsUp,
@@ -19,6 +20,7 @@ const TYPE_META: Record<ScrumIssueType, { icon: LucideIcon; bg: string; label: s
   story: { icon: Bookmark, bg: 'bg-success', label: 'Historia' },
   task: { icon: SquareCheckBig, bg: 'bg-info', label: 'Tarea' },
   bug: { icon: Bug, bg: 'bg-destructive', label: 'Bug' },
+  incident: { icon: Flame, bg: 'bg-destructive', label: 'Incidencia' },
   spike: { icon: FlaskConical, bg: 'bg-warning', label: 'Spike' },
   unknown: { icon: Circle, bg: 'bg-muted-foreground', label: '—' },
 };

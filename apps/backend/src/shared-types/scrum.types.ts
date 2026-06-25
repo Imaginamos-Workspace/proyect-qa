@@ -2,7 +2,7 @@
 // Espejo de packages/shared-types/src/scrum.types.ts (el backend mantiene su
 // propia copia, igual que el resto de tipos).
 
-export type ScrumIssueType = 'epic' | 'story' | 'task' | 'bug' | 'spike' | 'unknown';
+export type ScrumIssueType = 'epic' | 'story' | 'task' | 'bug' | 'incident' | 'spike' | 'unknown';
 export type ScrumPriority = 'high' | 'medium' | 'low' | null;
 
 export interface ScrumAssignee {
