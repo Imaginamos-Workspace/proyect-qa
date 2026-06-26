@@ -143,6 +143,9 @@ export function FilterMenu({
 }
 
 /* ── Barra de sprints (con fechas + abierto/cerrado) ────────────────────── */
+// Valor sentinela para filtrar las tarjetas SIN sprint asignado (data-quality:
+// idealmente todas deben tener uno, aunque sea el actual). No es un título real.
+export const NO_SPRINT = '__none__';
 const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 function fmt(d: string | null): string {
   if (!d) return '';
@@ -161,13 +164,15 @@ export function SprintSelect({
   onPick,
   activeTitle,
   openByTitle,
+  noSprintCount = 0,
 }: {
   sprints: string[];
   meta: ScrumSprint[];
-  value: string; // '' = todos
+  value: string; // título de sprint, o NO_SPRINT
   onPick: (s: string) => void;
   activeTitle: string | null;
   openByTitle: Map<string, number>;
+  noSprintCount?: number; // tarjetas sin sprint asignado
 }) {
   const [q, setQ] = useState('');
   const metaByTitle = new Map(meta.map((m) => [m.title, m]));
@@ -204,7 +209,7 @@ export function SprintSelect({
           )}
         >
           <CalendarDays className="h-4 w-4 shrink-0 opacity-70" />
-          <span className="truncate">{value ? value : `Todos los sprints (${sprints.length})`}</span>
+          <span className="truncate">{value === NO_SPRINT ? 'Sin sprint' : value || 'Sprint'}</span>
           {current?.active && <Rocket className="h-3.5 w-3.5 shrink-0 text-success" />}
           <ChevronDown className="ml-auto h-3.5 w-3.5 shrink-0 opacity-60" />
         </button>
@@ -226,6 +231,14 @@ export function SprintSelect({
             />
           </div>
           <div className="max-h-[22rem] overflow-y-auto">
+            {!q && (
+              <SprintRow
+                label="Sin sprint"
+                sub={`${noSprintCount} sin asignar`}
+                selected={value === NO_SPRINT}
+                onClick={() => onPick(NO_SPRINT)}
+              />
+            )}
             {filtered.map((o) => (
               <SprintRow
                 key={o.title}

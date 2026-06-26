@@ -20,7 +20,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { IssueTypeIcon, PriorityFlag, IssueKey, EstimateChip } from '@/components/scrum/issue-bits';
-import { Avatar, SearchBox, FilterMenu, SprintSelect, type FilterOption } from './board-toolbar';
+import { Avatar, SearchBox, FilterMenu, SprintSelect, NO_SPRINT, type FilterOption } from './board-toolbar';
 import { useClient } from '@/hooks/use-dashboard';
 import { RegressionProgress } from '@/components/clients/regression-progress';
 
@@ -73,6 +73,7 @@ export function BoardPage() {
 
   // ── Opciones de filtro derivadas del board ─────────────────────────────
   const allCards = useMemo(() => (board?.columns ?? []).flatMap((c) => c.cards), [board]);
+  const noSprintCount = useMemo(() => allCards.filter((c) => !c.sprint).length, [allCards]);
 
   // Sprint activo + issues abiertos por sprint (para el default y el selector).
   const { activeSprint, openBySprint } = useMemo(() => {
@@ -133,7 +134,11 @@ export function BoardPage() {
 
   // ── Aplicar filtros ────────────────────────────────────────────────────
   const matches = (c: ScrumCard) => {
-    if (sprint && c.sprint !== sprint) return false;
+    if (sprint === NO_SPRINT) {
+      if (c.sprint) return false; // solo tarjetas sin sprint asignado
+    } else if (sprint && c.sprint !== sprint) {
+      return false;
+    }
     if (assignees.size && !c.assignees.some((a) => assignees.has(a.login))) return false;
     if (types.size && !types.has(c.type)) return false;
     if (search) {
@@ -262,6 +267,7 @@ export function BoardPage() {
                 onPick={setSprintOverride}
                 activeTitle={activeSprint}
                 openByTitle={openBySprint}
+                noSprintCount={noSprintCount}
               />
               {activeSprint && sprint !== activeSprint && (
                 <button
