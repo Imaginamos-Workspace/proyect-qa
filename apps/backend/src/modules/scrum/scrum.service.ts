@@ -1,4 +1,5 @@
-import { Inject, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import type { CreateIssueDto } from './dto/create-issue.dto';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../../config/supabase.module';
@@ -39,6 +40,11 @@ const PROJECT_TTL_MS = 30 * 60_000;
 const TYPE_MAP: Record<string, ScrumIssueType> = {
   Épica: 'epic', Epica: 'epic', Historia: 'story', Tarea: 'task',
   Bug: 'bug', Incidencia: 'incident', Spike: 'spike',
+};
+// Nombre de la opción "Tipo" del board → label de GitHub (las siembra el monorepo).
+const TYPE_GH_LABEL: Record<string, string> = {
+  Épica: 'epic', Epica: 'epic', Historia: 'story', Tarea: 'task',
+  Bug: 'bug', Incidencia: 'incidencia', Spike: 'spike',
 };
 
 function mapType(tipo: string | null): ScrumIssueType {
@@ -428,6 +434,160 @@ export class ScrumService {
     return { ok: true, issue: issueNumber, status: statusName };
   }
 
+  /** Opciones para el formulario de creación (por cliente, leídas del board). */
+  async getCreateMeta(slug: string) {
+    const empty = { configured: false, types: [], areas: [], priorities: [], estimates: [], sprints: [] };
+    if (!this.token) return empty;
+    const { data: client } = await this.supabase.from('qa_clients').select('display_name').eq('slug', slug).maybeSingle();
+    const project = await this.resolveProject(client?.display_name ?? slug, slug);
+    if (!project) return empty;
+    const meta = await this.fetchProjectMeta(project.number);
+    const opts = (name: string) => (meta.fields.get(name)?.options ?? []).map((o) => o.name);
+    return {
+      configured: true,
+      types: opts('Tipo'),
+      areas: opts('Área').length ? opts('Área') : opts('Area'),
+      priorities: opts('Prioridad'),
+      estimates: opts('Estimación').length ? opts('Estimación') : opts('Estimacion'),
+      sprints: (meta.fields.get('Sprint')?.iterations ?? []).map((i) => i.title),
+    };
+  }
+
+  /** Crea un GitHub Issue en el repo del cliente, lo agrega al board y setea sus
+   *  campos (Tipo/Área/Prioridad/Estimación/Inicio/Fin/Sprint). Autor = creador. */
+  async createIssue(slug: string, creator: string | null, dto: CreateIssueDto) {
+    // Metodología (rules/12): descripción siempre; Historia exige criterios de aceptación.
+    if (!dto.title?.trim()) throw new BadRequestException('El título es obligatorio.');
+    if (!dto.description?.trim()) throw new BadRequestException('La descripción es obligatoria (rules/12).');
+    if (/histor/i.test(dto.type) && !dto.acceptanceCriteria?.trim()) {
+      throw new BadRequestException('Una Historia requiere criterios de aceptación (Gherkin) — rules/12.');
+    }
+
+    const token = process.env.GITHUB_WRITE_TOKEN || this.token;
+    if (!token) throw new Error('GitHub token de escritura no configurado en el servidor.');
+
+    const { data: client } = await this.supabase.from('qa_clients').select('display_name').eq('slug', slug).maybeSingle();
+    const project = await this.resolveProject(client?.display_name ?? slug, slug);
+    if (!project) throw new Error('No se encontró el board del cliente.');
+    const meta = await this.fetchProjectMeta(project.number);
+
+    // 1. Crear el issue en el repo del cliente.
+    const repo = `${this.owner}/qa-${slug}`;
+    const label = TYPE_GH_LABEL[dto.type.normalize('NFC')];
+    const created = await this.ghCreateIssue(repo, token, {
+      title: dto.title.trim(),
+      body: this.composeBody(dto, creator),
+      labels: label ? [label] : [],
+      assignees: creator ? [creator] : [],
+    });
+
+    // 2. Agregar al board del cliente.
+    const add = await this.gql<{ addProjectV2ItemById: { item: { id: string } } }>(
+      ADD_ITEM_MUTATION, { projectId: meta.projectId, contentId: created.node_id }, token,
+    );
+    const itemId = add.addProjectV2ItemById.item.id;
+
+    // 3. Setear los campos del board (best-effort por campo).
+    await this.applyFields(meta, itemId, dto, token);
+
+    await this.invalidate(slug);
+    return { ok: true, number: created.number, url: created.html_url };
+  }
+
+  /** Cuerpo del issue: descripción + criterios + adjuntos (URLs) + autoría. */
+  private composeBody(dto: CreateIssueDto, creator: string | null): string {
+    const parts = [dto.description.trim()];
+    if (dto.acceptanceCriteria?.trim()) parts.push(`\n## Criterios de aceptación\n${dto.acceptanceCriteria.trim()}`);
+    const links = (dto.links ?? []).map((s) => s.trim()).filter(Boolean);
+    if (links.length) {
+      parts.push('\n## Adjuntos\n' + links.map((u) => (/\.(png|jpe?g|gif|webp|svg)$/i.test(u) ? `![](${u})` : `- ${u}`)).join('\n'));
+    }
+    parts.push(`\n\n> Creado desde el portal QA${creator ? ` por @${creator}` : ''}.`);
+    return parts.join('\n');
+  }
+
+  private async ghCreateIssue(
+    repo: string, token: string,
+    payload: { title: string; body: string; labels: string[]; assignees: string[] },
+  ): Promise<{ number: number; html_url: string; node_id: string }> {
+    const url = `https://api.github.com/repos/${repo}/issues`;
+    const headers = {
+      Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json',
+      'Content-Type': 'application/json', 'User-Agent': 'qa-portal-scrum',
+    };
+    let res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(payload), signal: AbortSignal.timeout(15_000) });
+    // El creador puede no ser colaborador del repo → reintentamos sin asignar.
+    if (res.status === 422 && payload.assignees.length) {
+      res = await fetch(url, { method: 'POST', headers, body: JSON.stringify({ ...payload, assignees: [] }), signal: AbortSignal.timeout(15_000) });
+    }
+    if (res.status === 403 || res.status === 404) {
+      throw new UnauthorizedException('El token del portal no tiene permiso para crear issues (Issues:write) en el repo del cliente.');
+    }
+    if (!res.ok) throw new Error(`GitHub rechazó la creación del issue (${res.status}).`);
+    return res.json() as Promise<{ number: number; html_url: string; node_id: string }>;
+  }
+
+  /** Campos del board: id + opciones (single-select) e iteraciones (Sprint). */
+  private async fetchProjectMeta(number: number): Promise<{
+    projectId: string;
+    fields: Map<string, { id: string; options?: { id: string; name: string }[]; iterations?: { id: string; title: string }[] }>;
+  }> {
+    const data = await this.gql<{
+      organization: {
+        projectV2: {
+          id: string;
+          fields: { nodes: any[] };
+        } | null;
+      } | null;
+    }>(CREATE_META_QUERY, { owner: this.owner, number });
+    const proj = data.organization?.projectV2;
+    const fields = new Map<string, { id: string; options?: { id: string; name: string }[]; iterations?: { id: string; title: string }[] }>();
+    for (const f of proj?.fields?.nodes ?? []) {
+      if (!f?.name || !f?.id) continue;
+      const cfg = f.configuration;
+      fields.set(f.name, {
+        id: f.id,
+        options: f.options,
+        iterations: cfg ? [...(cfg.iterations ?? []), ...(cfg.completedIterations ?? [])] : undefined,
+      });
+    }
+    return { projectId: proj?.id as string, fields };
+  }
+
+  private async applyFields(
+    meta: { projectId: string; fields: Map<string, { id: string; options?: { id: string; name: string }[]; iterations?: { id: string; title: string }[] }> },
+    itemId: string, dto: CreateIssueDto, token: string,
+  ) {
+    const set = (fieldId: string, value: Record<string, unknown>) =>
+      this.gql(SET_FIELD_MUTATION, { projectId: meta.projectId, itemId, fieldId, value }, token);
+    const single = (fieldName: string, optName?: string) => {
+      if (!optName) return null;
+      const f = meta.fields.get(fieldName);
+      const opt = f?.options?.find((o) => o.name.normalize('NFC') === optName.normalize('NFC'));
+      return f && opt ? set(f.id, { singleSelectOptionId: opt.id }) : null;
+    };
+    const date = (fieldName: string, val?: string) => {
+      const f = meta.fields.get(fieldName);
+      return f && val ? set(f.id, { date: val }) : null;
+    };
+    const iteration = (fieldName: string, title?: string) => {
+      if (!title) return null;
+      const f = meta.fields.get(fieldName);
+      const it = f?.iterations?.find((i) => i.title === title);
+      return f && it ? set(f.id, { iterationId: it.id }) : null;
+    };
+    const tasks = [
+      single('Tipo', dto.type),
+      single('Área', dto.area) ?? single('Area', dto.area),
+      single('Prioridad', dto.priority),
+      single('Estimación', dto.estimate) ?? single('Estimacion', dto.estimate),
+      date('Inicio', dto.startDate),
+      date('Fin', dto.dueDate),
+      iteration('Sprint', dto.sprint),
+    ].filter(Boolean);
+    await Promise.all(tasks);
+  }
+
   /** Trazabilidad pruebas↔historias de la última corrida (qa_runs.coverage). */
   private async fetchQaInfo(slug: string): Promise<ScrumQaInfo | null> {
     try {
@@ -507,6 +667,40 @@ export class ScrumService {
     }
   }
 }
+
+// Campos del board (id + opciones single-select + iteraciones del Sprint) + el
+// node id del proyecto. Para el formulario de creación y para setear campos.
+const CREATE_META_QUERY = `
+query($owner:String!, $number:Int!) {
+  organization(login:$owner) {
+    projectV2(number:$number) {
+      id
+      fields(first:50) {
+        nodes {
+          ... on ProjectV2FieldCommon { id name }
+          ... on ProjectV2SingleSelectField { options { id name } }
+          ... on ProjectV2IterationField {
+            configuration { iterations { id title } completedIterations { id title } }
+          }
+        }
+      }
+    }
+  }
+}`;
+
+// Agrega un issue (por su node id) como ítem del board.
+const ADD_ITEM_MUTATION = `
+mutation($projectId:ID!, $contentId:ID!) {
+  addProjectV2ItemById(input:{ projectId:$projectId, contentId:$contentId }) { item { id } }
+}`;
+
+// Setea un campo cualquiera del ítem (value: single-select / date / iteration).
+const SET_FIELD_MUTATION = `
+mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $value:ProjectV2FieldValue!) {
+  updateProjectV2ItemFieldValue(input:{ projectId:$projectId, itemId:$itemId, fieldId:$fieldId, value:$value }) {
+    projectV2Item { id }
+  }
+}`;
 
 // Proyectos de la org, paginados (100/página) para encontrar el del cliente sin
 // el techo de 80 que tenía la consulta vieja (se rompía al crecer la org).

@@ -24,6 +24,7 @@ import { Avatar, SearchBox, FilterMenu, SprintSelect, ClientSelect, ViewSwitcher
 import { BoardList } from './board-list';
 import { BoardRoadmap } from './board-roadmap';
 import { BoardSprint } from './board-sprint';
+import { CreateIssueDialog } from './board-create';
 import { useClient } from '@/hooks/use-dashboard';
 import { RegressionProgress } from '@/components/clients/regression-progress';
 
@@ -189,11 +190,14 @@ export function BoardPage() {
           <LayoutGrid className="h-5 w-5 text-primary" />
           <h1 className="text-xl font-semibold text-foreground">{t('board.title')}</h1>
         </div>
-        <ClientSelect
-          clients={boards ?? []}
-          currentSlug={slug}
-          onPick={(s) => navigate(`/board/${s}`)}
-        />
+        <div className="flex items-center gap-2">
+          <ClientSelect
+            clients={boards ?? []}
+            currentSlug={slug}
+            onPick={(s) => navigate(`/board/${s}`)}
+          />
+          {board?.configured && <CreateIssueDialog slug={slug} />}
+        </div>
       </div>
 
       {!slug ? (

@@ -11,6 +11,7 @@ import {
 import { ScrumService } from './scrum.service';
 import { RolesService } from './roles.service';
 import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard';
+import { CreateIssueDto } from './dto/create-issue.dto';
 
 // El guard pone el usuario de Supabase en request.user. De GitHub OAuth, el login
 // viene en user_metadata (user_name / preferred_username).
@@ -58,6 +59,19 @@ export class ScrumController {
   @Get('boards/:slug')
   getBoard(@Param('slug') slug: string) {
     return this.scrum.getBoard(slug);
+  }
+
+  /** Opciones del formulario de creación (tipos/áreas/prioridades/estimaciones/sprints). */
+  @Get('boards/:slug/meta')
+  meta(@Param('slug') slug: string) {
+    return this.scrum.getCreateMeta(slug);
+  }
+
+  /** Crea un issue (cualquier tipo) en GitHub + el board, con autor = creador.
+   *  Cualquier usuario logueado puede crear; la metodología la valida el servicio. */
+  @Post('boards/:slug/issues')
+  create(@Param('slug') slug: string, @Body() body: CreateIssueDto, @Req() req: RequestWithUser) {
+    return this.scrum.createIssue(slug, githubLogin(req), body);
   }
 
   /** Asigna/desasigna un responsable a un issue (login null = quitar). */

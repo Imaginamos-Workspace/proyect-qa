@@ -29,6 +29,49 @@ export function useScrumBoard(slug: string) {
   });
 }
 
+export interface ScrumCreateMeta {
+  configured: boolean;
+  types: string[];
+  areas: string[];
+  priorities: string[];
+  estimates: string[];
+  sprints: string[];
+}
+
+export interface CreateIssueInput {
+  title: string;
+  type: string;
+  description: string;
+  acceptanceCriteria?: string;
+  area?: string;
+  priority?: string;
+  estimate?: string;
+  sprint?: string;
+  startDate?: string;
+  dueDate?: string;
+  links?: string[];
+}
+
+/** Opciones del formulario de creación (tipos/áreas/prioridades/estimaciones/sprints). */
+export function useCreateMeta(slug: string) {
+  return useQuery({
+    queryKey: ['scrum', 'meta', slug],
+    queryFn: () => api.get<ScrumCreateMeta>(`/scrum/boards/${slug}/meta`),
+    enabled: !!slug,
+    staleTime: 5 * 60_000,
+  });
+}
+
+/** Crea un issue en GitHub + el board del cliente; refresca el board al terminar. */
+export function useCreateIssue(slug: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: CreateIssueInput) =>
+      api.post<{ ok: boolean; number: number; url: string }>(`/scrum/boards/${slug}/issues`, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['scrum', 'boards', slug] }),
+  });
+}
+
 /** El usuario actual: roles (team.json del monorepo) y si puede mover tarjetas. */
 export function useScrumMe() {
   return useQuery({
