@@ -34,35 +34,37 @@ export class DashboardService {
       .order('display_name');
     if (error) throw error;
 
-    const result = [];
-    for (const client of clients ?? []) {
-      const { data: latest } = await this.supabase
-        .from('qa_runs')
-        .select('*')
-        .eq('client_slug', client.slug)
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+    // Antes era N+1 secuencial (1 + 2·N consultas en serie). Resolvemos cada
+    // cliente en paralelo: la latencia pasa de la suma a la del más lento.
+    return Promise.all(
+      (clients ?? []).map(async (client) => {
+        const { data: latest } = await this.supabase
+          .from('qa_runs')
+          .select('*')
+          .eq('client_slug', client.slug)
+          .order('created_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
 
-      let openRegressions = 0;
-      if (latest) {
-        const { count } = await this.supabase
-          .from('qa_regressions')
-          .select('id', { count: 'exact', head: true })
-          .eq('run_id', latest.id)
-          .eq('kind', 'new_fail');
-        openRegressions = count ?? 0;
-      }
+        let openRegressions = 0;
+        if (latest) {
+          const { count } = await this.supabase
+            .from('qa_regressions')
+            .select('id', { count: 'exact', head: true })
+            .eq('run_id', latest.id)
+            .eq('kind', 'new_fail');
+          openRegressions = count ?? 0;
+        }
 
-      result.push({
-        ...client,
-        latest_run: latest ?? null,
-        pass_rate: passRate(latest),
-        coverage_pct: coveragePct(latest),
-        open_regressions: openRegressions,
-      });
-    }
-    return result;
+        return {
+          ...client,
+          latest_run: latest ?? null,
+          pass_rate: passRate(latest),
+          coverage_pct: coveragePct(latest),
+          open_regressions: openRegressions,
+        };
+      }),
+    );
   }
 
   /** Detalle de un cliente: serie de corridas + regresiones de la última. */

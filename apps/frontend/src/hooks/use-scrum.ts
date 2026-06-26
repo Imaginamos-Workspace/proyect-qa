@@ -20,7 +20,10 @@ export function useScrumBoard(slug: string) {
     queryKey: ['scrum', 'boards', slug],
     queryFn: () => api.get<ScrumBoard>(`/scrum/boards/${slug}`),
     enabled: !!slug,
-    refetchInterval: 60_000,
+    // Sin polling cada 60s (golpeaba el backend justo al expirar su caché → frío
+    // garantizado). El board ya se actualiza optimista al mover y refetchea al
+    // re-enfocar la ventana. Datos servidos al instante dentro de staleTime.
+    staleTime: 5 * 60_000,
   });
 }
 

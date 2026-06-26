@@ -24,8 +24,13 @@ const GITHUB_GRAPHQL = 'https://api.github.com/graphql';
 // Fallback de columnas si el board no tiene campo Status o falla la consulta. El
 // orden REAL es dinámico: sale de las opciones del Status del board (fetchStatusColumns),
 // sembradas desde el workflow del cliente extraído de Jira (rules/96).
-const COLUMN_ORDER = ['Backlog', 'Todo', 'In Progress', 'In Review', 'Done'];
-const CACHE_TTL_MS = 60_000;
+const COLUMN_ORDER = ['Backlog', 'Por hacer', 'En curso', 'En revisión', 'Listo'];
+// El board se invalida en cada move/assign (cache.delete), así que un TTL alto es
+// seguro: solo afecta re-imports out-of-band, no la interacción del usuario.
+const CACHE_TTL_MS = 5 * 60_000;
+// El número de Project de un cliente es estable; cachearlo evita listar los ~80
+// proyectos de la org en cada carga en frío (resolveProject).
+const PROJECT_TTL_MS = 30 * 60_000;
 
 const TYPE_MAP: Record<string, ScrumIssueType> = {
   Épica: 'epic', Epica: 'epic', Historia: 'story', Tarea: 'task',
@@ -50,6 +55,7 @@ export class ScrumService {
   private readonly token: string | undefined;
   private readonly owner: string;
   private readonly cache = new Map<string, { ts: number; board: ScrumBoard }>();
+  private readonly projectCache = new Map<string, { ts: number; project: { number: number; url: string } }>();
 
   constructor(
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
@@ -136,8 +142,13 @@ export class ScrumService {
     return json.data as T;
   }
 
-  /** Encuentra el Project del cliente por título "Cliente: <nombre>" (o que contenga el slug). */
+  /** Encuentra el Project del cliente por título "Cliente: <nombre>" (o que contenga el slug).
+   *  Cachea el resultado encontrado (número estable) para no listar los ~80 proyectos
+   *  de la org en cada carga. Un miss NO se cachea, así un board recién creado aparece. */
   private async resolveProject(displayName: string, slug: string) {
+    const cached = this.projectCache.get(slug);
+    if (cached && Date.now() - cached.ts < PROJECT_TTL_MS) return cached.project;
+
     const data = await this.gql<{
       organization: { projectsV2: { nodes: { number: number; title: string; url: string }[] } } | null;
     }>(
@@ -146,11 +157,14 @@ export class ScrumService {
     );
     const nodes = data.organization?.projectsV2?.nodes ?? [];
     const want = `cliente: ${displayName}`.toLowerCase();
-    return (
+    const found =
       nodes.find((n) => n.title.toLowerCase() === want) ??
       nodes.find((n) => n.title.toLowerCase().includes(slug.toLowerCase())) ??
-      null
-    );
+      null;
+    if (found) {
+      this.projectCache.set(slug, { ts: Date.now(), project: { number: found.number, url: found.url } });
+    }
+    return found;
   }
 
   /**
@@ -177,15 +191,19 @@ export class ScrumService {
   }
 
   private async buildBoard(base: ScrumBoard, number: number, url: string): Promise<ScrumBoard> {
-    const columnKeys = await this.fetchStatusColumns(number);
+    // Estas 4 son independientes entre sí: en paralelo en vez de en serie (4
+    // round-trips a GitHub/Supabase → 1 ola). Es la mayor ganancia de latencia.
+    const [columnKeys, sprintsMeta, members, qa] = await Promise.all([
+      this.fetchStatusColumns(number),
+      this.fetchSprints(number),
+      this.fetchMembers(base.client_slug),
+      this.fetchQaInfo(base.client_slug),
+    ]);
     const columns = new Map<string, ScrumColumn>(
       columnKeys.map((k) => [k, { key: k, title: k, cards: [] as ScrumCard[] }]),
     );
     const epics: ScrumEpic[] = [];
     const sprints = new Set<string>();
-    const sprintsMeta = await this.fetchSprints(number);
-    const members = await this.fetchMembers(base.client_slug);
-    const qa = await this.fetchQaInfo(base.client_slug);
 
     let cursor: string | null = null;
     do {
