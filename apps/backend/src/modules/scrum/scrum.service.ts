@@ -197,29 +197,44 @@ export class ScrumService {
     return json.data as T;
   }
 
-  /** Encuentra el Project del cliente por título "Cliente: <nombre>" (o que contenga el slug).
-   *  Cachea el resultado encontrado (número estable) para no listar los ~80 proyectos
-   *  de la org en cada carga. Un miss NO se cachea, así un board recién creado aparece. */
+  /** Encuentra el Project del cliente por título "Cliente: <nombre>" (o que contenga el
+   *  slug). Pagina TODOS los proyectos de la org (no solo los primeros 80): corta apenas
+   *  hay match exacto; si no, devuelve el primer match por slug. Cachea el resultado
+   *  encontrado (número estable). Un miss NO se cachea, así un board recién creado aparece. */
   private async resolveProject(displayName: string, slug: string) {
     const cached = this.projectCache.get(slug);
     if (cached && Date.now() - cached.ts < PROJECT_TTL_MS) return cached.project;
 
-    const data = await this.gql<{
-      organization: { projectsV2: { nodes: { number: number; title: string; url: string }[] } } | null;
-    }>(
-      `query($owner:String!){ organization(login:$owner){ projectsV2(first:80){ nodes{ number title url } } } }`,
-      { owner: this.owner },
-    );
-    const nodes = data.organization?.projectsV2?.nodes ?? [];
     const want = `cliente: ${displayName}`.toLowerCase();
-    const found =
-      nodes.find((n) => n.title.toLowerCase() === want) ??
-      nodes.find((n) => n.title.toLowerCase().includes(slug.toLowerCase())) ??
-      null;
-    if (found) {
-      this.projectCache.set(slug, { ts: Date.now(), project: { number: found.number, url: found.url } });
-    }
-    return found;
+    const wantSlug = slug.toLowerCase();
+    let cursor: string | null = null;
+    let includesMatch: { number: number; url: string } | null = null;
+
+    do {
+      const data: {
+        organization: {
+          projectsV2: {
+            pageInfo: { hasNextPage: boolean; endCursor: string | null };
+            nodes: { number: number; title: string; url: string }[];
+          };
+        } | null;
+      } = await this.gql(PROJECTS_QUERY, { owner: this.owner, cursor });
+      const conn = data.organization?.projectsV2;
+      for (const n of conn?.nodes ?? []) {
+        const title = n.title.toLowerCase();
+        if (title === want) return this.cacheProject(slug, n); // exacto gana, corta ya
+        if (!includesMatch && title.includes(wantSlug)) includesMatch = { number: n.number, url: n.url };
+      }
+      cursor = conn?.pageInfo?.hasNextPage ? conn.pageInfo.endCursor : null;
+    } while (cursor);
+
+    return includesMatch ? this.cacheProject(slug, includesMatch) : null;
+  }
+
+  private cacheProject(slug: string, n: { number: number; url: string }) {
+    const project = { number: n.number, url: n.url };
+    this.projectCache.set(slug, { ts: Date.now(), project });
+    return project;
   }
 
   /**
@@ -488,6 +503,18 @@ export class ScrumService {
     }
   }
 }
+
+// Proyectos de la org, paginados (100/página) para encontrar el del cliente sin
+// el techo de 80 que tenía la consulta vieja (se rompía al crecer la org).
+const PROJECTS_QUERY = `
+query($owner:String!, $cursor:String) {
+  organization(login:$owner) {
+    projectsV2(first:100, after:$cursor) {
+      pageInfo { hasNextPage endCursor }
+      nodes { number title url }
+    }
+  }
+}`;
 
 // Usuarios asignables del repo del cliente = miembros de la org con acceso al
 // repo. Pueblan el filtro "Persona" aunque ningún issue tenga asignados aún.

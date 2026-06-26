@@ -1,6 +1,6 @@
 import { type ReactNode, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
-import { Check, ChevronDown, Search, X, CalendarDays, CircleDot, CircleCheck, Rocket } from 'lucide-react';
+import { Check, ChevronDown, Search, X, CalendarDays, CircleDot, CircleCheck, Rocket, Building2 } from 'lucide-react';
 import type { ScrumAssignee, ScrumSprint } from '@qa/shared-types';
 import { cn } from '@/lib/utils';
 
@@ -26,6 +26,100 @@ export function Avatar({ login, url, size = 24 }: { login: string; url?: string 
     >
       {login.slice(0, 2)}
     </span>
+  );
+}
+
+/* ── Selector de CLIENTE con buscador/autocomplete ──────────────────────── */
+// Reemplaza la fila de botones (inservible al crecer la lista). Etiquetado claro
+// ("Cliente:") + ícono, con buscador por nombre o slug. Es el control más visible
+// del encabezado del tablero.
+export interface ClientOption {
+  client_slug: string;
+  client_name: string;
+}
+
+export function ClientSelect({
+  clients,
+  currentSlug,
+  onPick,
+}: {
+  clients: ClientOption[];
+  currentSlug: string;
+  onPick: (slug: string) => void;
+}) {
+  const [q, setQ] = useState('');
+  const current = clients.find((c) => c.client_slug === currentSlug);
+  const needle = q.trim().toLowerCase();
+  const filtered = needle
+    ? clients.filter(
+        (c) =>
+          c.client_name.toLowerCase().includes(needle) || c.client_slug.toLowerCase().includes(needle),
+      )
+    : clients;
+
+  return (
+    <Popover.Root onOpenChange={(o) => !o && setQ('')}>
+      <Popover.Trigger asChild>
+        <button
+          aria-label="Selector de cliente"
+          className="inline-flex h-10 min-w-[13rem] max-w-[22rem] items-center gap-2 rounded-xl border-2 border-primary/30 bg-card px-3 text-sm shadow-sm transition-colors hover:border-primary/60 focus:outline-none focus:ring-2 focus:ring-primary/25"
+        >
+          <Building2 className="h-4 w-4 shrink-0 text-primary" />
+          <span className="shrink-0 text-muted-foreground">Cliente:</span>
+          <span className="truncate font-semibold text-foreground">
+            {current ? current.client_name : 'Selecciona…'}
+          </span>
+          <ChevronDown className="ml-auto h-4 w-4 shrink-0 opacity-60" />
+        </button>
+      </Popover.Trigger>
+      <Popover.Portal>
+        <Popover.Content
+          align="start"
+          sideOffset={6}
+          className="z-50 w-[20rem] rounded-xl border border-border bg-card p-2 shadow-lg"
+        >
+          <div className="relative mb-1.5">
+            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <input
+              autoFocus
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder="Buscar cliente…"
+              className="h-9 w-full rounded-lg border border-border bg-background pl-8 pr-2 text-sm outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+            />
+          </div>
+          <div className="max-h-[22rem] overflow-y-auto">
+            {filtered.length === 0 ? (
+              <p className="px-2 py-4 text-center text-xs text-muted-foreground">Sin resultados</p>
+            ) : (
+              filtered.map((c) => (
+                <Popover.Close asChild key={c.client_slug}>
+                  <button
+                    onClick={() => onPick(c.client_slug)}
+                    className={cn(
+                      'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted',
+                      c.client_slug === currentSlug && 'bg-muted',
+                    )}
+                  >
+                    <Check
+                      className={cn(
+                        'h-3.5 w-3.5 shrink-0',
+                        c.client_slug === currentSlug ? 'text-primary opacity-100' : 'opacity-0',
+                      )}
+                      strokeWidth={3}
+                    />
+                    <span className="truncate font-medium text-foreground">{c.client_name}</span>
+                  </button>
+                </Popover.Close>
+              ))
+            )}
+          </div>
+          <p className="mt-1 border-t border-border px-2 pt-1.5 text-[11px] text-muted-foreground">
+            {clients.length} cliente{clients.length === 1 ? '' : 's'}
+          </p>
+        </Popover.Content>
+      </Popover.Portal>
+    </Popover.Root>
   );
 }
 

@@ -20,7 +20,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { IssueTypeIcon, PriorityFlag, IssueKey, EstimateChip } from '@/components/scrum/issue-bits';
-import { Avatar, SearchBox, FilterMenu, SprintSelect, NO_SPRINT, type FilterOption } from './board-toolbar';
+import { Avatar, SearchBox, FilterMenu, SprintSelect, ClientSelect, NO_SPRINT, type FilterOption } from './board-toolbar';
 import { useClient } from '@/hooks/use-dashboard';
 import { RegressionProgress } from '@/components/clients/regression-progress';
 
@@ -178,22 +178,11 @@ export function BoardPage() {
           <LayoutGrid className="h-5 w-5 text-primary" />
           <h1 className="text-xl font-semibold text-foreground">{t('board.title')}</h1>
         </div>
-        <div className="flex flex-wrap gap-1.5">
-          {(boards ?? []).map((b) => (
-            <button
-              key={b.client_slug}
-              onClick={() => navigate(`/board/${b.client_slug}`)}
-              className={cn(
-                'rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors',
-                b.client_slug === slug
-                  ? 'border-primary bg-primary text-primary-foreground'
-                  : 'border-border text-muted-foreground hover:bg-muted',
-              )}
-            >
-              {b.client_name}
-            </button>
-          ))}
-        </div>
+        <ClientSelect
+          clients={boards ?? []}
+          currentSlug={slug}
+          onPick={(s) => navigate(`/board/${s}`)}
+        />
       </div>
 
       {!slug ? (
