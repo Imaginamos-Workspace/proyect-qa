@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useParams, useNavigate } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import {
@@ -53,10 +53,16 @@ export function BoardPage() {
 
   // ── Estado de filtros ──────────────────────────────────────────────────
   const [search, setSearch] = useState('');
-  const [sprint, setSprint] = useState('');
+  // El sprint es una SELECCIÓN explícita del usuario; null = usar el default
+  // (sprint activo). Por defecto el tablero muestra SOLO el sprint activo, nunca
+  // todas las tarjetas → no renderiza cientos de tarjetas de golpe.
+  const [sprintOverride, setSprintOverride] = useState<string | null>(null);
   const [assignees, setAssignees] = useState<Set<string>>(new Set());
   const [types, setTypes] = useState<Set<string>>(new Set());
   const [statuses, setStatuses] = useState<Set<string>>(new Set());
+
+  // Al cambiar de cliente volvemos al default (el sprint activo del nuevo board).
+  useEffect(() => setSprintOverride(null), [slug]);
 
   const toggle = (set: Set<string>, setter: (s: Set<string>) => void) => (v: string) => {
     const next = new Set(set);
@@ -67,6 +73,39 @@ export function BoardPage() {
 
   // ── Opciones de filtro derivadas del board ─────────────────────────────
   const allCards = useMemo(() => (board?.columns ?? []).flatMap((c) => c.cards), [board]);
+
+  // Sprint activo + issues abiertos por sprint (para el default y el selector).
+  const { activeSprint, openBySprint } = useMemo(() => {
+    const openBy = new Map<string, number>();
+    // Columnas "terminadas" detectadas por nombre (dinámico): el workflow es el del
+    // cliente (p. ej. "Listo en Staging", "Finalizada"), no una lista fija.
+    const isDone = (key: string) => /\b(done|hecho|listo|complet|cerrad|finaliz|resuel|staging)/i.test(key);
+    for (const col of board?.columns ?? []) {
+      if (isDone(col.key)) continue;
+      for (const c of col.cards) if (c.sprint) openBy.set(c.sprint, (openBy.get(c.sprint) ?? 0) + 1);
+    }
+    const meta = board?.sprintsMeta ?? [];
+    const today = new Date().toISOString().slice(0, 10);
+    // 1) activo por fecha: hoy dentro del rango y no cerrado.
+    let active =
+      meta.find((m) => !m.completed && m.startDate && m.endDate && m.startDate <= today && today <= m.endDate)?.title ?? null;
+    // 2) si las fechas están mal/ausentes: el sprint MÁS RECIENTE con issues abiertos.
+    if (!active) {
+      const withOpen = meta
+        .filter((m) => (openBy.get(m.title) ?? 0) > 0)
+        .sort((a, b) => (b.startDate || '').localeCompare(a.startDate || ''));
+      active = withOpen[0]?.title
+        ?? [...openBy.keys()].sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))[0]
+        ?? null;
+    }
+    return { activeSprint: active, openBySprint: openBy };
+  }, [board]);
+
+  // Sprint efectivo: el elegido por el usuario, o el default (activo, o el más
+  // reciente si no se detecta activo). El tablero SIEMPRE filtra por un sprint.
+  const sprints = board?.sprints ?? [];
+  const defaultSprint = activeSprint ?? sprints[sprints.length - 1] ?? '';
+  const sprint = sprintOverride ?? defaultSprint;
 
   const assigneeOptions: FilterOption[] = useMemo(() => {
     const map = new Map<string, FilterOption>();
@@ -114,39 +153,13 @@ export function BoardPage() {
     [board],
   );
 
-  // Sprint activo + issues abiertos por sprint (para ordenar/marcar el selector).
-  const { activeSprint, openBySprint } = useMemo(() => {
-    const openBy = new Map<string, number>();
-    // Columnas "terminadas" detectadas por nombre (dinámico): el workflow es el del
-    // cliente (p. ej. "Listo en Staging", "Finalizada"), no una lista fija.
-    const isDone = (key: string) => /\b(done|hecho|listo|complet|cerrad|finaliz|resuel|staging)/i.test(key);
-    for (const col of board?.columns ?? []) {
-      if (isDone(col.key)) continue;
-      for (const c of col.cards) if (c.sprint) openBy.set(c.sprint, (openBy.get(c.sprint) ?? 0) + 1);
-    }
-    const meta = board?.sprintsMeta ?? [];
-    const today = new Date().toISOString().slice(0, 10);
-    // 1) activo por fecha: hoy dentro del rango y no cerrado.
-    let active =
-      meta.find((m) => !m.completed && m.startDate && m.endDate && m.startDate <= today && today <= m.endDate)?.title ?? null;
-    // 2) si las fechas están mal/ausentes: el sprint MÁS RECIENTE con issues abiertos.
-    if (!active) {
-      const withOpen = meta
-        .filter((m) => (openBy.get(m.title) ?? 0) > 0)
-        .sort((a, b) => (b.startDate || '').localeCompare(a.startDate || ''));
-      active = withOpen[0]?.title
-        ?? [...openBy.keys()].sort((a, b) => b.localeCompare(a, undefined, { numeric: true }))[0]
-        ?? null;
-    }
-    return { activeSprint: active, openBySprint: openBy };
-  }, [board]);
-
   const totalShown = visibleColumns.reduce((n, c) => n + c.cards.length, 0);
-  const activeFilters = search.length + sprint.length + assignees.size + types.size + statuses.size;
+  // El sprint ya no cuenta como filtro "limpiable": siempre hay uno seleccionado.
+  const activeFilters = search.length + assignees.size + types.size + statuses.size;
 
   const clearAll = () => {
     setSearch('');
-    setSprint('');
+    setSprintOverride(null); // vuelve al sprint activo, no a "todos"
     setAssignees(new Set());
     setTypes(new Set());
     setStatuses(new Set());
@@ -246,13 +259,13 @@ export function BoardPage() {
                 sprints={board.sprints}
                 meta={board.sprintsMeta ?? []}
                 value={sprint}
-                onPick={setSprint}
+                onPick={setSprintOverride}
                 activeTitle={activeSprint}
                 openByTitle={openBySprint}
               />
               {activeSprint && sprint !== activeSprint && (
                 <button
-                  onClick={() => setSprint(activeSprint)}
+                  onClick={() => setSprintOverride(activeSprint)}
                   className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-success/40 bg-success/10 px-3 text-sm font-medium text-success transition-colors hover:bg-success/20"
                 >
                   Ir al sprint activo

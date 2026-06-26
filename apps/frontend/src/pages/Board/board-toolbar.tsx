@@ -226,7 +226,6 @@ export function SprintSelect({
             />
           </div>
           <div className="max-h-[22rem] overflow-y-auto">
-            <SprintRow label="Todos los sprints" sub={`${sprints.length} sprints`} selected={value === ''} onClick={() => onPick('')} />
             {filtered.map((o) => (
               <SprintRow
                 key={o.title}

@@ -20,10 +20,12 @@ export function useScrumBoard(slug: string) {
     queryKey: ['scrum', 'boards', slug],
     queryFn: () => api.get<ScrumBoard>(`/scrum/boards/${slug}`),
     enabled: !!slug,
-    // Sin polling cada 60s (golpeaba el backend justo al expirar su caché → frío
-    // garantizado). El board ya se actualiza optimista al mover y refetchea al
-    // re-enfocar la ventana. Datos servidos al instante dentro de staleTime.
-    staleTime: 5 * 60_000,
+    // Refresco de fondo para ver cambios de otros usuarios. Es barato: el backend
+    // sirve del caché compartido (Supabase), no reconstruye desde GitHub salvo que
+    // el TTL venza o alguien mueva una tarjeta (que invalida). Entrada instantánea
+    // por staleTime; reconciliación cada 45s y al re-enfocar la ventana.
+    staleTime: 45_000,
+    refetchInterval: 45_000,
   });
 }
 
