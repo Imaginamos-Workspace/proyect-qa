@@ -28,6 +28,10 @@ const COLUMN_ORDER = ['Backlog', 'Por hacer', 'En curso', 'En revisión', 'Listo
 // El board se invalida en cada move/assign (cache.delete), así que un TTL alto es
 // seguro: solo afecta re-imports out-of-band, no la interacción del usuario.
 const CACHE_TTL_MS = 5 * 60_000;
+// Caché compartido en Supabase (sobrevive cold-starts de Vercel). TTL más alto:
+// reconstruir desde GitHub es caro y los cambios reales ya invalidan la fila.
+const SHARED_TTL_MS = 15 * 60_000;
+const BOARD_CACHE_TABLE = 'scrum_board_cache';
 // El número de Project de un cliente es estable; cachearlo evita listar los ~80
 // proyectos de la org en cada carga en frío (resolveProject).
 const PROJECT_TTL_MS = 30 * 60_000;
@@ -77,8 +81,18 @@ export class ScrumService {
 
   /** Board normalizado de un cliente (auto-descubre el GitHub Project por título). */
   async getBoard(slug: string): Promise<ScrumBoard> {
+    // 1. Memoria (instancia caliente): lo más rápido, sin red.
     const cached = this.cache.get(slug);
     if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.board;
+
+    // 2. Caché compartido en Supabase: sobrevive cold-starts, una lectura indexada
+    //    en vez de reconstruir el board entero desde GitHub. Es la mejora clave de
+    //    velocidad al ENTRAR al módulo (sobre todo clientes con muchos items).
+    const shared = await this.readSharedCache(slug);
+    if (shared && Date.now() - shared.ts < SHARED_TTL_MS) {
+      this.cache.set(slug, { ts: Date.now(), board: shared.board });
+      return shared.board;
+    }
 
     const { data: client } = await this.supabase
       .from('qa_clients')
@@ -107,7 +121,12 @@ export class ScrumService {
 
     try {
       const project = await this.resolveProject(client.display_name, slug);
-      if (!project) return this.store(slug, { ...base, reason: 'board_not_found' });
+      // board_not_found es transitorio (board recién creado) → solo memoria corta,
+      // NO lo persistimos en el caché compartido para no enmascararlo 15 min.
+      if (!project) {
+        this.cache.set(slug, { ts: Date.now(), board: { ...base, reason: 'board_not_found' } });
+        return { ...base, reason: 'board_not_found' };
+      }
       const built = await this.buildBoard(base, project.number, project.url);
       return this.store(slug, built);
     } catch (err) {
@@ -116,9 +135,45 @@ export class ScrumService {
     }
   }
 
-  private store(slug: string, board: ScrumBoard): ScrumBoard {
+  /** Persiste el board en memoria y en el caché compartido (solo boards reales). */
+  private async store(slug: string, board: ScrumBoard): Promise<ScrumBoard> {
     this.cache.set(slug, { ts: Date.now(), board });
+    if (board.configured) {
+      try {
+        await this.supabase
+          .from(BOARD_CACHE_TABLE)
+          .upsert({ slug, board, updated_at: new Date().toISOString() });
+      } catch (err) {
+        // Si falla el upsert, el board igual se devuelve (memoria) — no rompemos.
+        this.logger.warn(`No se pudo cachear el board de ${slug}: ${(err as Error).message}`);
+      }
+    }
     return board;
+  }
+
+  /** Lee el snapshot del board del caché compartido (Supabase). */
+  private async readSharedCache(slug: string): Promise<{ ts: number; board: ScrumBoard } | null> {
+    try {
+      const { data } = await this.supabase
+        .from(BOARD_CACHE_TABLE)
+        .select('board, updated_at')
+        .eq('slug', slug)
+        .maybeSingle();
+      if (!data?.board) return null;
+      return { ts: new Date(data.updated_at as string).getTime(), board: data.board as ScrumBoard };
+    } catch {
+      return null; // sin acceso o tabla ausente → reconstruimos desde GitHub
+    }
+  }
+
+  /** Invalida el board (memoria + caché compartido) tras un cambio real. */
+  private async invalidate(slug: string): Promise<void> {
+    this.cache.delete(slug);
+    try {
+      await this.supabase.from(BOARD_CACHE_TABLE).delete().eq('slug', slug);
+    } catch {
+      // si falla, el TTL del caché compartido lo refrescará igual
+    }
   }
 
   private async gql<T>(
@@ -302,7 +357,7 @@ export class ScrumService {
       }
       if (!res.ok) throw new Error(`GitHub rechazó la asignación (${res.status}).`);
     }
-    this.cache.delete(slug); // invalidar cache → el board refleja el cambio
+    await this.invalidate(slug); // memoria + caché compartido → el board refleja el cambio
     return { ok: true, issue: issueNumber, login: target || null };
   }
 
@@ -350,7 +405,7 @@ export class ScrumService {
       token,
     );
 
-    this.cache.delete(slug); // el board refleja el nuevo estado
+    await this.invalidate(slug); // memoria + caché compartido → el board refleja el nuevo estado
     return { ok: true, issue: issueNumber, status: statusName };
   }
 
