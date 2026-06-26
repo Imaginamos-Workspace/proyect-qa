@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, HttpException, Inject, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import type { CreateIssueDto, SetDatesDto } from './dto/create-issue.dto';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseClient } from '@supabase/supabase-js';
@@ -528,25 +528,32 @@ export class ScrumService {
 
     const { data: client } = await this.supabase.from('qa_clients').select('display_name').eq('slug', slug).maybeSingle();
     if (!client) throw new BadRequestException('Cliente no encontrado.');
-    const project = await this.resolveProject(client.display_name, slug);
-    if (!project) throw new Error('No se encontró el board del cliente.');
-    const meta = await this.fetchProjectMeta(project.number);
+    try {
+      const project = await this.resolveProject(client.display_name, slug);
+      if (!project) throw new BadRequestException('No se encontró el board del cliente.');
+      const meta = await this.fetchProjectMeta(project.number);
 
-    const itemData = await this.gql<{
-      repository: { issue: { projectItems: { nodes: { id: string; project: { id: string; number: number } }[] } } | null } | null;
-    }>(ISSUE_ITEM_QUERY, { owner: this.owner, name: `qa-${slug}`, number: issueNumber }, token);
-    const item = (itemData.repository?.issue?.projectItems?.nodes ?? []).find((n) => n.project?.number === project.number);
-    if (!item) throw new Error(`El issue #${issueNumber} no está en el board del cliente.`);
+      const itemData = await this.gql<{
+        repository: { issue: { projectItems: { nodes: { id: string; project: { id: string; number: number } }[] } } | null } | null;
+      }>(ISSUE_ITEM_QUERY, { owner: this.owner, name: `qa-${slug}`, number: issueNumber }, token);
+      const item = (itemData.repository?.issue?.projectItems?.nodes ?? []).find((n) => n.project?.number === project.number);
+      if (!item) throw new BadRequestException(`El issue #${issueNumber} no está en el board del cliente.`);
 
-    const setDate = (fieldName: string, val?: string) => {
-      const f = meta.fields.get(fieldName);
-      return f && val
-        ? this.gql(SET_FIELD_MUTATION, { projectId: item.project.id, itemId: item.id, fieldId: f.id, value: { date: val } }, token)
-        : null;
-    };
-    const tasks = [setDate('Inicio', dates.startDate), setDate('Fin', dates.dueDate)].filter(Boolean);
-    if (!tasks.length) throw new BadRequestException('El board no tiene los campos Inicio/Fin (corré projects:bootstrap).');
-    await Promise.all(tasks);
+      const setDate = (fieldName: string, val?: string) => {
+        const f = meta.fields.get(fieldName);
+        return f && val
+          ? this.gql(SET_FIELD_MUTATION, { projectId: item.project.id, itemId: item.id, fieldId: f.id, value: { date: val } }, token)
+          : null;
+      };
+      const tasks = [setDate('Inicio', dates.startDate), setDate('Fin', dates.dueDate)].filter(Boolean);
+      if (!tasks.length) throw new BadRequestException('El board no tiene los campos Inicio/Fin (corré projects:bootstrap -- ' + slug + ').');
+      await Promise.all(tasks);
+    } catch (err) {
+      if (err instanceof HttpException) throw err;
+      // Surface el error real de GitHub al cliente (herramienta interna) en vez de un 500 opaco.
+      this.logger.error(`setIssueDates(${slug}, #${issueNumber}) falló: ${(err as Error).message}`);
+      throw new BadRequestException(`GitHub rechazó el guardado de fecha: ${(err as Error).message}`);
+    }
     await this.invalidate(slug);
     return { ok: true, issue: issueNumber, startDate: dates.startDate ?? null, dueDate: dates.dueDate ?? null };
   }
