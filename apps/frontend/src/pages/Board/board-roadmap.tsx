@@ -9,6 +9,9 @@ import { cn } from '@/lib/utils';
 const DAY = 86_400_000;
 const LEFT = 256; // ancho de la columna fija de épicas (w-64)
 const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+// Color por sprint (estilo Jira): franja superior + fondo teñido para ubicar a qué
+// sprint pertenece cada historia. Cada sprint conserva su color por su orden.
+const SPRINT_COLORS = ['#6366f1', '#22c55e', '#f59e0b', '#06b6d4', '#a855f7', '#ec4899', '#84cc16', '#ef4444', '#14b8a6', '#f97316'];
 const isDone = (s: string | null) => !!s && /\b(done|hecho|listo|complet|cerrad|finaliz|resuel|staging)/i.test(s);
 const parseDay = (d: string | null) => (d ? new Date(`${d}T00:00:00Z`).getTime() : null);
 const toYMD = (ms: number) => new Date(ms).toISOString().slice(0, 10);
@@ -131,8 +134,10 @@ export function BoardRoadmap({ board, slug }: { board: ScrumBoard; slug: string 
   const today = Date.now();
   const todayX = today >= start && today <= end ? xOf(today) : null;
   const bands = (board.sprintsMeta ?? [])
-    .map((s) => ({ title: s.title, st: parseDay(s.startDate), en: parseDay(s.endDate) }))
-    .filter((b): b is { title: string; st: number; en: number } => b.st != null && b.en != null);
+    .map((s, i) => ({ title: s.title, st: parseDay(s.startDate), en: parseDay(s.endDate), color: SPRINT_COLORS[i % SPRINT_COLORS.length] }))
+    .filter((b): b is { title: string; st: number; en: number; color: string } => b.st != null && b.en != null);
+  // Color del sprint de cada tarjeta (para teñir su barra → se identifica el sprint).
+  const sprintColor = new Map<string, string>(bands.map((b) => [b.title, b.color]));
 
   // Drag-resize: arrastrar borde izq/der (cambia Inicio/Fin) o el centro (mueve
   // ambos). Preview en vivo vía dragRef + force(); al soltar, escribe las fechas.
@@ -164,6 +169,15 @@ export function BoardRoadmap({ board, slug }: { board: ScrumBoard; slug: string 
     };
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+  };
+
+  // Clic en la línea de tiempo de una fila SIN fechas → crea una marca con
+  // duración por defecto (1 semana) desde el día donde se hizo clic.
+  const DEFAULT_DAYS = 7;
+  const createAt = (number: number, px: number) => {
+    const days = Math.max(0, Math.round(px / pxPerDay));
+    const startMs = start + days * DAY;
+    setDates.mutate({ issue: number, startDate: toYMD(startMs), dueDate: toYMD(startMs + DEFAULT_DAYS * DAY) });
   };
 
   return (
@@ -201,17 +215,38 @@ export function BoardRoadmap({ board, slug }: { board: ScrumBoard; slug: string 
             </div>
           </div>
 
-          {/* Cuerpo: bandas de sprint + hoy + filas */}
+          {/* Encabezado: franja de SPRINTS coloreados (estilo Jira) */}
+          {bands.length > 0 && (
+            <div className="flex border-b border-border bg-card">
+              <div className="sticky left-0 z-20 flex w-64 shrink-0 items-center border-r border-border bg-card px-3 py-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Sprints
+              </div>
+              <div className="relative h-6" style={{ width }}>
+                {bands.map((b) => {
+                  const w = Math.max(xOf(b.en) - xOf(b.st), 2);
+                  return (
+                    <div key={b.title} title={b.title}
+                      className="absolute top-1/2 flex h-4 -translate-y-1/2 items-center overflow-hidden rounded px-1.5 text-[10px] font-semibold text-white"
+                      style={{ left: xOf(b.st), width: w, backgroundColor: b.color }}>
+                      {w > 36 && <span className="truncate">{b.title.replace(/^Sprint\s+/i, 'S')}</span>}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Cuerpo: bandas de sprint teñidas + hoy + filas */}
           <div className="relative">
             <div className="pointer-events-none absolute inset-y-0 z-0" style={{ left: LEFT, width }}>
-              {bands.map((b, i) => (
-                <div key={b.title} className={cn('absolute inset-y-0', i % 2 ? 'bg-muted/25' : 'bg-transparent')}
-                  style={{ left: xOf(b.st), width: Math.max(xOf(b.en) - xOf(b.st), 1) }} title={b.title} />
+              {bands.map((b) => (
+                <div key={b.title} className="absolute inset-y-0"
+                  style={{ left: xOf(b.st), width: Math.max(xOf(b.en) - xOf(b.st), 1), backgroundColor: `${b.color}14` }} title={b.title} />
               ))}
               {ticks.map((t) => <div key={t.ms} className="absolute inset-y-0 w-px bg-border/40" style={{ left: xOf(t.ms) }} />)}
               {todayX != null && <div className="absolute inset-y-0 z-10 w-px bg-destructive/70" style={{ left: todayX }} title="Hoy" />}
             </div>
-            {epics.map((n) => <RoadmapRow key={n.card.id} node={n} depth={0} xOf={xOf} width={width} today={today} slug={slug} drag={dragRef.current} onDrag={beginDrag} />)}
+            {epics.map((n) => <RoadmapRow key={n.card.id} node={n} depth={0} xOf={xOf} width={width} today={today} slug={slug} drag={dragRef.current} onDrag={beginDrag} onCreateAt={createAt} sprintColor={sprintColor} />)}
           </div>
         </div>
       </div>
@@ -219,9 +254,10 @@ export function BoardRoadmap({ board, slug }: { board: ScrumBoard; slug: string 
   );
 }
 
-function RoadmapRow({ node, depth, xOf, width, today, slug, drag, onDrag }: {
+function RoadmapRow({ node, depth, xOf, width, today, slug, drag, onDrag, onCreateAt, sprintColor }: {
   node: Node; depth: number; xOf: (ms: number) => number; width: number; today: number;
   slug: string; drag: DragState | null; onDrag: (e: React.MouseEvent, n: number, edge: DragState['edge'], s: number, en: number) => void;
+  onCreateAt: (n: number, px: number) => void; sprintColor: Map<string, string>;
 }) {
   const [open, setOpen] = useState(depth === 0);
   const { card, start, end, total, done } = node;
@@ -235,6 +271,8 @@ function RoadmapRow({ node, depth, xOf, width, today, slug, drag, onDrag }: {
   const left = s != null ? xOf(s) : 0;
   const w = s != null && e2 != null ? Math.max(xOf(e2) - xOf(s), 4) : 0;
   const editable = card.number != null && start != null && end != null;
+  const clr = card.sprint ? sprintColor.get(card.sprint) : undefined; // color del sprint de la tarjeta
+  const canCreate = w === 0 && card.number != null;
 
   return (
     <>
@@ -267,13 +305,19 @@ function RoadmapRow({ node, depth, xOf, width, today, slug, drag, onDrag }: {
             {atRisk && <AlertTriangle className="h-3.5 w-3.5 text-destructive" />}
           </div>
         </div>
-        <div className="relative select-none py-2" style={{ width }}>
+        <div
+          className={cn('relative select-none py-2', canCreate && 'cursor-copy')}
+          style={{ width }}
+          onClick={canCreate ? (e) => onCreateAt(card.number!, (e.nativeEvent as MouseEvent).offsetX) : undefined}
+          title={canCreate ? 'Clic para fijar fechas (1 semana por defecto)' : undefined}
+        >
           {w > 0 && (
             <div className={cn('absolute top-1/2 h-4 -translate-y-1/2 overflow-hidden rounded-md border',
               atRisk ? 'border-destructive/40 bg-destructive/15' : depth === 0 ? 'border-primary/40 bg-primary/15' : 'border-info/40 bg-info/10',
               live && 'ring-2 ring-primary/50')}
-              style={{ left, width: w }} title={`${progress}% · ${done}/${total} listas`}>
+              style={{ left, width: w }} title={`${progress}% · ${done}/${total} listas · ${card.sprint ?? 'sin sprint'}`}>
               <div className={cn('h-full', atRisk ? 'bg-destructive/50' : depth === 0 ? 'bg-primary/60' : 'bg-info/50')} style={{ width: `${progress}%` }} />
+              {clr && <div className="absolute inset-y-0 left-0 z-[1] w-1" style={{ backgroundColor: clr }} title={card.sprint ?? undefined} />}
               {depth === 0 && w > 36 && (
                 <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-[10px] font-semibold text-foreground/80">{progress}%</span>
               )}
@@ -290,7 +334,7 @@ function RoadmapRow({ node, depth, xOf, width, today, slug, drag, onDrag }: {
       </div>
       {open && hasKids && node.children
         .slice().sort((a, b) => (a.start ?? Infinity) - (b.start ?? Infinity))
-        .map((c) => <RoadmapRow key={c.card.id} node={c} depth={depth + 1} xOf={xOf} width={width} today={today} slug={slug} drag={drag} onDrag={onDrag} />)}
+        .map((c) => <RoadmapRow key={c.card.id} node={c} depth={depth + 1} xOf={xOf} width={width} today={today} slug={slug} drag={drag} onDrag={onDrag} onCreateAt={onCreateAt} sprintColor={sprintColor} />)}
     </>
   );
 }
