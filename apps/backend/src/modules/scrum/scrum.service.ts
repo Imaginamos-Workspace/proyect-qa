@@ -353,6 +353,10 @@ export class ScrumService {
   async assignIssue(slug: string, issueNumber: number, login: string | null) {
     const token = process.env.GITHUB_WRITE_TOKEN || this.token;
     if (!token) throw new Error('GitHub token no configurado en el servidor.');
+    // El cliente DEBE existir en qa_clients: no permitir escribir en cualquier
+    // repo qa-* de la org por un slug arbitrario (mismo guard que createIssue/moveCard).
+    const { data: client } = await this.supabase.from('qa_clients').select('slug').eq('slug', slug).maybeSingle();
+    if (!client) throw new BadRequestException('Cliente no encontrado.');
     const repo = `${this.owner}/qa-${slug}`;
     const headers = {
       Authorization: `Bearer ${token}`,
@@ -438,19 +442,25 @@ export class ScrumService {
   async getCreateMeta(slug: string) {
     const empty = { configured: false, types: [], areas: [], priorities: [], estimates: [], sprints: [] };
     if (!this.token) return empty;
-    const { data: client } = await this.supabase.from('qa_clients').select('display_name').eq('slug', slug).maybeSingle();
-    const project = await this.resolveProject(client?.display_name ?? slug, slug);
-    if (!project) return empty;
-    const meta = await this.fetchProjectMeta(project.number);
-    const opts = (name: string) => (meta.fields.get(name)?.options ?? []).map((o) => o.name);
-    return {
-      configured: true,
-      types: opts('Tipo'),
-      areas: opts('Área').length ? opts('Área') : opts('Area'),
-      priorities: opts('Prioridad'),
-      estimates: opts('Estimación').length ? opts('Estimación') : opts('Estimacion'),
-      sprints: (meta.fields.get('Sprint')?.iterations ?? []).map((i) => i.title),
-    };
+    try {
+      const { data: client } = await this.supabase.from('qa_clients').select('display_name').eq('slug', slug).maybeSingle();
+      if (!client) return empty;
+      const project = await this.resolveProject(client.display_name, slug);
+      if (!project) return empty;
+      const meta = await this.fetchProjectMeta(project.number);
+      const opts = (name: string) => (meta.fields.get(name)?.options ?? []).map((o) => o.name);
+      return {
+        configured: true,
+        types: opts('Tipo'),
+        areas: opts('Área').length ? opts('Área') : opts('Area'),
+        priorities: opts('Prioridad'),
+        estimates: opts('Estimación').length ? opts('Estimación') : opts('Estimacion'),
+        sprints: (meta.fields.get('Sprint')?.iterations ?? []).map((i) => i.title),
+      };
+    } catch (err) {
+      this.logger.warn(`getCreateMeta(${slug}) degradó: ${(err as Error).message}`);
+      return empty; // el modal abre con selects vacíos en vez de romper
+    }
   }
 
   /** Crea un GitHub Issue en el repo del cliente, lo agrega al board y setea sus
@@ -466,8 +476,11 @@ export class ScrumService {
     const token = process.env.GITHUB_WRITE_TOKEN || this.token;
     if (!token) throw new Error('GitHub token de escritura no configurado en el servidor.');
 
+    // El cliente DEBE existir en qa_clients (no escribir en repos qa-* arbitrarios
+    // por un slug crafteado): autorización explícita, no implícita por GitHub.
     const { data: client } = await this.supabase.from('qa_clients').select('display_name').eq('slug', slug).maybeSingle();
-    const project = await this.resolveProject(client?.display_name ?? slug, slug);
+    if (!client) throw new BadRequestException('Cliente no encontrado.');
+    const project = await this.resolveProject(client.display_name, slug);
     if (!project) throw new Error('No se encontró el board del cliente.');
     const meta = await this.fetchProjectMeta(project.number);
 
@@ -498,7 +511,9 @@ export class ScrumService {
   private composeBody(dto: CreateIssueDto, creator: string | null): string {
     const parts = [dto.description.trim()];
     if (dto.acceptanceCriteria?.trim()) parts.push(`\n## Criterios de aceptación\n${dto.acceptanceCriteria.trim()}`);
-    const links = (dto.links ?? []).map((s) => s.trim()).filter(Boolean);
+    // Solo http(s): descarta esquemas peligrosos (javascript:, data:) por si el
+    // portal llegara a renderizar el markdown del cuerpo.
+    const links = (dto.links ?? []).map((s) => s.trim()).filter((u) => /^https?:\/\//i.test(u));
     if (links.length) {
       parts.push('\n## Adjuntos\n' + links.map((u) => (/\.(png|jpe?g|gif|webp|svg)$/i.test(u) ? `![](${u})` : `- ${u}`)).join('\n'));
     }
@@ -551,7 +566,10 @@ export class ScrumService {
         iterations: cfg ? [...(cfg.iterations ?? []), ...(cfg.completedIterations ?? [])] : undefined,
       });
     }
-    return { projectId: proj?.id as string, fields };
+    // Falla ACÁ (antes de crear el issue) si no hay node id → nunca dejamos un
+    // issue huérfano por no poder agregarlo al board.
+    if (!proj?.id) throw new Error(`No se encontró el node id del proyecto #${number}.`);
+    return { projectId: proj.id, fields };
   }
 
   private async applyFields(
@@ -584,8 +602,13 @@ export class ScrumService {
       date('Inicio', dto.startDate),
       date('Fin', dto.dueDate),
       iteration('Sprint', dto.sprint),
-    ].filter(Boolean);
-    await Promise.all(tasks);
+    ].filter(Boolean) as Promise<unknown>[];
+    // best-effort: el issue YA está creado y en el board; que falle un campo no
+    // debe tirar 500 (el usuario reintentaría y duplicaría el issue).
+    const results = await Promise.allSettled(tasks);
+    for (const r of results) {
+      if (r.status === 'rejected') this.logger.warn(`applyFields: campo no seteado — ${(r.reason as Error)?.message}`);
+    }
   }
 
   /** Trazabilidad pruebas↔historias de la última corrida (qa_runs.coverage). */
