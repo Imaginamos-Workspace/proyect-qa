@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, type ReactNode } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
-import { Plus, X, Loader2, ExternalLink, AlertCircle } from 'lucide-react';
+import { Plus, X, Loader2, ExternalLink, AlertCircle, GitBranch } from 'lucide-react';
 import { useCreateMeta, useCreateIssue, useScrumMe, type CreateIssueInput } from '@/hooks/use-scrum';
 
 const STORY_RE = /histor/i;
@@ -13,19 +13,25 @@ const empty: CreateIssueInput = { title: '', type: '', description: '' };
 /** Botón + modal para crear un issue (cualquier tipo) que aterriza en GitHub + el
  *  board del cliente, con autor = el usuario logueado. Valida la metodología
  *  (descripción siempre; criterios de aceptación en Historia). */
-export function CreateIssueDialog({ slug }: { slug: string }) {
+export function CreateIssueDialog({ slug, parentNumber, parentTitle, defaultType, trigger }: {
+  slug: string;
+  parentNumber?: number;
+  parentTitle?: string;
+  defaultType?: string;
+  trigger?: ReactNode;
+}) {
   const { data: meta } = useCreateMeta(slug);
   const { data: me } = useScrumMe();
   const create = useCreateIssue(slug);
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState<CreateIssueInput>(empty);
+  const [form, setForm] = useState<CreateIssueInput>({ ...empty, type: defaultType ?? '' });
   const [linksText, setLinksText] = useState('');
   const [err, setErr] = useState<string | null>(null);
 
   const set = <K extends keyof CreateIssueInput>(k: K, v: CreateIssueInput[K]) => setForm((f) => ({ ...f, [k]: v }));
   const isStory = STORY_RE.test(form.type);
 
-  const reset = () => { setForm(empty); setLinksText(''); setErr(null); create.reset(); };
+  const reset = () => { setForm({ ...empty, type: defaultType ?? '' }); setLinksText(''); setErr(null); create.reset(); };
 
   const submit = async () => {
     setErr(null);
@@ -35,7 +41,7 @@ export function CreateIssueDialog({ slug }: { slug: string }) {
     if (isStory && !form.acceptanceCriteria?.trim()) return setErr('Una Historia requiere criterios de aceptación (Gherkin).');
     const links = linksText.split('\n').map((s) => s.trim()).filter(Boolean);
     try {
-      await create.mutateAsync({ ...form, links });
+      await create.mutateAsync({ ...form, links, parentNumber });
       reset();
       setOpen(false);
     } catch (e) {
@@ -46,17 +52,25 @@ export function CreateIssueDialog({ slug }: { slug: string }) {
   return (
     <Dialog.Root open={open} onOpenChange={(o) => { setOpen(o); if (!o) reset(); }}>
       <Dialog.Trigger asChild>
-        <button className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-primary px-3 text-sm font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90">
-          <Plus className="h-4 w-4" /> Crear issue
-        </button>
+        {trigger ?? (
+          <button className="inline-flex h-10 items-center gap-1.5 rounded-xl bg-primary px-3 text-sm font-semibold text-primary-foreground shadow-sm transition-colors hover:bg-primary/90">
+            <Plus className="h-4 w-4" /> Crear issue
+          </button>
+        )}
       </Dialog.Trigger>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm" />
         <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-[min(92vw,640px)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-border bg-card p-5 shadow-xl">
           <div className="mb-3 flex items-center justify-between">
-            <Dialog.Title className="text-lg font-semibold text-foreground">Crear issue</Dialog.Title>
+            <Dialog.Title className="text-lg font-semibold text-foreground">{parentNumber ? 'Crear sub-issue' : 'Crear issue'}</Dialog.Title>
             <Dialog.Close className="rounded-lg p-1 text-muted-foreground hover:bg-muted"><X className="h-4 w-4" /></Dialog.Close>
           </div>
+          {parentNumber && (
+            <div className="mb-3 flex items-center gap-1.5 rounded-lg bg-muted/60 px-3 py-1.5 text-xs text-muted-foreground">
+              <GitBranch className="h-3.5 w-3.5 shrink-0" /> Hijo de <b className="text-foreground">#{parentNumber}</b>
+              {parentTitle && <span className="truncate">· {parentTitle}</span>}
+            </div>
+          )}
 
           <div className="grid gap-3">
             <div className="grid grid-cols-2 gap-3">

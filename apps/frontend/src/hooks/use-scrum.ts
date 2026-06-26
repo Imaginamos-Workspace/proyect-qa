@@ -50,6 +50,7 @@ export interface CreateIssueInput {
   startDate?: string;
   dueDate?: string;
   links?: string[];
+  parentNumber?: number;
 }
 
 /** Opciones del formulario de creación (tipos/áreas/prioridades/estimaciones/sprints). */
@@ -69,6 +70,37 @@ export function useCreateIssue(slug: string) {
     mutationFn: (input: CreateIssueInput) =>
       api.post<{ ok: boolean; number: number; url: string }>(`/scrum/boards/${slug}/issues`, input),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['scrum', 'boards', slug] }),
+  });
+}
+
+function patchCardDates(board: ScrumBoard, issue: number, startDate?: string, dueDate?: string): ScrumBoard {
+  return {
+    ...board,
+    columns: board.columns.map((c) => ({
+      ...c,
+      cards: c.cards.map((card) =>
+        card.number === issue ? { ...card, startDate: startDate ?? card.startDate, dueDate: dueDate ?? card.dueDate } : card,
+      ),
+    })),
+  };
+}
+
+/** Cambia las fechas Inicio/Fin de un issue (drag-resize del roadmap), con update
+ *  optimista y rollback si el backend rechaza. */
+export function useSetIssueDates(slug: string) {
+  const qc = useQueryClient();
+  const key = ['scrum', 'boards', slug];
+  return useMutation({
+    mutationFn: ({ issue, startDate, dueDate }: { issue: number; startDate?: string; dueDate?: string }) =>
+      api.post(`/scrum/boards/${slug}/issues/${issue}/dates`, { startDate, dueDate }),
+    onMutate: async ({ issue, startDate, dueDate }) => {
+      await qc.cancelQueries({ queryKey: key });
+      const prev = qc.getQueryData<ScrumBoard>(key);
+      if (prev) qc.setQueryData(key, patchCardDates(prev, issue, startDate, dueDate));
+      return { prev };
+    },
+    onError: (_e, _v, ctx) => { if (ctx?.prev) qc.setQueryData(key, ctx.prev); },
+    onSettled: () => qc.invalidateQueries({ queryKey: key }),
   });
 }
 

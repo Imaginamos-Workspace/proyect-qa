@@ -1,5 +1,5 @@
 import { BadRequestException, Inject, Injectable, Logger, UnauthorizedException } from '@nestjs/common';
-import type { CreateIssueDto } from './dto/create-issue.dto';
+import type { CreateIssueDto, SetDatesDto } from './dto/create-issue.dto';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../../config/supabase.module';
@@ -503,8 +503,52 @@ export class ScrumService {
     // 3. Setear los campos del board (best-effort por campo).
     await this.applyFields(meta, itemId, dto, token);
 
+    // 4. Enlazar como sub-issue del padre (jerarquía nativa), si aplica. Best-effort.
+    if (dto.parentNumber) {
+      try {
+        const p = await this.gql<{ repository: { issue: { id: string } | null } | null }>(
+          ISSUE_NODE_QUERY, { owner: this.owner, name: `qa-${slug}`, number: dto.parentNumber }, token,
+        );
+        const parentId = p.repository?.issue?.id;
+        if (parentId) await this.gql(ADD_SUB_ISSUE_MUTATION, { issueId: parentId, subIssueId: created.node_id }, token);
+      } catch (err) {
+        this.logger.warn(`No se pudo enlazar #${created.number} como sub-issue de #${dto.parentNumber}: ${(err as Error).message}`);
+      }
+    }
+
     await this.invalidate(slug);
     return { ok: true, number: created.number, url: created.html_url };
+  }
+
+  /** Cambia las fechas Inicio/Fin de un issue del board (drag-resize del roadmap). */
+  async setIssueDates(slug: string, issueNumber: number, dates: SetDatesDto) {
+    if (!dates.startDate && !dates.dueDate) throw new BadRequestException('Nada que actualizar.');
+    const token = process.env.GITHUB_WRITE_TOKEN || this.token;
+    if (!token) throw new Error('GitHub token de escritura no configurado en el servidor.');
+
+    const { data: client } = await this.supabase.from('qa_clients').select('display_name').eq('slug', slug).maybeSingle();
+    if (!client) throw new BadRequestException('Cliente no encontrado.');
+    const project = await this.resolveProject(client.display_name, slug);
+    if (!project) throw new Error('No se encontró el board del cliente.');
+    const meta = await this.fetchProjectMeta(project.number);
+
+    const itemData = await this.gql<{
+      repository: { issue: { projectItems: { nodes: { id: string; project: { id: string; number: number } }[] } } | null } | null;
+    }>(ISSUE_ITEM_QUERY, { owner: this.owner, name: `qa-${slug}`, number: issueNumber }, token);
+    const item = (itemData.repository?.issue?.projectItems?.nodes ?? []).find((n) => n.project?.number === project.number);
+    if (!item) throw new Error(`El issue #${issueNumber} no está en el board del cliente.`);
+
+    const setDate = (fieldName: string, val?: string) => {
+      const f = meta.fields.get(fieldName);
+      return f && val
+        ? this.gql(SET_FIELD_MUTATION, { projectId: item.project.id, itemId: item.id, fieldId: f.id, value: { date: val } }, token)
+        : null;
+    };
+    const tasks = [setDate('Inicio', dates.startDate), setDate('Fin', dates.dueDate)].filter(Boolean);
+    if (!tasks.length) throw new BadRequestException('El board no tiene los campos Inicio/Fin (corré projects:bootstrap).');
+    await Promise.all(tasks);
+    await this.invalidate(slug);
+    return { ok: true, issue: issueNumber, startDate: dates.startDate ?? null, dueDate: dates.dueDate ?? null };
   }
 
   /** Cuerpo del issue: descripción + criterios + adjuntos (URLs) + autoría. */
@@ -709,6 +753,18 @@ query($owner:String!, $number:Int!) {
       }
     }
   }
+}`;
+
+// Node id de un issue por su número (para enlazar sub-issues).
+const ISSUE_NODE_QUERY = `
+query($owner:String!, $name:String!, $number:Int!) {
+  repository(owner:$owner, name:$name) { issue(number:$number) { id } }
+}`;
+
+// Enlaza un issue como sub-issue (hijo) de otro — jerarquía nativa de GitHub.
+const ADD_SUB_ISSUE_MUTATION = `
+mutation($issueId:ID!, $subIssueId:ID!) {
+  addSubIssue(input:{ issueId:$issueId, subIssueId:$subIssueId }) { issue { id } }
 }`;
 
 // Agrega un issue (por su node id) como ítem del board.

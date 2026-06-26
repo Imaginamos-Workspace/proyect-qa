@@ -11,7 +11,7 @@ import {
 import { ScrumService } from './scrum.service';
 import { RolesService } from './roles.service';
 import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard';
-import { CreateIssueDto } from './dto/create-issue.dto';
+import { CreateIssueDto, SetDatesDto } from './dto/create-issue.dto';
 
 // El guard pone el usuario de Supabase en request.user. De GitHub OAuth, el login
 // viene en user_metadata (user_name / preferred_username).
@@ -72,6 +72,12 @@ export class ScrumController {
   @Post('boards/:slug/issues')
   create(@Param('slug') slug: string, @Body() body: CreateIssueDto, @Req() req: RequestWithUser) {
     return this.scrum.createIssue(slug, githubLogin(req), body);
+  }
+
+  /** Cambia las fechas Inicio/Fin de un issue (drag-resize del roadmap). */
+  @Post('boards/:slug/issues/:number/dates')
+  setDates(@Param('slug') slug: string, @Param('number') number: string, @Body() body: SetDatesDto) {
+    return this.scrum.setIssueDates(slug, Number(number), body);
   }
 
   /** Asigna/desasigna un responsable a un issue (login null = quitar). */

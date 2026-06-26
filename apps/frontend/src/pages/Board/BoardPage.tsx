@@ -301,7 +301,7 @@ export function BoardPage() {
           {view === 'list' && <BoardList cards={visibleCards} />}
 
           {/* ── Vista ROADMAP (Gantt de épicas) ──────────────────────────── */}
-          {view === 'roadmap' && <BoardRoadmap board={board} />}
+          {view === 'roadmap' && <BoardRoadmap board={board} slug={slug} />}
 
           {/* ── Vista PROGRESO (gráficas del sprint) ─────────────────────── */}
           {view === 'sprint' && <BoardSprint board={board} sprint={sprint} />}
