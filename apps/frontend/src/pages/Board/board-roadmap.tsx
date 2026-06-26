@@ -182,6 +182,14 @@ export function BoardRoadmap({ board, slug }: { board: ScrumBoard; slug: string 
 
   return (
     <div className="space-y-2">
+      {(setDates.isError || setDates.isPending) && (
+        <p className={cn('rounded-md px-3 py-1.5 text-xs', setDates.isError ? 'bg-destructive/10 text-destructive' : 'bg-muted text-muted-foreground')}>
+          {setDates.isError
+            ? `No se pudo guardar la fecha: ${setDates.error instanceof Error ? setDates.error.message : 'error desconocido'}.`
+            : 'Guardando fecha…'}
+        </p>
+      )}
+
       {/* Control de zoom */}
       <div className="flex items-center gap-2">
         <span className="text-xs text-muted-foreground">Escala:</span>
@@ -306,9 +314,9 @@ function RoadmapRow({ node, depth, xOf, width, today, slug, drag, onDrag, onCrea
           </div>
         </div>
         <div
-          className={cn('relative select-none py-2', canCreate && 'cursor-copy')}
+          className={cn('relative shrink-0 select-none py-2', canCreate && 'cursor-copy hover:bg-primary/5')}
           style={{ width }}
-          onClick={canCreate ? (e) => onCreateAt(card.number!, (e.nativeEvent as MouseEvent).offsetX) : undefined}
+          onClick={canCreate ? (e) => onCreateAt(card.number!, e.clientX - e.currentTarget.getBoundingClientRect().left) : undefined}
           title={canCreate ? 'Clic para fijar fechas (1 semana por defecto)' : undefined}
         >
           {w > 0 && (
