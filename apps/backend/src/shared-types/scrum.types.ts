@@ -21,6 +21,8 @@ export interface ScrumCard {
   priority: ScrumPriority;
   estimate: string | null;
   sprint: string | null;
+  startDate: string | null; // campo "Inicio" del board (override manual del roadmap)
+  dueDate: string | null; // campo "Fin" del board (override manual del roadmap)
   parent: number | null; // # del issue padre (sub-issue nativo) — para jerarquía/roadmap
   labels: string[];
   assignees: ScrumAssignee[];

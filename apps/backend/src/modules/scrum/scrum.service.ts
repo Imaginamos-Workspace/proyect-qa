@@ -286,6 +286,7 @@ export class ScrumService {
           if (!name) continue;
           if (fv.name) fields[name] = fv.name; // single-select
           else if (fv.title) fields[name] = fv.title; // iteration (Sprint)
+          else if (fv.date) fields[name] = fv.date; // date (Inicio/Fin)
         }
         const content = item.content ?? {};
         const type = mapType(fields['Tipo'] ?? null);
@@ -304,6 +305,8 @@ export class ScrumService {
           priority: mapPriority(fields['Prioridad'] ?? null),
           estimate: fields['Estimación'] ?? fields['Estimacion'] ?? null,
           sprint,
+          startDate: fields['Inicio'] ?? null,
+          dueDate: fields['Fin'] ?? null,
           parent: content.parent?.number ?? null,
           labels: (content.labels?.nodes ?? []).map((l: any) => l.name),
           assignees: (content.assignees?.nodes ?? []).map((a: any) => ({
@@ -559,6 +562,7 @@ query($owner:String!, $number:Int!, $cursor:String) {
             nodes {
               ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } }
               ... on ProjectV2ItemFieldIterationValue { title field { ... on ProjectV2FieldCommon { name } } }
+              ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } }
             }
           }
           content {

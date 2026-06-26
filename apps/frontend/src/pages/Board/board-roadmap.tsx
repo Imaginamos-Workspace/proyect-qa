@@ -49,6 +49,10 @@ export function BoardRoadmap({ board }: { board: ScrumBoard }) {
       if (card.number != null) seen.add(card.number);
       const children = kids.map((k) => build(k, seen));
       const own = card.sprint ? sprintRange.get(card.sprint) : undefined;
+      // Override manual: si la tarjeta tiene fecha explícita (campos Inicio/Fin del
+      // board) gana sobre lo derivado de los sprints de sus hijos.
+      const explicitStart = parseDay(card.startDate);
+      const explicitEnd = parseDay(card.dueDate);
       const starts = [own?.start, ...children.map((c) => c.start)].filter((n): n is number => n != null);
       const ends = [own?.end, ...children.map((c) => c.end)].filter((n): n is number => n != null);
       const total = children.reduce((n, c) => n + c.total + 1, 0);
@@ -56,8 +60,8 @@ export function BoardRoadmap({ board }: { board: ScrumBoard }) {
       return {
         card,
         children,
-        start: starts.length ? Math.min(...starts) : null,
-        end: ends.length ? Math.max(...ends) : null,
+        start: explicitStart ?? (starts.length ? Math.min(...starts) : null),
+        end: explicitEnd ?? (ends.length ? Math.max(...ends) : null),
         total,
         done,
       };
@@ -70,11 +74,19 @@ export function BoardRoadmap({ board }: { board: ScrumBoard }) {
       .filter((n) => n.start != null && n.end != null)
       .sort((a, b) => (a.start ?? 0) - (b.start ?? 0));
 
-    const allStart = Math.min(...(board.sprintsMeta ?? []).map((s) => parseDay(s.startDate) ?? Infinity), Infinity);
-    const allEnd = Math.max(...(board.sprintsMeta ?? []).map((s) => parseDay(s.endDate) ?? -Infinity), -Infinity);
+    // El dominio del eje incluye los sprints Y las fechas de las épicas (por si un
+    // override manual cae fuera del rango de sprints → la barra no se recorta).
+    const starts = [
+      ...(board.sprintsMeta ?? []).map((s) => parseDay(s.startDate)),
+      ...epicNodes.map((n) => n.start),
+    ].filter((n): n is number => n != null);
+    const ends = [
+      ...(board.sprintsMeta ?? []).map((s) => parseDay(s.endDate)),
+      ...epicNodes.map((n) => n.end),
+    ].filter((n): n is number => n != null);
     return {
       epics: epicNodes,
-      domain: Number.isFinite(allStart) && Number.isFinite(allEnd) ? { start: allStart, end: allEnd } : null,
+      domain: starts.length && ends.length ? { start: Math.min(...starts), end: Math.max(...ends) } : null,
     };
   }, [board.columns, board.sprintsMeta, sprintRange]);
 
