@@ -31,7 +31,7 @@
     "notConfigured": {
       "title": "Tablero no disponible",
       "missing_github_token": "Falta configurar el token de GitHub (GITHUB_TOKEN) en el backend para leer el tablero del cliente.",
-      "board_not_found": "No se encontró un GitHub Project llamado «Cliente: …» para este cliente. Creá su tablero con projects:bootstrap.",
+      "board_not_found": "Este cliente todavía no tiene tablero. Un PM o admin debe crearlo con: npm run projects:bootstrap -- <cliente> (rules/96). Si ya existe y no se ve, falta el token con scope project.",
       "github_error": "Hubo un error consultando GitHub. Reintentá en unos minutos.",
       "client_not_found": "Cliente no encontrado."
     }

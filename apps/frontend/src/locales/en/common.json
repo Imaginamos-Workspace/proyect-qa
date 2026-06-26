@@ -31,7 +31,7 @@
     "notConfigured": {
       "title": "Board unavailable",
       "missing_github_token": "The backend is missing the GitHub token (GITHUB_TOKEN) needed to read the client's board.",
-      "board_not_found": "No GitHub Project named “Cliente: …” was found for this client. Create its board with projects:bootstrap.",
+      "board_not_found": "This client has no board yet. A PM or admin must create it with: npm run projects:bootstrap -- <client> (rules/96). If it already exists but isn't visible, the project-scope token is missing.",
       "github_error": "There was an error querying GitHub. Try again in a few minutes.",
       "client_not_found": "Client not found."
     }
