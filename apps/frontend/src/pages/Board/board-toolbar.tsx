@@ -1,6 +1,9 @@
 import { type ReactNode, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
-import { Check, ChevronDown, Search, X, CalendarDays, CircleDot, CircleCheck, Rocket, Building2 } from 'lucide-react';
+import {
+  Check, ChevronDown, Search, X, CalendarDays, CircleDot, CircleCheck, Rocket, Building2,
+  LayoutGrid, List as ListIcon, GanttChartSquare, BarChart3,
+} from 'lucide-react';
 import type { ScrumAssignee, ScrumSprint } from '@qa/shared-types';
 import { cn } from '@/lib/utils';
 
@@ -26,6 +29,43 @@ export function Avatar({ login, url, size = 24 }: { login: string; url?: string 
     >
       {login.slice(0, 2)}
     </span>
+  );
+}
+
+/* ── Selector de VISTA (segmentado) ─────────────────────────────────────── */
+export type BoardView = 'board' | 'list' | 'roadmap' | 'sprint';
+
+const VIEWS: { key: BoardView; label: string; icon: typeof LayoutGrid; soon?: boolean }[] = [
+  { key: 'board', label: 'Tablero', icon: LayoutGrid },
+  { key: 'list', label: 'Lista', icon: ListIcon },
+  { key: 'roadmap', label: 'Roadmap', icon: GanttChartSquare, soon: true },
+  { key: 'sprint', label: 'Progreso', icon: BarChart3, soon: true },
+];
+
+export function ViewSwitcher({ value, onChange }: { value: BoardView; onChange: (v: BoardView) => void }) {
+  return (
+    <div className="inline-flex items-center gap-0.5 rounded-xl border border-border bg-card p-0.5">
+      {VIEWS.map(({ key, label, icon: Icon, soon }) => {
+        const active = value === key;
+        return (
+          <button
+            key={key}
+            disabled={soon}
+            onClick={() => onChange(key)}
+            title={soon ? 'Próximamente' : label}
+            className={cn(
+              'inline-flex h-8 items-center gap-1.5 rounded-lg px-3 text-sm font-medium transition-colors',
+              active ? 'bg-primary text-primary-foreground shadow-sm' : 'text-muted-foreground hover:bg-muted hover:text-foreground',
+              soon && 'cursor-not-allowed opacity-50 hover:bg-transparent',
+            )}
+          >
+            <Icon className="h-4 w-4" />
+            <span className="hidden sm:inline">{label}</span>
+            {soon && <span className="rounded bg-muted px-1 text-[9px] font-bold uppercase text-muted-foreground">pronto</span>}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 

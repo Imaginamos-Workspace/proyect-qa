@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { useParams, useNavigate } from 'react-router';
+import { useParams, useNavigate, useSearchParams } from 'react-router';
 import { useTranslation } from 'react-i18next';
 import {
   ExternalLink,
@@ -20,7 +20,8 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { IssueTypeIcon, PriorityFlag, IssueKey, EstimateChip } from '@/components/scrum/issue-bits';
-import { Avatar, SearchBox, FilterMenu, SprintSelect, ClientSelect, NO_SPRINT, type FilterOption } from './board-toolbar';
+import { Avatar, SearchBox, FilterMenu, SprintSelect, ClientSelect, ViewSwitcher, NO_SPRINT, type FilterOption, type BoardView } from './board-toolbar';
+import { BoardList } from './board-list';
 import { useClient } from '@/hooks/use-dashboard';
 import { RegressionProgress } from '@/components/clients/regression-progress';
 
@@ -38,6 +39,11 @@ export function BoardPage() {
   const { t } = useTranslation();
   const { slug = '' } = useParams();
   const navigate = useNavigate();
+  // Vista activa en la URL (?view=) → compartible y sobrevive recargas.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const view = ((searchParams.get('view') as BoardView) || 'board');
+  const setView = (v: BoardView) =>
+    setSearchParams((p) => { const n = new URLSearchParams(p); n.set('view', v); return n; }, { replace: true });
   const { data: boards } = useScrumBoards();
   const { data: board, isLoading } = useScrumBoard(slug);
   // Inventario del cliente (universo de regresión + credenciales) para los paneles
@@ -151,6 +157,9 @@ export function BoardPage() {
   const visibleColumns = (board?.columns ?? [])
     .filter((col) => statuses.size === 0 || statuses.has(col.key))
     .map((col) => ({ ...col, cards: col.cards.filter(matches) }));
+  // Mismos issues filtrados, en plano (para la vista Lista).
+  const visibleCards = visibleColumns.flatMap((col) => col.cards);
+  const showFilters = view === 'board' || view === 'list';
 
   // Trazabilidad: resultado de pruebas por historia (#N) de la última corrida.
   const testsByStory = useMemo(
@@ -195,7 +204,10 @@ export function BoardPage() {
         <NotConfigured reason={board.reason} />
       ) : (
         <>
-          {/* ── Barra de filtros (estilo Jira) ───────────────────────────── */}
+          <ViewSwitcher value={view} onChange={setView} />
+
+          {/* ── Barra de filtros (estilo Jira) — vistas Tablero/Lista ────── */}
+          {showFilters && (
           <div className="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-card/60 p-2.5">
             <SearchBox value={search} onChange={setSearch} />
             <FilterMenu
@@ -245,9 +257,10 @@ export function BoardPage() {
               )}
             </div>
           </div>
+          )}
 
           {/* ── Sprints (con fechas + abierto/cerrado) ───────────────────── */}
-          {board.sprints.length > 0 && (
+          {showFilters && board.sprints.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
               <SprintSelect
                 sprints={board.sprints}
@@ -269,14 +282,21 @@ export function BoardPage() {
             </div>
           )}
 
-          {/* ── Widget único colapsable: regresión + acciones + credenciales ── */}
-          <RegressionProgress
-            universe={client?.inventory?.universe}
-            credentials={client?.inventory?.credentials}
-            slug={slug}
-          />
+          {/* ── Widget de regresión (solo Tablero) ───────────────────────── */}
+          {view === 'board' && (
+            <RegressionProgress
+              universe={client?.inventory?.universe}
+              credentials={client?.inventory?.credentials}
+              slug={slug}
+            />
+          )}
 
-          {/* ── Kanban ───────────────────────────────────────────────────── */}
+          {/* ── Vista LISTA (datatable) ──────────────────────────────────── */}
+          {view === 'list' && <BoardList cards={visibleCards} />}
+
+          {/* ── Vista TABLERO (kanban) ───────────────────────────────────── */}
+          {view === 'board' && (
+          <>
           {move.isError && (
             <p className="mb-2 rounded-md bg-destructive/10 px-3 py-1.5 text-xs text-destructive">
               {move.error instanceof Error ? move.error.message : 'No se pudo mover la tarjeta.'}
@@ -357,6 +377,8 @@ export function BoardPage() {
               </div>
             ))}
           </div>
+          </>
+          )}
         </>
       )}
     </div>
