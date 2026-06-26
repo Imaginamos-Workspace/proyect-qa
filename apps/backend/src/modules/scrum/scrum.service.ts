@@ -304,6 +304,7 @@ export class ScrumService {
           priority: mapPriority(fields['Prioridad'] ?? null),
           estimate: fields['Estimación'] ?? fields['Estimacion'] ?? null,
           sprint,
+          parent: content.parent?.number ?? null,
           labels: (content.labels?.nodes ?? []).map((l: any) => l.name),
           assignees: (content.assignees?.nodes ?? []).map((a: any) => ({
             login: a.login,
@@ -563,6 +564,7 @@ query($owner:String!, $number:Int!, $cursor:String) {
           content {
             ... on Issue {
               number title url
+              parent { number }
               labels(first:10){ nodes { name } }
               assignees(first:5){ nodes { login avatarUrl } }
             }

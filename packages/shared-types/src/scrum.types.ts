@@ -21,6 +21,7 @@ export interface ScrumCard {
   priority: ScrumPriority;
   estimate: string | null; // S/M/L/XL
   sprint: string | null;
+  parent: number | null; // # del issue padre (sub-issue nativo) — para jerarquía/roadmap
   labels: string[];
   assignees: ScrumAssignee[];
 }

@@ -22,6 +22,8 @@ import { cn } from '@/lib/utils';
 import { IssueTypeIcon, PriorityFlag, IssueKey, EstimateChip } from '@/components/scrum/issue-bits';
 import { Avatar, SearchBox, FilterMenu, SprintSelect, ClientSelect, ViewSwitcher, NO_SPRINT, type FilterOption, type BoardView } from './board-toolbar';
 import { BoardList } from './board-list';
+import { BoardRoadmap } from './board-roadmap';
+import { BoardSprint } from './board-sprint';
 import { useClient } from '@/hooks/use-dashboard';
 import { RegressionProgress } from '@/components/clients/regression-progress';
 
@@ -259,8 +261,8 @@ export function BoardPage() {
           </div>
           )}
 
-          {/* ── Sprints (con fechas + abierto/cerrado) ───────────────────── */}
-          {showFilters && board.sprints.length > 0 && (
+          {/* ── Sprints (Tablero/Lista/Progreso; el Roadmap muestra todos) ─ */}
+          {(showFilters || view === 'sprint') && board.sprints.length > 0 && (
             <div className="flex flex-wrap items-center gap-2">
               <SprintSelect
                 sprints={board.sprints}
@@ -293,6 +295,12 @@ export function BoardPage() {
 
           {/* ── Vista LISTA (datatable) ──────────────────────────────────── */}
           {view === 'list' && <BoardList cards={visibleCards} />}
+
+          {/* ── Vista ROADMAP (Gantt de épicas) ──────────────────────────── */}
+          {view === 'roadmap' && <BoardRoadmap board={board} />}
+
+          {/* ── Vista PROGRESO (gráficas del sprint) ─────────────────────── */}
+          {view === 'sprint' && <BoardSprint board={board} sprint={sprint} />}
 
           {/* ── Vista TABLERO (kanban) ───────────────────────────────────── */}
           {view === 'board' && (

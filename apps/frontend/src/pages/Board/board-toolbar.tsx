@@ -38,8 +38,8 @@ export type BoardView = 'board' | 'list' | 'roadmap' | 'sprint';
 const VIEWS: { key: BoardView; label: string; icon: typeof LayoutGrid; soon?: boolean }[] = [
   { key: 'board', label: 'Tablero', icon: LayoutGrid },
   { key: 'list', label: 'Lista', icon: ListIcon },
-  { key: 'roadmap', label: 'Roadmap', icon: GanttChartSquare, soon: true },
-  { key: 'sprint', label: 'Progreso', icon: BarChart3, soon: true },
+  { key: 'roadmap', label: 'Roadmap', icon: GanttChartSquare },
+  { key: 'sprint', label: 'Progreso', icon: BarChart3 },
 ];
 
 export function ViewSwitcher({ value, onChange }: { value: BoardView; onChange: (v: BoardView) => void }) {
