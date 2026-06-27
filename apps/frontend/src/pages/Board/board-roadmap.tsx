@@ -125,14 +125,16 @@ export function BoardRoadmap({ board, slug }: { board: ScrumBoard; slug: string 
     );
   }
 
-  const start = domain.start;
-  const end = domain.end + 7 * DAY; // padding al final
+  const today = Date.now();
+  // El eje SIEMPRE incluye "hoy" (aunque el trabajo esté todo en el pasado/futuro)
+  // para que la línea roja de hoy se vea.
+  const start = Math.min(domain.start, today);
+  const end = Math.max(domain.end, today) + 7 * DAY;
   const totalDays = Math.ceil((end - start) / DAY);
   const width = Math.max(totalDays * pxPerDay, 480);
   const xOf = (ms: number) => ((ms - start) / DAY) * pxPerDay;
   const ticks = genTicks(start, end, zoom);
-  const today = Date.now();
-  const todayX = today >= start && today <= end ? xOf(today) : null;
+  const todayX = xOf(today);
   const bands = (board.sprintsMeta ?? [])
     .map((s, i) => ({ title: s.title, st: parseDay(s.startDate), en: parseDay(s.endDate), color: SPRINT_COLORS[i % SPRINT_COLORS.length] }))
     .filter((b): b is { title: string; st: number; en: number; color: string } => b.st != null && b.en != null);
@@ -252,7 +254,9 @@ export function BoardRoadmap({ board, slug }: { board: ScrumBoard; slug: string 
                   style={{ left: xOf(b.st), width: Math.max(xOf(b.en) - xOf(b.st), 1), backgroundColor: `${b.color}14` }} title={b.title} />
               ))}
               {ticks.map((t) => <div key={t.ms} className="absolute inset-y-0 w-px bg-border/40" style={{ left: xOf(t.ms) }} />)}
-              {todayX != null && <div className="absolute inset-y-0 z-10 w-px bg-destructive/70" style={{ left: todayX }} title="Hoy" />}
+              <div className="absolute inset-y-0 z-10 w-0.5 bg-destructive" style={{ left: todayX }} title="Hoy">
+                <span className="absolute -top-0.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-b bg-destructive px-1 text-[9px] font-bold text-white">hoy</span>
+              </div>
             </div>
             {epics.map((n) => <RoadmapRow key={n.card.id} node={n} depth={0} xOf={xOf} width={width} today={today} slug={slug} drag={dragRef.current} onDrag={beginDrag} onCreateAt={createAt} sprintColor={sprintColor} />)}
           </div>
@@ -320,13 +324,15 @@ function RoadmapRow({ node, depth, xOf, width, today, slug, drag, onDrag, onCrea
           title={canCreate ? 'Clic para fijar fechas (1 semana por defecto)' : undefined}
         >
           {w > 0 && (
-            <div className={cn('absolute top-1/2 h-4 -translate-y-1/2 overflow-hidden rounded-md border',
-              atRisk ? 'border-destructive/40 bg-destructive/15' : depth === 0 ? 'border-primary/40 bg-primary/15' : 'border-info/40 bg-info/10',
+            <div className={cn('absolute top-1/2 -translate-y-1/2 overflow-hidden rounded-md border',
+              depth === 0 ? 'h-5' : 'h-4', // épicas un poco más altas
+              atRisk ? 'border-destructive/50 bg-destructive/15' : 'border-border bg-muted',
               live && 'ring-2 ring-primary/50')}
-              style={{ left, width: w }} title={`${progress}% · ${done}/${total} listas · ${card.sprint ?? 'sin sprint'}`}>
-              <div className={cn('h-full', atRisk ? 'bg-destructive/50' : depth === 0 ? 'bg-primary/60' : 'bg-info/50')} style={{ width: `${progress}%` }} />
+              style={{ left, width: w }} title={`${progress}% completado · ${done}/${total} listas · ${atRisk ? 'VENCIDA · ' : ''}${card.sprint ?? 'sin sprint'}`}>
+              {/* Progreso: VERDE (hecho) o ROJO (vencida sin terminar) */}
+              <div className={cn('h-full transition-all', atRisk ? 'bg-destructive/70' : 'bg-success')} style={{ width: `${progress}%` }} />
               {clr && <div className="absolute inset-y-0 left-0 z-[1] w-1" style={{ backgroundColor: clr }} title={card.sprint ?? undefined} />}
-              {depth === 0 && w > 36 && (
+              {w > 36 && (
                 <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-[10px] font-semibold text-foreground/80">{progress}%</span>
               )}
               {editable && (
