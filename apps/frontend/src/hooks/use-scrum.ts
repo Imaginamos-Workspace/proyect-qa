@@ -46,6 +46,7 @@ export interface CreateIssueInput {
   area?: string;
   priority?: string;
   estimate?: string;
+  points?: number;
   sprint?: string;
   startDate?: string;
   dueDate?: string;
@@ -101,6 +102,74 @@ export function useSetIssueDates(slug: string) {
     },
     onError: (_e, _v, ctx) => { if (ctx?.prev) qc.setQueryData(key, ctx.prev); },
     onSettled: () => qc.invalidateQueries({ queryKey: key }),
+  });
+}
+
+// ─── Ciclo de vida de sprints ───────────────────────────────────────────────
+export interface SprintState {
+  title: string;
+  status: 'active' | 'closed';
+  started_at: string | null;
+  closed_at: string | null;
+  completed_points: number | null;
+  total_points: number | null;
+  carried_over: number;
+}
+export interface SprintStatus {
+  title: string;
+  total: number;
+  done: number;
+  unfinished: { number: number | null; title: string; status: string | null; url: string | null; points: number | null }[];
+  total_points: number;
+  done_points: number;
+}
+
+export function useSprintStates(slug: string) {
+  return useQuery({
+    queryKey: ['scrum', 'sprints', slug],
+    queryFn: () => api.get<SprintState[]>(`/scrum/boards/${slug}/sprints`),
+    enabled: !!slug,
+    staleTime: 30_000,
+  });
+}
+
+/** Estado de cierre de un sprint (issues sin terminar + puntos). Se pide al abrir el diálogo. */
+export function useSprintStatus(slug: string, title: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['scrum', 'sprint-status', slug, title],
+    queryFn: () => api.get<SprintStatus>(`/scrum/boards/${slug}/sprints/${encodeURIComponent(title)}/status`),
+    enabled: !!slug && !!title && enabled,
+  });
+}
+
+function invalidateSprints(qc: ReturnType<typeof useQueryClient>, slug: string) {
+  qc.invalidateQueries({ queryKey: ['scrum', 'sprints', slug] });
+  qc.invalidateQueries({ queryKey: ['scrum', 'boards', slug] });
+  qc.invalidateQueries({ queryKey: ['scrum', 'sprint-status', slug] });
+}
+
+export function useStartSprint(slug: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (title: string) => api.post(`/scrum/boards/${slug}/sprints/${encodeURIComponent(title)}/start`),
+    onSuccess: () => invalidateSprints(qc, slug),
+  });
+}
+
+export function useCloseSprint(slug: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (title: string) => api.post(`/scrum/boards/${slug}/sprints/${encodeURIComponent(title)}/close`),
+    onSuccess: () => invalidateSprints(qc, slug),
+  });
+}
+
+export function useCarryOver(slug: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ title, issues }: { title: string; issues: number[] }) =>
+      api.post(`/scrum/boards/${slug}/sprints/${encodeURIComponent(title)}/carry-over`, { issues }),
+    onSuccess: () => invalidateSprints(qc, slug),
   });
 }
 

@@ -82,11 +82,13 @@ export function CreateIssueDialog({ slug, parentNumber, parentTitle, defaultType
                 </select>
               </div>
               <div>
-                <label className={labelCls}>Estimación</label>
-                <select className={input} value={form.estimate ?? ''} onChange={(e) => set('estimate', e.target.value || undefined)}>
-                  <option value="">—</option>
-                  {(meta?.estimates ?? []).map((s) => <option key={s} value={s}>{s}</option>)}
-                </select>
+                <label className={labelCls}>Puntos (story points)</label>
+                <input
+                  type="number" min={0} step={1} className={input}
+                  value={form.points ?? ''}
+                  onChange={(e) => set('points', e.target.value === '' ? undefined : Number(e.target.value))}
+                  placeholder="ej. 3"
+                />
               </div>
             </div>
 

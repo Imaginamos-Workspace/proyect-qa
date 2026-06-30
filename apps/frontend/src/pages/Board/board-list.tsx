@@ -20,6 +20,7 @@ function sortValue(c: ScrumCard, key: SortKey): string | number {
     case 'number': return c.number ?? Number.MAX_SAFE_INTEGER;
     case 'priority': return PRIORITY_RANK[c.priority ?? ''] ?? 0;
     case 'estimate': {
+      if (typeof c.points === 'number') return c.points; // story points
       const n = Number(c.estimate);
       return Number.isFinite(n) ? n : (c.estimate ?? '').toString().toLowerCase();
     }
@@ -36,7 +37,7 @@ const COLUMNS: { key: SortKey; label: string; className?: string }[] = [
   { key: 'sprint', label: 'Sprint', className: 'w-40' },
   { key: 'area', label: 'Área', className: 'w-28' },
   { key: 'priority', label: 'Prioridad', className: 'w-24' },
-  { key: 'estimate', label: 'Est.', className: 'w-16' },
+  { key: 'estimate', label: 'Pts', className: 'w-16' },
 ];
 
 /** Vista LISTA: datatable de los issues del tablero (ya filtrados por la barra),
@@ -111,7 +112,7 @@ export function BoardList({ cards }: { cards: ScrumCard[] }) {
               <td className="px-3 py-2 text-muted-foreground"><span className="line-clamp-1">{c.sprint ?? '—'}</span></td>
               <td className="px-3 py-2 text-muted-foreground">{c.area ?? '—'}</td>
               <td className="px-3 py-2"><PriorityFlag priority={c.priority} /></td>
-              <td className="px-3 py-2"><EstimateChip estimate={c.estimate} /></td>
+              <td className="px-3 py-2">{c.points != null ? <span className="font-medium text-foreground">{c.points}</span> : <EstimateChip estimate={c.estimate} />}</td>
               <td className="px-3 py-2">
                 <div className="flex -space-x-1.5">
                   {c.assignees.slice(0, 3).map((a) => <Avatar key={a.login} login={a.login} url={a.avatarUrl} size={22} />)}

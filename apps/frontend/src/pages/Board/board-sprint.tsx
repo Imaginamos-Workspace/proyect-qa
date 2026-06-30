@@ -9,13 +9,15 @@ import type { ScrumBoard, ScrumCard } from '@qa/shared-types';
 const isDone = (s: string | null) =>
   !!s && /\b(done|hecho|listo|complet|cerrad|finaliz|resuel|staging)/i.test(s);
 const COLORS = ['#6366f1', '#22c55e', '#f59e0b', '#ef4444', '#06b6d4', '#a855f7', '#ec4899', '#84cc16'];
-// Estimación S/M/L/XL → puntos aprox (o el número si ya es numérico).
-const points = (e: string | null): number => {
+// Story points de la tarjeta: el campo Puntos (number) si existe; si no, fallback
+// a la talla legacy S/M/L/XL → puntos aprox.
+const legacy = (e: string | null): number => {
   if (!e) return 0;
   const n = Number(e);
   if (Number.isFinite(n)) return n;
   return { S: 1, M: 2, L: 3, XL: 5 }[e.trim().toUpperCase()] ?? 0;
 };
+const points = (c: ScrumCard): number => (typeof c.points === 'number' ? c.points : legacy(c.estimate));
 
 /** Vista PROGRESO: gráficas del avance del sprint seleccionado, desde el estado del
  *  tablero (Status / Estimación / responsable). Sin datos de git: el aporte por
@@ -33,7 +35,7 @@ export function BoardSprint({ board, sprint }: { board: ScrumBoard; sprint: stri
     for (const c of cards) {
       const finished = isDone(c.status);
       if (finished) d += 1;
-      const p = points(c.estimate);
+      const p = points(c);
       pt += p;
       if (finished) pd += p;
       byStatusMap.set(c.status ?? 'Sin estado', (byStatusMap.get(c.status ?? 'Sin estado') ?? 0) + 1);

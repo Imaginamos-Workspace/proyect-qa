@@ -25,6 +25,7 @@ import { BoardList } from './board-list';
 import { BoardRoadmap } from './board-roadmap';
 import { BoardSprint } from './board-sprint';
 import { CreateIssueDialog } from './board-create';
+import { SprintControls } from './board-sprint-controls';
 import { useClient } from '@/hooks/use-dashboard';
 import { RegressionProgress } from '@/components/clients/regression-progress';
 
@@ -285,6 +286,7 @@ export function BoardPage() {
                   Ir al sprint activo
                 </button>
               )}
+              <SprintControls slug={slug} sprint={sprint} />
             </div>
           )}
 
@@ -438,7 +440,11 @@ function IssueCard({
           <TestsBadge entry={qaEntry} reportUrl={reportUrl} />
           <div className="ml-auto flex items-center gap-1.5">
             <PriorityFlag priority={card.priority} />
-            <EstimateChip estimate={card.estimate} />
+            {card.points != null ? (
+              <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-bold text-primary" title="story points">{card.points} pts</span>
+            ) : (
+              <EstimateChip estimate={card.estimate} />
+            )}
             <AssigneePicker slug={slug} issueNumber={card.number} assignees={card.assignees} members={members} />
           </div>
         </div>
