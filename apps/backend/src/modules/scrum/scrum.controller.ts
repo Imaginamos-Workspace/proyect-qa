@@ -11,7 +11,7 @@ import {
 import { ScrumService } from './scrum.service';
 import { RolesService } from './roles.service';
 import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard';
-import { CreateIssueDto, SetDatesDto } from './dto/create-issue.dto';
+import { CreateIssueDto, SetDatesDto, CarryOverDto } from './dto/create-issue.dto';
 
 // El guard pone el usuario de Supabase en request.user. De GitHub OAuth, el login
 // viene en user_metadata (user_name / preferred_username).
@@ -78,6 +78,37 @@ export class ScrumController {
   @Post('boards/:slug/issues/:number/dates')
   setDates(@Param('slug') slug: string, @Param('number') number: string, @Body() body: SetDatesDto) {
     return this.scrum.setIssueDates(slug, Number(number), body);
+  }
+
+  // ── Ciclo de vida de sprints (iniciar/cerrar + carry-over) ──────────────
+  /** Estados de los sprints del cliente (activo/cerrado + velocidad). */
+  @Get('boards/:slug/sprints')
+  sprintStates(@Param('slug') slug: string) {
+    return this.scrum.listSprintStates(slug);
+  }
+
+  /** Inicia (activa) un sprint. */
+  @Post('boards/:slug/sprints/:title/start')
+  startSprint(@Param('slug') slug: string, @Param('title') title: string) {
+    return this.scrum.startSprint(slug, title);
+  }
+
+  /** Estado de cierre: issues sin terminar + velocidad. El front lo usa para el guard. */
+  @Get('boards/:slug/sprints/:title/status')
+  sprintStatus(@Param('slug') slug: string, @Param('title') title: string) {
+    return this.scrum.getSprintStatus(slug, title);
+  }
+
+  /** Mueve issues al siguiente sprint (carry-over). */
+  @Post('boards/:slug/sprints/:title/carry-over')
+  carryOver(@Param('slug') slug: string, @Param('title') title: string, @Body() body: CarryOverDto) {
+    return this.scrum.carryOverIssues(slug, title, body.issues);
+  }
+
+  /** Cierra un sprint (bloquea si hay tareas sin finalizar). */
+  @Post('boards/:slug/sprints/:title/close')
+  closeSprint(@Param('slug') slug: string, @Param('title') title: string) {
+    return this.scrum.closeSprint(slug, title);
   }
 
   /** Asigna/desasigna un responsable a un issue (login null = quitar). */

@@ -21,6 +21,11 @@ export class CreateIssueDto {
   @IsOptional() @IsInt() @Min(1) parentNumber?: number; // # del issue padre → se enlaza como sub-issue
 }
 
+/** Carry-over: mover issues al siguiente sprint (al cerrar uno con pendientes). */
+export class CarryOverDto {
+  @IsArray() @ArrayMaxSize(500) @IsInt({ each: true }) @Min(1, { each: true }) issues: number[];
+}
+
 /** Cambiar las fechas Inicio/Fin de un issue del board (drag-resize del roadmap). */
 export class SetDatesDto {
   @IsOptional() @IsString() @Matches(YMD, { message: 'Inicio inválido (YYYY-MM-DD).' }) startDate?: string;

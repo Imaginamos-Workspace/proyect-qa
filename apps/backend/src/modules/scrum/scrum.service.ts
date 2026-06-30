@@ -37,6 +37,12 @@ const BOARD_CACHE_TABLE = 'scrum_board_cache';
 // proyectos de la org en cada carga en frío (resolveProject).
 const PROJECT_TTL_MS = 30 * 60_000;
 
+// Columna "terminada" detectada por nombre (dinámico, agnóstico al idioma del
+// workflow del cliente). Igual criterio que el frontend (roadmap/progreso).
+const DONE_RE = /\b(done|hecho|listo|complet|cerrad|finaliz|resuel|staging)/i;
+const isDoneStatus = (s: string | null) => !!s && DONE_RE.test(s);
+const SPRINTS_TABLE = 'scrum_sprints';
+
 const TYPE_MAP: Record<string, ScrumIssueType> = {
   Épica: 'epic', Epica: 'epic', Historia: 'story', Tarea: 'task',
   Bug: 'bug', Incidencia: 'incident', Spike: 'spike',
@@ -558,6 +564,105 @@ export class ScrumService {
     }
     await this.invalidate(slug);
     return { ok: true, issue: issueNumber, startDate: dates.startDate ?? null, dueDate: dates.dueDate ?? null };
+  }
+
+  // ─── Ciclo de vida de sprints ─────────────────────────────────────────────
+  // El estado (activo/cerrado + velocidad) vive en scrum_sprints (Supabase), no
+  // en GitHub. Por eso iniciar/cerrar NO necesitan el token de escritura; solo el
+  // carry-over (mover issues a otro sprint) escribe en el board de GitHub.
+
+  /** Estados de sprint del cliente (para que el frontend marque activo/cerrado). */
+  async listSprintStates(slug: string) {
+    const { data } = await this.supabase
+      .from(SPRINTS_TABLE)
+      .select('title, status, started_at, closed_at, completed_points, total_points, carried_over')
+      .eq('slug', slug);
+    return data ?? [];
+  }
+
+  /** Inicia (activa) un sprint. Solo Supabase — no toca GitHub. */
+  async startSprint(slug: string, title: string) {
+    await this.requireClient(slug);
+    const { error } = await this.supabase.from(SPRINTS_TABLE).upsert(
+      { slug, title, status: 'active', started_at: new Date().toISOString(), closed_at: null, updated_at: new Date().toISOString() },
+      { onConflict: 'slug,title' },
+    );
+    if (error) throw new Error(`No se pudo iniciar el sprint: ${error.message}`);
+    return { ok: true, title, status: 'active' };
+  }
+
+  /** Estado de cierre de un sprint: issues sin terminar + velocidad (puntos). */
+  async getSprintStatus(slug: string, title: string) {
+    const board = await this.getBoard(slug);
+    const cards = board.columns.flatMap((c) => c.cards).filter((c) => c.sprint === title);
+    const pts = (c: ScrumCard) => (typeof c.points === 'number' ? c.points : 0);
+    const unfinished = cards.filter((c) => !isDoneStatus(c.status));
+    const done = cards.filter((c) => isDoneStatus(c.status));
+    return {
+      title,
+      total: cards.length,
+      done: done.length,
+      unfinished: unfinished.map((c) => ({ number: c.number, title: c.title, status: c.status, url: c.url, points: c.points })),
+      total_points: cards.reduce((n, c) => n + pts(c), 0),
+      done_points: done.reduce((n, c) => n + pts(c), 0),
+    };
+  }
+
+  /** Mueve issues al SIGUIENTE sprint (carry-over). Escribe en GitHub (token). */
+  async carryOverIssues(slug: string, fromTitle: string, issues: number[]) {
+    const token = process.env.GITHUB_WRITE_TOKEN || this.token;
+    if (!token) throw new Error('GitHub token de escritura no configurado en el servidor.');
+    const client = await this.requireClient(slug);
+    const board = await this.getBoard(slug);
+    const order = (board.sprintsMeta ?? []).map((s) => s.title);
+    const idx = order.indexOf(fromTitle);
+    const nextTitle = idx >= 0 ? order[idx + 1] : undefined;
+    if (!nextTitle) throw new BadRequestException('No hay un sprint siguiente para el carry-over. Creá/definí el próximo sprint primero.');
+
+    const project = await this.resolveProject(client.display_name, slug);
+    if (!project) throw new Error('No se encontró el board del cliente.');
+    const meta = await this.fetchProjectMeta(project.number);
+    const sprintField = meta.fields.get('Sprint');
+    const nextIter = sprintField?.iterations?.find((i) => i.title === nextTitle);
+    if (!sprintField || !nextIter) throw new Error(`No se encontró la iteración "${nextTitle}" en el board.`);
+
+    let moved = 0;
+    for (const num of issues) {
+      const itemData = await this.gql<{
+        repository: { issue: { projectItems: { nodes: { id: string; project: { id: string; number: number } }[] } } | null } | null;
+      }>(ISSUE_ITEM_QUERY, { owner: this.owner, name: `qa-${slug}`, number: num }, token);
+      const item = (itemData.repository?.issue?.projectItems?.nodes ?? []).find((n) => n.project?.number === project.number);
+      if (!item) continue;
+      await this.gql(SET_FIELD_MUTATION, { projectId: item.project.id, itemId: item.id, fieldId: sprintField.id, value: { iterationId: nextIter.id } }, token);
+      moved++;
+    }
+    await this.invalidate(slug);
+    return { ok: true, moved, from: fromTitle, to: nextTitle };
+  }
+
+  /** Cierra un sprint: BLOQUEA si hay issues sin terminar (finalizar o carry-over).
+   *  Registra la velocidad (puntos completados). Solo Supabase. */
+  async closeSprint(slug: string, title: string) {
+    await this.requireClient(slug);
+    const st = await this.getSprintStatus(slug, title);
+    if (st.unfinished.length > 0) {
+      throw new BadRequestException(
+        `No podés cerrar "${title}": ${st.unfinished.length} tarea(s) sin finalizar. Finalizalas o hacé carry-over al siguiente sprint.`,
+      );
+    }
+    const { error } = await this.supabase.from(SPRINTS_TABLE).upsert(
+      { slug, title, status: 'closed', closed_at: new Date().toISOString(), completed_points: st.done_points, total_points: st.total_points, updated_at: new Date().toISOString() },
+      { onConflict: 'slug,title' },
+    );
+    if (error) throw new Error(`No se pudo cerrar el sprint: ${error.message}`);
+    return { ok: true, title, status: 'closed', completed_points: st.done_points, total_points: st.total_points };
+  }
+
+  /** Cliente válido (existe en qa_clients) o BadRequest — guard compartido. */
+  private async requireClient(slug: string) {
+    const { data: client } = await this.supabase.from('qa_clients').select('slug, display_name').eq('slug', slug).maybeSingle();
+    if (!client) throw new BadRequestException('Cliente no encontrado.');
+    return client;
   }
 
   /** Cuerpo del issue: descripción + criterios + adjuntos (URLs) + autoría. */
