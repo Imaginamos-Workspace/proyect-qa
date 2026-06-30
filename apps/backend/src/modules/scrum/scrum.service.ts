@@ -293,6 +293,7 @@ export class ScrumService {
           if (fv.name) fields[name] = fv.name; // single-select
           else if (fv.title) fields[name] = fv.title; // iteration (Sprint)
           else if (fv.date) fields[name] = fv.date; // date (Inicio/Fin)
+          else if (typeof fv.number === 'number') fields[name] = String(fv.number); // number (Puntos)
         }
         const content = item.content ?? {};
         const type = mapType(fields['Tipo'] ?? null);
@@ -310,6 +311,7 @@ export class ScrumService {
           area: fields['Área'] ?? fields['Area'] ?? null,
           priority: mapPriority(fields['Prioridad'] ?? null),
           estimate: fields['Estimación'] ?? fields['Estimacion'] ?? null,
+          points: fields['Puntos'] != null ? Number(fields['Puntos']) : null,
           sprint,
           startDate: fields['Inicio'] ?? null,
           dueDate: fields['Fin'] ?? null,
@@ -639,6 +641,10 @@ export class ScrumService {
       const f = meta.fields.get(fieldName);
       return f && val ? set(f.id, { date: val }) : null;
     };
+    const number = (fieldName: string, val?: number) => {
+      const f = meta.fields.get(fieldName);
+      return f && val != null ? set(f.id, { number: val }) : null;
+    };
     const iteration = (fieldName: string, title?: string) => {
       if (!title) return null;
       const f = meta.fields.get(fieldName);
@@ -650,6 +656,7 @@ export class ScrumService {
       single('Área', dto.area) ?? single('Area', dto.area),
       single('Prioridad', dto.priority),
       single('Estimación', dto.estimate) ?? single('Estimacion', dto.estimate),
+      number('Puntos', dto.points),
       date('Inicio', dto.startDate),
       date('Fin', dto.dueDate),
       iteration('Sprint', dto.sprint),
@@ -843,6 +850,7 @@ query($owner:String!, $number:Int!, $cursor:String) {
               ... on ProjectV2ItemFieldSingleSelectValue { name field { ... on ProjectV2FieldCommon { name } } }
               ... on ProjectV2ItemFieldIterationValue { title field { ... on ProjectV2FieldCommon { name } } }
               ... on ProjectV2ItemFieldDateValue { date field { ... on ProjectV2FieldCommon { name } } }
+              ... on ProjectV2ItemFieldNumberValue { number field { ... on ProjectV2FieldCommon { name } } }
             }
           }
           content {

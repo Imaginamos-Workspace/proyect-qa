@@ -11,7 +11,8 @@ export class CreateIssueDto {
   @IsOptional() @IsString() @MaxLength(10_000) acceptanceCriteria?: string; // Gherkin — obligatorio en Historia
   @IsOptional() @IsString() @MaxLength(80) area?: string;
   @IsOptional() @IsString() @MaxLength(80) priority?: string;
-  @IsOptional() @IsString() @MaxLength(40) estimate?: string; // S/M/L/XL
+  @IsOptional() @IsString() @MaxLength(40) estimate?: string; // S/M/L/XL (legacy)
+  @IsOptional() @IsInt() @Min(0) points?: number; // story points (campo NUMBER "Puntos")
   @IsOptional() @IsString() @MaxLength(120) sprint?: string; // título de la iteración
   @IsOptional() @IsString() @Matches(YMD, { message: 'Inicio inválido (use YYYY-MM-DD).' }) startDate?: string;
   @IsOptional() @IsString() @Matches(YMD, { message: 'Entrega inválida (use YYYY-MM-DD).' }) dueDate?: string;

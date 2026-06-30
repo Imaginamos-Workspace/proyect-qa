@@ -20,6 +20,7 @@ export interface ScrumCard {
   area: string | null;
   priority: ScrumPriority;
   estimate: string | null;
+  points: number | null; // story points (campo NUMBER "Puntos" del board)
   sprint: string | null;
   startDate: string | null; // campo "Inicio" del board (override manual del roadmap)
   dueDate: string | null; // campo "Fin" del board (override manual del roadmap)
