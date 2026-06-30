@@ -78,7 +78,7 @@ export class ScrumService {
     config: ConfigService,
   ) {
     this.token = config.get<string>('GITHUB_TOKEN');
-    this.owner = config.get<string>('GITHUB_PROJECT_OWNER') ?? 'Imaginamos-Workspace';
+    this.owner = config.get<string>('GITHUB_PROJECT_OWNER') ?? 'imaginamos';
   }
 
   /** Clientes disponibles (mismo origen que el dashboard). */
