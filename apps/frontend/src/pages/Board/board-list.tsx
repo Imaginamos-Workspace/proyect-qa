@@ -42,7 +42,7 @@ const COLUMNS: { key: SortKey; label: string; className?: string }[] = [
 
 /** Vista LISTA: datatable de los issues del tablero (ya filtrados por la barra),
  *  con orden por columna. Los filtros viven en la barra compartida del board. */
-export function BoardList({ cards }: { cards: ScrumCard[] }) {
+export function BoardList({ cards, onOpenDetail }: { cards: ScrumCard[]; onOpenDetail: (card: ScrumCard) => void }) {
   const [sort, setSort] = useState<{ key: SortKey; dir: Dir }>({ key: 'number', dir: 'asc' });
 
   const sorted = useMemo(() => {
@@ -91,17 +91,24 @@ export function BoardList({ cards }: { cards: ScrumCard[] }) {
         </thead>
         <tbody>
           {sorted.map((c) => (
-            <tr key={c.id} className="border-b border-border/60 last:border-0 hover:bg-muted/30">
+            <tr key={c.id} onClick={() => onOpenDetail(c)} className="cursor-pointer border-b border-border/60 last:border-0 hover:bg-muted/30">
               <td className="px-3 py-2"><IssueKey number={c.number} /></td>
               <td className="px-3 py-2">
-                {c.url ? (
-                  <a href={c.url} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-foreground hover:text-primary hover:underline">
-                    <span className="line-clamp-1">{c.title}</span>
-                    <ExternalLink className="h-3 w-3 shrink-0 opacity-50" />
-                  </a>
-                ) : (
-                  <span className="line-clamp-1 text-foreground">{c.title}</span>
-                )}
+                <span className="inline-flex items-center gap-1 text-foreground">
+                  <span className="line-clamp-1">{c.title}</span>
+                  {c.url && (
+                    <a
+                      href={c.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      className="shrink-0 text-muted-foreground hover:text-primary"
+                      title="Ver en GitHub Projects"
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  )}
+                </span>
               </td>
               <td className="px-3 py-2">
                 <span className="inline-flex items-center gap-1.5 text-muted-foreground">

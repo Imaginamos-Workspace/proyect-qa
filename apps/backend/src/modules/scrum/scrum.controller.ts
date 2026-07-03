@@ -67,6 +67,13 @@ export class ScrumController {
     return this.scrum.getCreateMeta(slug);
   }
 
+  /** Detalle completo de un issue (cuerpo + comentarios + jerarquía) — panel
+   *  lateral tipo Jira. Solo lectura, cualquier usuario logueado. */
+  @Get('boards/:slug/issues/:number/detail')
+  issueDetail(@Param('slug') slug: string, @Param('number') number: string) {
+    return this.scrum.getIssueDetail(slug, Number(number));
+  }
+
   /** Crea un issue (cualquier tipo) en GitHub + el board, con autor = creador.
    *  Cualquier usuario logueado puede crear; la metodología la valida el servicio. */
   @Post('boards/:slug/issues')

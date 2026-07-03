@@ -12,7 +12,11 @@ import { SprintPicker } from './board-sprint-picker';
  * (SprintPicker) o en lote (checkboxes + acción masiva), persistiendo en
  * GitHub con el mismo tope de 50 por acción que el carry-over.
  */
-export function BoardBacklog({ board, slug, canMove }: { board: ScrumBoard; slug: string; canMove: boolean }) {
+export function BoardBacklog({
+  board, slug, canMove, onOpenDetail,
+}: {
+  board: ScrumBoard; slug: string; canMove: boolean; onOpenDetail: (card: ScrumCard) => void;
+}) {
   const backlogCards = useMemo(
     () => board.columns.flatMap((c) => c.cards).filter((c) => !c.sprint),
     [board.columns],
@@ -103,26 +107,20 @@ export function BoardBacklog({ board, slug, canMove }: { board: ScrumBoard; slug
           </thead>
           <tbody>
             {backlogCards.map((c: ScrumCard) => (
-              <tr key={c.id} className="border-b border-border/60 last:border-0 hover:bg-muted/30">
+              <tr key={c.id} onClick={() => onOpenDetail(c)} className="cursor-pointer border-b border-border/60 last:border-0 hover:bg-muted/30">
                 {canMove && (
-                  <td className="px-3 py-2">
+                  <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
                     <input type="checkbox" checked={c.number != null && selected.has(c.number)} onChange={() => toggle(c.number)} />
                   </td>
                 )}
                 <td className="px-3 py-2"><IssueKey number={c.number} /></td>
-                <td className="px-3 py-2">
-                  {c.url ? (
-                    <a href={c.url} target="_blank" rel="noreferrer" className="line-clamp-1 text-foreground hover:text-primary hover:underline">{c.title}</a>
-                  ) : (
-                    <span className="line-clamp-1 text-foreground">{c.title}</span>
-                  )}
-                </td>
+                <td className="px-3 py-2"><span className="line-clamp-1 text-foreground">{c.title}</span></td>
                 <td className="px-3 py-2"><span className="inline-flex items-center gap-1.5 text-muted-foreground"><IssueTypeIcon type={c.type} /> {c.type}</span></td>
                 <td className="px-3 py-2 text-muted-foreground">{c.status ?? '—'}</td>
                 <td className="px-3 py-2 text-muted-foreground">{c.area ?? '—'}</td>
                 <td className="px-3 py-2"><PriorityFlag priority={c.priority} /></td>
                 <td className="px-3 py-2">{c.points != null ? <span className="font-medium text-foreground">{c.points}</span> : <EstimateChip estimate={c.estimate} />}</td>
-                <td className="px-3 py-2">
+                <td className="px-3 py-2" onClick={(e) => e.stopPropagation()}>
                   <SprintPicker slug={slug} issueNumber={c.number} currentSprint={c.sprint} allSprints={board.sprints} canMove={canMove} />
                 </td>
               </tr>

@@ -17,6 +17,7 @@ import type { ScrumCard, ScrumIssueType, ScrumStoryTests } from '@qa/shared-type
 import { TestsBadge, TraceabilityButton } from './board-traceability';
 import { AssigneePicker } from './board-assignee';
 import { SprintPicker } from './board-sprint-picker';
+import { IssueDetailPanel } from './issue-detail-panel';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
@@ -62,6 +63,7 @@ export function BoardPage() {
   const move = useMoveCard(slug);
   const [dragIssue, setDragIssue] = useState<number | null>(null);
   const [overCol, setOverCol] = useState<string | null>(null);
+  const [detailCard, setDetailCard] = useState<ScrumCard | null>(null);
 
   // ── Estado de filtros ──────────────────────────────────────────────────
   const [search, setSearch] = useState('');
@@ -307,10 +309,10 @@ export function BoardPage() {
           )}
 
           {/* ── Vista LISTA (datatable) ──────────────────────────────────── */}
-          {view === 'list' && <BoardList cards={visibleCards} />}
+          {view === 'list' && <BoardList cards={visibleCards} onOpenDetail={setDetailCard} />}
 
           {/* ── Vista BACKLOG (issues sin sprint, estilo Jira) ───────────── */}
-          {view === 'backlog' && <BoardBacklog board={board} slug={slug} canMove={canMove} />}
+          {view === 'backlog' && <BoardBacklog board={board} slug={slug} canMove={canMove} onOpenDetail={setDetailCard} />}
 
           {/* ── Vista ROADMAP (Gantt de épicas) ──────────────────────────── */}
           {view === 'roadmap' && <BoardRoadmap board={board} slug={slug} />}
@@ -394,6 +396,7 @@ export function BoardPage() {
                             members={board.members ?? []}
                             allSprints={sprints}
                             canMove={canMove}
+                            onOpenDetail={setDetailCard}
                           />
                         </div>
                       );
@@ -407,6 +410,13 @@ export function BoardPage() {
           )}
         </>
       )}
+
+      <IssueDetailPanel
+        slug={slug}
+        card={detailCard}
+        open={detailCard != null}
+        onOpenChange={(o) => { if (!o) setDetailCard(null); }}
+      />
     </div>
   );
 }
@@ -420,6 +430,7 @@ function IssueCard({
   members,
   allSprints,
   canMove,
+  onOpenDetail,
 }: {
   card: ScrumCard;
   qaEntry?: ScrumStoryTests;
@@ -428,9 +439,12 @@ function IssueCard({
   members: import('@qa/shared-types').ScrumAssignee[];
   allSprints: string[];
   canMove: boolean;
+  onOpenDetail: (card: ScrumCard) => void;
 }) {
-  const inner = (
-    <Card className="cursor-pointer border-border/70 transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md">
+  return (
+    <Card
+      onClick={() => onOpenDetail(card)}
+      className="cursor-pointer border-border/70 transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md">
       <CardContent className="space-y-2 p-3">
         <p className="line-clamp-3 text-sm text-foreground">{card.title}</p>
         {(card.area || card.labels.length > 0) && (
@@ -467,13 +481,6 @@ function IssueCard({
         <SprintPicker slug={slug} issueNumber={card.number} currentSprint={card.sprint} allSprints={allSprints} canMove={canMove} />
       </CardContent>
     </Card>
-  );
-  return card.url ? (
-    <a href={card.url} target="_blank" rel="noreferrer">
-      {inner}
-    </a>
-  ) : (
-    inner
   );
 }
 

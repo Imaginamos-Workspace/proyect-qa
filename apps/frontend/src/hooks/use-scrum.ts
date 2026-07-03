@@ -15,6 +15,27 @@ export function useScrumBoards() {
   });
 }
 
+export interface ScrumIssueDetail {
+  title: string;
+  body: string;
+  url: string;
+  state: string;
+  parent: { number: number; title: string } | null;
+  subIssues: { number: number; title: string; state: string }[];
+  comments: { author: string; body: string; createdAt: string }[];
+}
+
+/** Detalle completo del issue (cuerpo/comentarios/jerarquía) para el panel
+ *  lateral — el resto (status/sprint/área/etc.) ya está en el ScrumCard. */
+export function useIssueDetail(slug: string, issueNumber: number | null) {
+  return useQuery({
+    queryKey: ['scrum', 'boards', slug, 'issues', issueNumber, 'detail'],
+    queryFn: () => api.get<ScrumIssueDetail>(`/scrum/boards/${slug}/issues/${issueNumber}/detail`),
+    enabled: !!slug && issueNumber != null,
+    staleTime: 30_000,
+  });
+}
+
 export function useScrumBoard(slug: string) {
   return useQuery({
     queryKey: ['scrum', 'boards', slug],

@@ -424,6 +424,44 @@ export class ScrumService {
     return { ok: true, issue: issueNumber, login: target || null };
   }
 
+  /**
+   * Detalle completo de UN issue (cuerpo + comentarios) — para el panel
+   * lateral tipo Jira del portal. Los campos de board (Status/Área/Sprint/
+   * etc.) YA están en el ScrumCard que el frontend tiene cacheado; acá solo
+   * se trae lo que falta (no vale la pena cargarlo para los 600+ ítems del
+   * board entero). Solo lectura, sin token de escritura.
+   */
+  async getIssueDetail(slug: string, issueNumber: number) {
+    const data = await this.gql<{
+      repository: {
+        issue: {
+          title: string;
+          body: string | null;
+          url: string;
+          state: string;
+          comments: { nodes: { author: { login: string } | null; body: string; createdAt: string }[] };
+          parent: { number: number; title: string } | null;
+          subIssues: { nodes: { number: number; title: string; state: string }[] };
+        } | null;
+      } | null;
+    }>(ISSUE_DETAIL_QUERY, { owner: this.owner, name: `qa-${slug}`, number: issueNumber });
+    const issue = data.repository?.issue;
+    if (!issue) throw new Error(`No se encontró el issue #${issueNumber}.`);
+    return {
+      title: issue.title,
+      body: issue.body ?? '',
+      url: issue.url,
+      state: issue.state,
+      parent: issue.parent,
+      subIssues: issue.subIssues?.nodes ?? [],
+      comments: (issue.comments?.nodes ?? []).map((c) => ({
+        author: c.author?.login ?? 'desconocido',
+        body: c.body,
+        createdAt: c.createdAt,
+      })),
+    };
+  }
+
   /** Mueve una tarjeta a otra columna = setea su campo `Status` en el board (como
    *  arrastrar en Jira). Requiere un token con ESCRITURA de Projects
    *  (GITHUB_WRITE_TOKEN). La autorización por ROL la hace el controller
@@ -1163,6 +1201,27 @@ query($owner:String!, $number:Int!, $cursor:String) {
             ... on DraftIssue { title }
           }
         }
+      }
+    }
+  }
+}`;
+
+// Detalle completo de un issue (panel lateral tipo Jira del portal) — cuerpo,
+// comentarios, y jerarquía (padre/sub-issues nativos). Los campos de board
+// (Status/Sprint/Área/etc.) NO están acá: esos ya los tiene el frontend en el
+// ScrumCard cacheado, cargarlos de nuevo por issue sería redundante.
+const ISSUE_DETAIL_QUERY = `
+query($owner:String!, $name:String!, $number:Int!) {
+  repository(owner:$owner, name:$name) {
+    issue(number:$number) {
+      title
+      body
+      url
+      state
+      parent { number title }
+      subIssues(first:20) { nodes { number title state } }
+      comments(first:50) {
+        nodes { author { login } body createdAt }
       }
     }
   }
