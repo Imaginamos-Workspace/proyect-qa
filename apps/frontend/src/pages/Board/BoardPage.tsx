@@ -16,6 +16,7 @@ import { useScrumBoards, useScrumBoard, useScrumMe, useMoveCard } from '@/hooks/
 import type { ScrumCard, ScrumIssueType, ScrumStoryTests } from '@qa/shared-types';
 import { TestsBadge, TraceabilityButton } from './board-traceability';
 import { AssigneePicker } from './board-assignee';
+import { SprintPicker } from './board-sprint-picker';
 import { Card, CardContent } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
@@ -291,7 +292,7 @@ export function BoardPage() {
                   Ir al sprint activo
                 </button>
               )}
-              <SprintControls slug={slug} sprint={sprint} />
+              <SprintControls slug={slug} sprint={sprint} allSprints={sprints} />
             </div>
           )}
 
@@ -387,6 +388,8 @@ export function BoardPage() {
                             reportUrl={board.qa?.report_url}
                             slug={slug}
                             members={board.members ?? []}
+                            allSprints={sprints}
+                            canMove={canMove}
                           />
                         </div>
                       );
@@ -411,12 +414,16 @@ function IssueCard({
   reportUrl,
   slug,
   members,
+  allSprints,
+  canMove,
 }: {
   card: ScrumCard;
   qaEntry?: ScrumStoryTests;
   reportUrl?: string | null;
   slug: string;
   members: import('@qa/shared-types').ScrumAssignee[];
+  allSprints: string[];
+  canMove: boolean;
 }) {
   const inner = (
     <Card className="cursor-pointer border-border/70 transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:shadow-md">
@@ -453,6 +460,7 @@ function IssueCard({
             <AssigneePicker slug={slug} issueNumber={card.number} assignees={card.assignees} members={members} />
           </div>
         </div>
+        <SprintPicker slug={slug} issueNumber={card.number} currentSprint={card.sprint} allSprints={allSprints} canMove={canMove} />
       </CardContent>
     </Card>
   );

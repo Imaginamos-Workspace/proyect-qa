@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils';
 /** Controles de ciclo de vida del sprint seleccionado: iniciar / cerrar.
  *  Iniciar y cerrar viven en Supabase (no necesitan token); el carry-over mueve
  *  issues en GitHub (sí necesita token de escritura). */
-export function SprintControls({ slug, sprint }: { slug: string; sprint: string }) {
+export function SprintControls({ slug, sprint, allSprints }: { slug: string; sprint: string; allSprints: string[] }) {
   const { data: states } = useSprintStates(slug);
   const start = useStartSprint(slug);
   const [closing, setClosing] = useState(false);
@@ -48,15 +48,18 @@ export function SprintControls({ slug, sprint }: { slug: string; sprint: string 
       )}
       {start.isError && <span className="text-xs text-destructive">No se pudo iniciar.</span>}
 
-      <CloseSprintDialog slug={slug} sprint={sprint} open={closing} onOpenChange={setClosing} />
+      <CloseSprintDialog slug={slug} sprint={sprint} allSprints={allSprints} open={closing} onOpenChange={setClosing} />
     </div>
   );
 }
 
-function CloseSprintDialog({ slug, sprint, open, onOpenChange }: {
-  slug: string; sprint: string; open: boolean; onOpenChange: (o: boolean) => void;
+function CloseSprintDialog({ slug, sprint, allSprints, open, onOpenChange }: {
+  slug: string; sprint: string; allSprints: string[]; open: boolean; onOpenChange: (o: boolean) => void;
 }) {
   const { data: status, isLoading } = useSprintStatus(slug, sprint, open);
+  const otherSprints = allSprints.filter((s) => s !== sprint);
+  const defaultTarget = allSprints[allSprints.indexOf(sprint) + 1] ?? otherSprints[0] ?? '';
+  const [target, setTarget] = useState(defaultTarget);
   const carry = useCarryOver(slug);
   const close = useCloseSprint(slug);
   const unfinished = status?.unfinished ?? [];
@@ -103,14 +106,29 @@ function CloseSprintDialog({ slug, sprint, open, onOpenChange }: {
                       </li>
                     ))}
                   </ul>
+                  <div className="mt-2.5 flex items-center gap-2">
+                    <label className="text-xs text-muted-foreground">Mover a:</label>
+                    <select
+                      value={target}
+                      onChange={(e) => setTarget(e.target.value)}
+                      className="h-8 rounded-lg border border-border bg-card px-2 text-xs text-foreground"
+                    >
+                      {otherSprints.map((s) => <option key={s} value={s}>{s}</option>)}
+                    </select>
+                  </div>
                   <button
-                    onClick={() => carry.mutate({ title: sprint, issues: unfinished.map((u) => u.number).filter((n): n is number => n != null) })}
-                    disabled={carry.isPending}
-                    className="mt-2.5 inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
+                    onClick={() => carry.mutate({ title: sprint, issues: unfinished.map((u) => u.number).filter((n): n is number => n != null), to: target })}
+                    disabled={carry.isPending || !target}
+                    className="mt-2 inline-flex h-9 items-center gap-1.5 rounded-lg bg-primary px-3 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-60"
                   >
                     {carry.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-                    Carry-over de {unfinished.length} al siguiente sprint
+                    Carry-over de {unfinished.length} a {target || '(elegí destino)'}
                   </button>
+                  {carry.data && carry.data.remaining > 0 && (
+                    <p className="mt-1.5 text-xs text-amber-600">
+                      Se movieron {carry.data.moved} — quedan {carry.data.remaining} pendientes (tope de 50 por acción). Repetí la acción para continuar.
+                    </p>
+                  )}
                   {carry.isError && (
                     <p className="mt-1.5 text-xs text-destructive">{carry.error instanceof Error ? carry.error.message : 'No se pudo mover (¿token de escritura?).'}</p>
                   )}

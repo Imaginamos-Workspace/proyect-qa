@@ -164,12 +164,29 @@ export function useCloseSprint(slug: string) {
   });
 }
 
+/** Carry-over de varios issues. `to` opcional — si no se pasa, el backend usa
+ *  el siguiente sprint por orden cronológico. El backend procesa como máximo
+ *  50 por llamada; la respuesta trae `remaining` si hay que repetir la acción. */
 export function useCarryOver(slug: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ title, issues }: { title: string; issues: number[] }) =>
-      api.post(`/scrum/boards/${slug}/sprints/${encodeURIComponent(title)}/carry-over`, { issues }),
+    mutationFn: ({ title, issues, to }: { title: string; issues: number[]; to?: string }) =>
+      api.post<{ moved: number; remaining: number; failed: number[]; to: string }>(
+        `/scrum/boards/${slug}/sprints/${encodeURIComponent(title)}/carry-over`,
+        { issues, to },
+      ),
     onSuccess: () => invalidateSprints(qc, slug),
+  });
+}
+
+/** Asigna/cambia el sprint de UN issue puntual (dropdown por tarjeta). */
+export function useAssignSprint(slug: string) {
+  const qc = useQueryClient();
+  const key = ['scrum', 'boards', slug];
+  return useMutation({
+    mutationFn: ({ issue, title }: { issue: number; title: string }) =>
+      api.post(`/scrum/boards/${slug}/issues/${issue}/sprint`, { title }),
+    onSettled: () => qc.invalidateQueries({ queryKey: key }),
   });
 }
 

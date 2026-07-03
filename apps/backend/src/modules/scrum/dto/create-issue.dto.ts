@@ -21,9 +21,18 @@ export class CreateIssueDto {
   @IsOptional() @IsInt() @Min(1) parentNumber?: number; // # del issue padre → se enlaza como sub-issue
 }
 
-/** Carry-over: mover issues al siguiente sprint (al cerrar uno con pendientes). */
+/** Carry-over: mover issues a un sprint destino (al cerrar uno con pendientes).
+ *  Si no se manda `to`, el backend usa el SIGUIENTE sprint por orden cronológico.
+ *  El backend procesa como máximo 50 por llamada (MAX_SPRINT_MOVES_PER_CALL) —
+ *  mandar más de 500 en un solo request no tiene sentido, igual se haría en tandas. */
 export class CarryOverDto {
   @IsArray() @ArrayMaxSize(500) @IsInt({ each: true }) @Min(1, { each: true }) issues: number[];
+  @IsOptional() @IsString() @MaxLength(120) to?: string;
+}
+
+/** Asignar/cambiar el sprint de UN issue puntual (dropdown por tarjeta). */
+export class AssignSprintDto {
+  @IsString() @IsNotEmpty() @MaxLength(120) title: string;
 }
 
 /** Cambiar las fechas Inicio/Fin de un issue del board (drag-resize del roadmap). */

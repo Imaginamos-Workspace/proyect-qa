@@ -11,7 +11,7 @@ import {
 import { ScrumService } from './scrum.service';
 import { RolesService } from './roles.service';
 import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard';
-import { CreateIssueDto, SetDatesDto, CarryOverDto } from './dto/create-issue.dto';
+import { CreateIssueDto, SetDatesDto, CarryOverDto, AssignSprintDto } from './dto/create-issue.dto';
 
 // El guard pone el usuario de Supabase en request.user. De GitHub OAuth, el login
 // viene en user_metadata (user_name / preferred_username).
@@ -99,10 +99,34 @@ export class ScrumController {
     return this.scrum.getSprintStatus(slug, title);
   }
 
-  /** Mueve issues al siguiente sprint (carry-over). */
+  /** Mueve issues a un sprint destino (carry-over). `to` opcional = siguiente sprint.
+   *  Gateado por ROL, igual que `move` — también escribe en GitHub. */
   @Post('boards/:slug/sprints/:title/carry-over')
-  carryOver(@Param('slug') slug: string, @Param('title') title: string, @Body() body: CarryOverDto) {
-    return this.scrum.carryOverIssues(slug, title, body.issues);
+  async carryOver(
+    @Param('slug') slug: string,
+    @Param('title') title: string,
+    @Body() body: CarryOverDto,
+    @Req() req: RequestWithUser,
+  ) {
+    if (!(await this.roles.canMove(githubLogin(req)))) {
+      throw new ForbiddenException('Tu rol no tiene permiso para mover tarjetas de sprint.');
+    }
+    return this.scrum.carryOverIssues(slug, title, body.issues, body.to);
+  }
+
+  /** Asigna/cambia el sprint de UN issue puntual (dropdown por tarjeta).
+   *  Gateado por ROL, igual que `move`/`carryOver`. */
+  @Post('boards/:slug/issues/:number/sprint')
+  async assignSprint(
+    @Param('slug') slug: string,
+    @Param('number') number: string,
+    @Body() body: AssignSprintDto,
+    @Req() req: RequestWithUser,
+  ) {
+    if (!(await this.roles.canMove(githubLogin(req)))) {
+      throw new ForbiddenException('Tu rol no tiene permiso para cambiar el sprint de una tarjeta.');
+    }
+    return this.scrum.assignSprint(slug, Number(number), body.title);
   }
 
   /** Cierra un sprint (bloquea si hay tareas sin finalizar). */

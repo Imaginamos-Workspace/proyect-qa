@@ -37,6 +37,12 @@ const BOARD_CACHE_TABLE = 'scrum_board_cache';
 // El número de Project de un cliente es estable; cachearlo evita listar los ~80
 // proyectos de la org en cada carga en frío (resolveProject).
 const PROJECT_TTL_MS = 30 * 60_000;
+// Tope de movimientos de sprint (asignar/cambiar/carry-over) por llamada. Cada
+// ítem movido son 2 requests a GitHub (buscar el item + mutar el campo) → 100
+// requests máximo por acción, sobre un cupo compartido de 5000/hora (rules
+// propias del monorepo). Si hay más para mover, se hace en varias tandas — el
+// caller recibe cuántos quedaron pendientes, nunca se silencia el resto.
+const MAX_SPRINT_MOVES_PER_CALL = 50;
 
 // Columna "terminada" detectada por nombre (dinámico, agnóstico al idioma del
 // workflow del cliente). Igual criterio que el frontend (roadmap/progreso).
@@ -279,21 +285,24 @@ export class ScrumService {
   }
 
   private async buildBoard(base: ScrumBoard, number: number, url: string): Promise<ScrumBoard> {
-    // Estas 4 son independientes entre sí: en paralelo en vez de en serie (4
+    // Estas 5 son independientes entre sí: en paralelo en vez de en serie (5
     // round-trips a GitHub/Supabase → 1 ola). Es la mayor ganancia de latencia.
-    const [columnKeys, sprintsMetaFromGithub, members, qa] = await Promise.all([
+    //
+    // fetchMonorepoRoadmapFallback SIEMPRE se llama (2 lecturas baratas, sin
+    // mutación): hay 2 fallas DISTINTAS posibles y no se puede asumir que "si
+    // sprintsMeta de GitHub viene lleno, ya no hace falta" — caso real
+    // (equirent-fleet): las 14 iteraciones del campo Sprint SÍ existían bien
+    // en GitHub (sprintsMeta correcto), pero NINGÚN ítem individual estaba
+    // asignado a ninguna (bug de asignación por-ítem, no de configuración del
+    // campo). Si solo se llamaba al fallback cuando sprintsMeta venía vacío,
+    // este segundo caso quedaba sin cubrir.
+    const [columnKeys, sprintsMetaFromGithub, members, qa, fallback] = await Promise.all([
       this.fetchStatusColumns(number),
       this.fetchSprints(number),
       this.fetchMembers(base.client_slug),
       this.fetchQaInfo(base.client_slug),
+      this.fetchMonorepoRoadmapFallback(base.client_slug),
     ]);
-    // Fallback (rules propias, ver fetchMonorepoRoadmapFallback): si GitHub no
-    // tiene NINGUNA iteración configurada en el campo Sprint (bug de migración
-    // conocido, no se re-migra), reconstruimos desde roadmap.yml del monorepo.
-    // Si GitHub SÍ tiene iteraciones, no se toca nada — cero llamadas de más.
-    const fallback = sprintsMetaFromGithub.length === 0
-      ? await this.fetchMonorepoRoadmapFallback(base.client_slug)
-      : null;
     const sprintsMeta = sprintsMetaFromGithub.length ? sprintsMetaFromGithub : (fallback?.sprintsMeta ?? []);
     const issueToSprintTitle = fallback?.issueToSprintTitle ?? new Map<number, string>();
     const columns = new Map<string, ScrumColumn>(
@@ -625,36 +634,110 @@ export class ScrumService {
     };
   }
 
-  /** Mueve issues al SIGUIENTE sprint (carry-over). Escribe en GitHub (token). */
-  async carryOverIssues(slug: string, fromTitle: string, issues: number[]) {
+  /**
+   * Red de seguridad: si el campo Sprint tiene 0 iteraciones configuradas
+   * (bug de migración posible — ver fetchMonorepoRoadmapFallback), las
+   * siembra desde roadmap.yml del monorepo. NO toca los 640 ítems ya
+   * existentes — es una mutación ÚNICA y chica sobre la CONFIGURACIÓN del
+   * campo, no sobre cada ítem. Si el campo YA tiene iteraciones (caso normal,
+   * y también el caso real de equirent-fleet), no hace nada.
+   */
+  private async ensureIterationsSeeded(
+    slug: string,
+    projectNumber: number,
+    meta: { projectId: string; fields: Map<string, { id: string; options?: unknown; iterations?: { id: string; title: string }[] }> },
+    token: string,
+  ): Promise<{ id: string; title: string }[]> {
+    const field = meta.fields.get('Sprint');
+    if (!field) throw new Error('El board no tiene campo "Sprint" configurado.');
+    if (field.iterations && field.iterations.length > 0) return field.iterations;
+
+    const fallback = await this.fetchMonorepoRoadmapFallback(slug);
+    const raw = (fallback?.sprintsRaw ?? []).filter((s) => s.start && s.duration_days);
+    if (!raw.length) {
+      throw new Error('El campo Sprint no tiene iteraciones y no encontré roadmap.yml con sprints para sembrarlas.');
+    }
+    const titleFor = (n: number, goal?: string) => {
+      const g = String(goal ?? '').trim().replace(/^sprint\s+/i, '');
+      return g ? `Sprint ${n} · ${g}`.slice(0, 60) : `Sprint ${n}`;
+    };
+    const iterations = raw.map((s) => ({ startDate: s.start, duration: s.duration_days, title: titleFor(s.n, s.goal) }));
+    await this.gql(
+      SEED_ITERATIONS_MUTATION,
+      { fieldId: field.id, startDate: raw[0].start, duration: raw[0].duration_days, iterations },
+      token,
+    );
+    this.logger.log(`ensureIterationsSeeded(${slug}): sembradas ${iterations.length} iteraciones nuevas en el campo Sprint.`);
+    // Releer para obtener los IDs reales que GitHub asignó (no se pueden predecir).
+    const refreshed = await this.fetchProjectMeta(projectNumber);
+    return refreshed.fields.get('Sprint')?.iterations ?? [];
+  }
+
+  /**
+   * Asigna N issues a un sprint DESTINO puntual (no necesariamente "el
+   * siguiente") — primitiva que usan tanto `assignSprint` (1 issue) como
+   * `carryOverIssues` (varios, hacia el siguiente sprint). Tope duro de
+   * `MAX_SPRINT_MOVES_PER_CALL` por llamada — si sobran, se informan como
+   * `remaining` para otra tanda, nunca se silencian.
+   */
+  private async bulkAssignSprint(slug: string, targetTitle: string, issues: number[]) {
     const token = process.env.GITHUB_WRITE_TOKEN || this.token;
     if (!token) throw new Error('GitHub token de escritura no configurado en el servidor.');
     const client = await this.requireClient(slug);
-    const board = await this.getBoard(slug);
-    const order = (board.sprintsMeta ?? []).map((s) => s.title);
-    const idx = order.indexOf(fromTitle);
-    const nextTitle = idx >= 0 ? order[idx + 1] : undefined;
-    if (!nextTitle) throw new BadRequestException('No hay un sprint siguiente para el carry-over. Creá/definí el próximo sprint primero.');
-
     const project = await this.resolveProject(client.display_name, slug);
     if (!project) throw new Error('No se encontró el board del cliente.');
+
+    const batch = issues.slice(0, MAX_SPRINT_MOVES_PER_CALL);
+    const remaining = issues.length - batch.length;
+
     const meta = await this.fetchProjectMeta(project.number);
     const sprintField = meta.fields.get('Sprint');
-    const nextIter = sprintField?.iterations?.find((i) => i.title === nextTitle);
-    if (!sprintField || !nextIter) throw new Error(`No se encontró la iteración "${nextTitle}" en el board.`);
+    if (!sprintField) throw new Error('El board no tiene campo "Sprint" configurado.');
+    const iterations = await this.ensureIterationsSeeded(slug, project.number, meta, token);
+    const targetIter = iterations.find((i) => i.title === targetTitle);
+    if (!targetIter) throw new BadRequestException(`No se encontró la iteración "${targetTitle}" en el board.`);
 
     let moved = 0;
-    for (const num of issues) {
-      const itemData = await this.gql<{
-        repository: { issue: { projectItems: { nodes: { id: string; project: { id: string; number: number } }[] } } | null } | null;
-      }>(ISSUE_ITEM_QUERY, { owner: this.owner, name: `qa-${slug}`, number: num }, token);
-      const item = (itemData.repository?.issue?.projectItems?.nodes ?? []).find((n) => n.project?.number === project.number);
-      if (!item) continue;
-      await this.gql(SET_FIELD_MUTATION, { projectId: item.project.id, itemId: item.id, fieldId: sprintField.id, value: { iterationId: nextIter.id } }, token);
-      moved++;
+    const failed: number[] = [];
+    for (const num of batch) {
+      try {
+        const itemData = await this.gql<{
+          repository: { issue: { projectItems: { nodes: { id: string; project: { id: string; number: number } }[] } } | null } | null;
+        }>(ISSUE_ITEM_QUERY, { owner: this.owner, name: `qa-${slug}`, number: num }, token);
+        const item = (itemData.repository?.issue?.projectItems?.nodes ?? []).find((n) => n.project?.number === project.number);
+        if (!item) { failed.push(num); continue; }
+        await this.gql(SET_FIELD_MUTATION, { projectId: item.project.id, itemId: item.id, fieldId: sprintField.id, value: { iterationId: targetIter.id } }, token);
+        moved++;
+      } catch (err) {
+        this.logger.warn(`bulkAssignSprint(${slug}) #${num} falló: ${(err as Error).message}`);
+        failed.push(num);
+      }
     }
     await this.invalidate(slug);
-    return { ok: true, moved, from: fromTitle, to: nextTitle };
+    return { ok: true, moved, failed, remaining, to: targetTitle };
+  }
+
+  /** Asigna/cambia el sprint de UN SOLO issue. Escribe en GitHub (token). */
+  async assignSprint(slug: string, issueNumber: number, title: string) {
+    const result = await this.bulkAssignSprint(slug, title, [issueNumber]);
+    if (result.moved === 0) throw new Error(`No se pudo asignar el issue #${issueNumber} a "${title}".`);
+    return { ok: true, issue: issueNumber, sprint: title };
+  }
+
+  /** Mueve issues a un sprint destino (carry-over). Si no se pasa `toTitle`,
+   *  usa el SIGUIENTE sprint por orden cronológico. Escribe en GitHub (token),
+   *  con tope de `MAX_SPRINT_MOVES_PER_CALL` por llamada. */
+  async carryOverIssues(slug: string, fromTitle: string, issues: number[], toTitle?: string) {
+    let targetTitle = toTitle;
+    if (!targetTitle) {
+      const board = await this.getBoard(slug);
+      const order = (board.sprintsMeta ?? []).map((s) => s.title);
+      const idx = order.indexOf(fromTitle);
+      targetTitle = idx >= 0 ? order[idx + 1] : undefined;
+      if (!targetTitle) throw new BadRequestException('No hay un sprint siguiente para el carry-over. Elegí un sprint destino explícito.');
+    }
+    const result = await this.bulkAssignSprint(slug, targetTitle, issues);
+    return { ...result, from: fromTitle };
   }
 
   /** Cierra un sprint: BLOQUEA si hay issues sin terminar (finalizar o carry-over).
@@ -846,7 +929,11 @@ export class ScrumService {
    */
   private async fetchMonorepoRoadmapFallback(
     slug: string,
-  ): Promise<{ sprintsMeta: ScrumSprint[]; issueToSprintTitle: Map<number, string> } | null> {
+  ): Promise<{
+    sprintsMeta: ScrumSprint[];
+    issueToSprintTitle: Map<number, string>;
+    sprintsRaw: { n: number; goal?: string; start?: string; duration_days?: number }[];
+  } | null> {
     const owner = 'imaginamos';
     const repo = 'qa-automation-monorepo';
     const fetchRaw = async (path: string): Promise<string | null> => {
@@ -907,7 +994,7 @@ export class ScrumService {
           (story.tasks ?? []).forEach((task, i) => resolve(`task:${epic.key}/${story.key}/${i}`, task.sprint));
         }
       }
-      return { sprintsMeta, issueToSprintTitle };
+      return { sprintsMeta, issueToSprintTitle, sprintsRaw: roadmap.sprints ?? [] };
     } catch (err) {
       this.logger.warn(`fetchMonorepoRoadmapFallback(${slug}) falló: ${(err as Error).message}`);
       return null; // degradamos sin romper el board — el campo Sprint queda vacío como hoy
@@ -996,6 +1083,15 @@ const SET_FIELD_MUTATION = `
 mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $value:ProjectV2FieldValue!) {
   updateProjectV2ItemFieldValue(input:{ projectId:$projectId, itemId:$itemId, fieldId:$fieldId, value:$value }) {
     projectV2Item { id }
+  }
+}`;
+
+// Siembra las iteraciones del campo Sprint (red de seguridad — solo corre si
+// el campo tiene 0 iteraciones; NO toca los ítems existentes del board).
+const SEED_ITERATIONS_MUTATION = `
+mutation($fieldId:ID!, $startDate:Date!, $duration:Int!, $iterations:[IterationInput!]!) {
+  updateProjectV2Field(input:{ fieldId:$fieldId, iterationConfiguration:{ startDate:$startDate, duration:$duration, iterations:$iterations } }) {
+    projectV2Field { ... on ProjectV2IterationField { id } }
   }
 }`;
 
