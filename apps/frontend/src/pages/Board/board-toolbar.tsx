@@ -2,7 +2,7 @@ import { type ReactNode, useState } from 'react';
 import * as Popover from '@radix-ui/react-popover';
 import {
   Check, ChevronDown, Search, X, CalendarDays, CircleDot, CircleCheck, Rocket, Building2,
-  LayoutGrid, List as ListIcon, GanttChartSquare, BarChart3,
+  LayoutGrid, List as ListIcon, GanttChartSquare, BarChart3, Inbox,
 } from 'lucide-react';
 import type { ScrumAssignee, ScrumSprint } from '@qa/shared-types';
 import { cn } from '@/lib/utils';
@@ -33,11 +33,12 @@ export function Avatar({ login, url, size = 24 }: { login: string; url?: string 
 }
 
 /* ── Selector de VISTA (segmentado) ─────────────────────────────────────── */
-export type BoardView = 'board' | 'list' | 'roadmap' | 'sprint';
+export type BoardView = 'board' | 'list' | 'roadmap' | 'sprint' | 'backlog';
 
 const VIEWS: { key: BoardView; label: string; icon: typeof LayoutGrid; soon?: boolean }[] = [
   { key: 'board', label: 'Tablero', icon: LayoutGrid },
   { key: 'list', label: 'Lista', icon: ListIcon },
+  { key: 'backlog', label: 'Backlog', icon: Inbox },
   { key: 'roadmap', label: 'Roadmap', icon: GanttChartSquare },
   { key: 'sprint', label: 'Progreso', icon: BarChart3 },
 ];

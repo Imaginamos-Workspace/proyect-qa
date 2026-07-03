@@ -23,6 +23,7 @@ import { cn } from '@/lib/utils';
 import { IssueTypeIcon, PriorityFlag, IssueKey, EstimateChip } from '@/components/scrum/issue-bits';
 import { Avatar, SearchBox, FilterMenu, SprintSelect, ClientSelect, ViewSwitcher, NO_SPRINT, type FilterOption, type BoardView } from './board-toolbar';
 import { BoardList } from './board-list';
+import { BoardBacklog } from './board-backlog';
 import { BoardRoadmap } from './board-roadmap';
 import { BoardSprint } from './board-sprint';
 import { CreateIssueDialog } from './board-create';
@@ -307,6 +308,9 @@ export function BoardPage() {
 
           {/* ── Vista LISTA (datatable) ──────────────────────────────────── */}
           {view === 'list' && <BoardList cards={visibleCards} />}
+
+          {/* ── Vista BACKLOG (issues sin sprint, estilo Jira) ───────────── */}
+          {view === 'backlog' && <BoardBacklog board={board} slug={slug} canMove={canMove} />}
 
           {/* ── Vista ROADMAP (Gantt de épicas) ──────────────────────────── */}
           {view === 'roadmap' && <BoardRoadmap board={board} slug={slug} />}
