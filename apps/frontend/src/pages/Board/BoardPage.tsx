@@ -89,8 +89,13 @@ export function BoardPage() {
   const { activeSprint, openBySprint } = useMemo(() => {
     const openBy = new Map<string, number>();
     // Columnas "terminadas" detectadas por nombre (dinámico): el workflow es el del
-    // cliente (p. ej. "Listo en Staging", "Finalizada"), no una lista fija.
-    const isDone = (key: string) => /\b(done|hecho|listo|complet|cerrad|finaliz|resuel|staging)/i.test(key);
+    // cliente (p. ej. "Listo en Staging" matchea por "listo", "Finalizada"), no una
+    // lista fija. "staging" NO va solo en esta lista: es un ambiente de despliegue,
+    // no un estado de finalización — una columna llamada "En Staging" (validación
+    // pendiente) NO es lo mismo que "terminado" (bug real: hacía que equirent-fleet,
+    // con casi todo su trabajo real en "En Staging", pareciera no tener tareas
+    // abiertas en NINGÚN sprint, y el tablero caía a un sprint sin tarjetas).
+    const isDone = (key: string) => /\b(done|hecho|listo|complet|cerrad|finaliz|resuel)/i.test(key);
     for (const col of board?.columns ?? []) {
       if (isDone(col.key)) continue;
       for (const c of col.cards) if (c.sprint) openBy.set(c.sprint, (openBy.get(c.sprint) ?? 0) + 1);

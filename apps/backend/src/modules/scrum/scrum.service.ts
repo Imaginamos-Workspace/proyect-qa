@@ -39,7 +39,12 @@ const PROJECT_TTL_MS = 30 * 60_000;
 
 // Columna "terminada" detectada por nombre (dinámico, agnóstico al idioma del
 // workflow del cliente). Igual criterio que el frontend (roadmap/progreso).
-const DONE_RE = /\b(done|hecho|listo|complet|cerrad|finaliz|resuel|staging)/i;
+// "staging" NO cuenta como terminado: es un ambiente de despliegue (validación
+// pendiente), no un estado de finalización — ver BoardPage.tsx para el bug real
+// que causó esto (equirent-fleet con casi todo en "En Staging" parecía sin
+// tareas abiertas en ningún sprint, y closeSprint/getSprintStatus las hubiera
+// contado como "terminadas" sin estarlo).
+const DONE_RE = /\b(done|hecho|listo|complet|cerrad|finaliz|resuel)/i;
 const isDoneStatus = (s: string | null) => !!s && DONE_RE.test(s);
 const SPRINTS_TABLE = 'scrum_sprints';
 

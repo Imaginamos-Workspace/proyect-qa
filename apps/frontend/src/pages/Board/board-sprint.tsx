@@ -7,7 +7,7 @@ import { CheckCircle2, Circle, Layers, Gauge } from 'lucide-react';
 import type { ScrumBoard, ScrumCard } from '@qa/shared-types';
 
 const isDone = (s: string | null) =>
-  !!s && /\b(done|hecho|listo|complet|cerrad|finaliz|resuel|staging)/i.test(s);
+  !!s && /\b(done|hecho|listo|complet|cerrad|finaliz|resuel)/i.test(s);
 const COLORS = ['#6366f1', '#22c55e', '#f59e0b', '#ef4444', '#06b6d4', '#a855f7', '#ec4899', '#84cc16'];
 // Story points de la tarjeta: el campo Puntos (number) si existe; si no, fallback
 // a la talla legacy S/M/L/XL → puntos aprox.

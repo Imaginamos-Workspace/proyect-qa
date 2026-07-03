@@ -12,7 +12,7 @@ const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'o
 // Color por sprint (estilo Jira): franja superior + fondo teñido para ubicar a qué
 // sprint pertenece cada historia. Cada sprint conserva su color por su orden.
 const SPRINT_COLORS = ['#6366f1', '#22c55e', '#f59e0b', '#06b6d4', '#a855f7', '#ec4899', '#84cc16', '#ef4444', '#14b8a6', '#f97316'];
-const isDone = (s: string | null) => !!s && /\b(done|hecho|listo|complet|cerrad|finaliz|resuel|staging)/i.test(s);
+const isDone = (s: string | null) => !!s && /\b(done|hecho|listo|complet|cerrad|finaliz|resuel)/i.test(s);
 const parseDay = (d: string | null) => (d ? new Date(`${d}T00:00:00Z`).getTime() : null);
 const toYMD = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 // Tipo por defecto del hijo según el padre (épica → Historia; resto → Tarea).
