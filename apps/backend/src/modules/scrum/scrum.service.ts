@@ -2,6 +2,7 @@ import { BadRequestException, HttpException, Inject, Injectable, Logger, Unautho
 import type { CreateIssueDto, SetDatesDto } from './dto/create-issue.dto';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseClient } from '@supabase/supabase-js';
+import * as yaml from 'js-yaml';
 import { SUPABASE_CLIENT } from '../../config/supabase.module';
 import type {
   ScrumAssignee,
@@ -280,12 +281,21 @@ export class ScrumService {
   private async buildBoard(base: ScrumBoard, number: number, url: string): Promise<ScrumBoard> {
     // Estas 4 son independientes entre sí: en paralelo en vez de en serie (4
     // round-trips a GitHub/Supabase → 1 ola). Es la mayor ganancia de latencia.
-    const [columnKeys, sprintsMeta, members, qa] = await Promise.all([
+    const [columnKeys, sprintsMetaFromGithub, members, qa] = await Promise.all([
       this.fetchStatusColumns(number),
       this.fetchSprints(number),
       this.fetchMembers(base.client_slug),
       this.fetchQaInfo(base.client_slug),
     ]);
+    // Fallback (rules propias, ver fetchMonorepoRoadmapFallback): si GitHub no
+    // tiene NINGUNA iteración configurada en el campo Sprint (bug de migración
+    // conocido, no se re-migra), reconstruimos desde roadmap.yml del monorepo.
+    // Si GitHub SÍ tiene iteraciones, no se toca nada — cero llamadas de más.
+    const fallback = sprintsMetaFromGithub.length === 0
+      ? await this.fetchMonorepoRoadmapFallback(base.client_slug)
+      : null;
+    const sprintsMeta = sprintsMetaFromGithub.length ? sprintsMetaFromGithub : (fallback?.sprintsMeta ?? []);
+    const issueToSprintTitle = fallback?.issueToSprintTitle ?? new Map<number, string>();
     const columns = new Map<string, ScrumColumn>(
       columnKeys.map((k) => [k, { key: k, title: k, cards: [] as ScrumCard[] }]),
     );
@@ -309,7 +319,9 @@ export class ScrumService {
         const content = item.content ?? {};
         const type = mapType(fields['Tipo'] ?? null);
         const status = fields['Status'] ?? null;
-        const sprint = fields['Sprint'] ?? null;
+        // Si GitHub no tiene el campo Sprint seteado, usamos el fallback del
+        // roadmap.yml (issueToSprintTitle queda vacío para clientes sin el bug).
+        const sprint = fields['Sprint'] ?? (content.number ? issueToSprintTitle.get(content.number) ?? null : null);
         if (sprint) sprints.add(sprint);
 
         const card: ScrumCard = {
@@ -817,6 +829,88 @@ export class ScrumService {
       }));
     } catch {
       return []; // sin acceso al repo o repo inexistente → degradamos sin romper
+    }
+  }
+
+  /**
+   * Fallback de sprint — LECTURA de solo archivos (sin mutar nada), NUNCA
+   * escribe en GitHub. Caso real: equirent-fleet (640 ítems) migró con la
+   * cuenta en modo Member (no Owner) de la org — `updateProjectV2Field`
+   * (sembrar iteraciones del campo Sprint) requiere permisos de Owner y
+   * falló en silencio para TODOS los ítems, aunque título/estado/labels/
+   * puntos sí se guardaron bien. El campo "Sprint" existe en el board pero
+   * con 0 iteraciones — re-migrar es costoso (cuota de GitHub), así que en
+   * vez de tocar la migración, reconstruimos el sprint real leyendo
+   * `roadmap.yml` + `.roadmap-sync.json` del monorepo (2 lecturas baratas,
+   * NO mutaciones) que SIEMPRE tuvieron el dato correcto.
+   */
+  private async fetchMonorepoRoadmapFallback(
+    slug: string,
+  ): Promise<{ sprintsMeta: ScrumSprint[]; issueToSprintTitle: Map<number, string> } | null> {
+    const owner = 'imaginamos';
+    const repo = 'qa-automation-monorepo';
+    const fetchRaw = async (path: string): Promise<string | null> => {
+      const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, {
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+          Accept: 'application/vnd.github.raw',
+          'User-Agent': 'qa-portal-scrum',
+        },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) return null;
+      return res.text();
+    };
+
+    try {
+      const [roadmapRaw, syncMapRaw] = await Promise.all([
+        fetchRaw(`projects/${slug}/product/roadmap.yml`),
+        fetchRaw(`projects/${slug}/product/.roadmap-sync.json`),
+      ]);
+      if (!roadmapRaw || !syncMapRaw) return null;
+
+      const roadmap = yaml.load(roadmapRaw) as {
+        sprints?: { n: number; goal?: string; start?: string; duration_days?: number }[];
+        epics?: { key: string; stories?: { key: string; sprint?: number; tasks?: { sprint?: number }[] }[] }[];
+      };
+      const syncMap = JSON.parse(syncMapRaw) as Record<string, { number: number }>;
+
+      // Mismo formato de título que roadmap-sync.mjs (itTitle) — para que
+      // matchee con lo que el resto de la plataforma espera ver como "sprint".
+      const titleFor = (n: number, goal?: string) => {
+        const g = String(goal ?? '').trim().replace(/^sprint\s+/i, '');
+        return g ? `Sprint ${n} · ${g}`.slice(0, 60) : `Sprint ${n}`;
+      };
+      const titleByNum = new Map<number, string>();
+      const sprintsMeta: ScrumSprint[] = (roadmap.sprints ?? []).map((s) => {
+        const title = titleFor(s.n, s.goal);
+        titleByNum.set(s.n, title);
+        let endDate: string | null = null;
+        if (s.start && s.duration_days) {
+          const d = new Date(`${s.start}T00:00:00Z`);
+          d.setUTCDate(d.getUTCDate() + s.duration_days - 1);
+          endDate = d.toISOString().slice(0, 10);
+        }
+        return { title, startDate: s.start ?? null, endDate, completed: false };
+      });
+
+      const issueToSprintTitle = new Map<number, string>();
+      const resolve = (key: string, n: number | undefined) => {
+        if (!n) return;
+        const title = titleByNum.get(n);
+        const issue = syncMap[key]?.number;
+        if (title && issue) issueToSprintTitle.set(issue, title);
+      };
+      for (const epic of roadmap.epics ?? []) {
+        for (const story of epic.stories ?? []) {
+          resolve(`story:${epic.key}/${story.key}`, story.sprint);
+          (story.tasks ?? []).forEach((task, i) => resolve(`task:${epic.key}/${story.key}/${i}`, task.sprint));
+        }
+      }
+      return { sprintsMeta, issueToSprintTitle };
+    } catch (err) {
+      this.logger.warn(`fetchMonorepoRoadmapFallback(${slug}) falló: ${(err as Error).message}`);
+      return null; // degradamos sin romper el board — el campo Sprint queda vacío como hoy
     }
   }
 
