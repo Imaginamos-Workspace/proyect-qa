@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { Plus, Handshake, Sparkles, KanbanSquare, Briefcase, LayoutDashboard } from 'lucide-react';
-import { useCreateOpportunity, useSalesOpportunities } from '@/hooks/use-sales';
+import { Plus, Handshake, Sparkles, KanbanSquare, Briefcase, LayoutDashboard, Trash2 } from 'lucide-react';
+import { useCreateOpportunity, useSalesOpportunities, useDeleteOpportunity } from '@/hooks/use-sales';
 import { useScrumMe } from '@/hooks/use-scrum';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -18,10 +18,20 @@ function ManagedProjects() {
   const isVendedor = !!me?.roles.includes('vendedor');
   const { data: opportunities, isLoading } = useSalesOpportunities();
   const createOpportunity = useCreateOpportunity();
+  const deleteOpportunity = useDeleteOpportunity();
 
   const [showForm, setShowForm] = useState(false);
   const [cliente, setCliente] = useState('');
   const [oportunidad, setOportunidad] = useState('');
+
+  const quickDelete = (e: React.MouseEvent, id: string, cliente: string, oportunidad: string) => {
+    e.preventDefault(); // no navegar al detalle
+    e.stopPropagation();
+    const ok = window.confirm(
+      `¿Eliminar "${cliente}/${oportunidad}" del pipeline? Esto borra los archivos del monorepo y no se puede deshacer.`,
+    );
+    if (ok) deleteOpportunity.mutate(id);
+  };
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -82,12 +92,24 @@ function ManagedProjects() {
           {opportunities.map((o) => {
             const statusMeta = salesStatusMeta(o.status);
             return (
-              <Link key={o.id} to={`/ventas/${o.id}`}>
+              <Link key={o.id} to={`/ventas/${o.id}`} className="relative block">
                 <Card className="h-full transition-all hover:-translate-y-0.5 hover:shadow-md">
                   <CardContent className="p-5">
-                    <div className="mb-2 flex items-center gap-2 text-muted-foreground">
-                      <Handshake className="h-4 w-4" />
-                      <span className="text-xs">{o.cliente}</span>
+                    <div className="mb-2 flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 text-muted-foreground">
+                        <Handshake className="h-4 w-4" />
+                        <span className="text-xs">{o.cliente}</span>
+                      </div>
+                      {isVendedor && (
+                        <button
+                          type="button"
+                          title="Eliminar del pipeline"
+                          onClick={(e) => quickDelete(e, o.id, o.cliente, o.oportunidad)}
+                          className="rounded-md p-1 text-muted-foreground/60 transition-colors hover:bg-destructive/10 hover:text-destructive"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                     </div>
                     <p className="mb-3 font-medium text-foreground">{o.oportunidad}</p>
                     <Badge variant={statusMeta.variant}>{statusMeta.label}</Badge>
