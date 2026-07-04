@@ -117,12 +117,12 @@ export function SalesListPage() {
       </div>
 
       <Tabs defaultValue="proyectos">
-        <TabsList>
-          <TabsTrigger value="prospectos">
-            <KanbanSquare className="mr-2 h-4 w-4" /> Gestión de prospectos
+        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 py-1 sm:inline-grid sm:h-10 sm:w-auto sm:gap-0 sm:py-1">
+          <TabsTrigger value="prospectos" className="h-auto whitespace-normal py-2 text-center text-xs leading-tight sm:text-sm">
+            <KanbanSquare className="mr-1.5 h-4 w-4 shrink-0 sm:mr-2" /> Gestión de prospectos
           </TabsTrigger>
-          <TabsTrigger value="proyectos">
-            <Briefcase className="mr-2 h-4 w-4" /> Proyectos gestionados
+          <TabsTrigger value="proyectos" className="h-auto whitespace-normal py-2 text-center text-xs leading-tight sm:text-sm">
+            <Briefcase className="mr-1.5 h-4 w-4 shrink-0 sm:mr-2" /> Proyectos gestionados
           </TabsTrigger>
         </TabsList>
         <TabsContent value="prospectos">
