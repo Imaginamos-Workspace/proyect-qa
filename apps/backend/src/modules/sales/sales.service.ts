@@ -346,7 +346,7 @@ export class SalesService {
     // serverless (Vercel Hobby); en paralelo el wall-clock es el del archivo
     // más lento, no la suma de todos.
     await Promise.all(
-      templateFiles.map(async (file) => {
+      templateFiles.map(async ({ path: file }) => {
         const existing = await this.readFileFromRepoRaw(file);
         const destPath = file.replace(/^sales\/templates\//, `sales/${cliente}/${oportunidad}/`);
         const substituted = existing.isText
@@ -357,7 +357,28 @@ export class SalesService {
     );
   }
 
-  private async listRepoDir(path: string, recursive: boolean): Promise<string[]> {
+  /** Borra la oportunidad de forma completa: los archivos reales en el
+   *  monorepo (sales/<cliente>/<oportunidad>/**) Y la fila de Supabase (los
+   *  mensajes caen solos por ON DELETE CASCADE). No es "ocultar de la lista"
+   *  — es sacarla del pipeline de verdad, como pidió el vendedor. */
+  async deleteOpportunity(id: string): Promise<{ deleted: true; filesDeleted: number }> {
+    const opp = await this.getOpportunity(id);
+    const basePath = `sales/${opp.cliente}/${opp.oportunidad}`;
+
+    const files = await this.listRepoDir(basePath, true);
+    await Promise.all(
+      files.map(({ path, sha }) =>
+        this.deleteFileFromRepo(path, sha, `sales(${opp.cliente}): elimina ${opp.oportunidad} del pipeline`),
+      ),
+    );
+
+    const { error } = await this.supabase.from(OPPORTUNITIES_TABLE).delete().eq('id', id);
+    if (error) throw new Error(`Se borraron los archivos del monorepo pero no la fila de Supabase: ${error.message}`);
+
+    return { deleted: true, filesDeleted: files.length };
+  }
+
+  private async listRepoDir(path: string, recursive: boolean): Promise<{ path: string; sha: string }[]> {
     const res = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/contents/${path}`, {
       headers: {
         Authorization: `Bearer ${this.writeToken}`,
@@ -366,14 +387,35 @@ export class SalesService {
       },
       signal: AbortSignal.timeout(10_000),
     });
+    if (res.status === 404) return [];
     if (!res.ok) throw new Error(`GitHub contents GET (dir) ${path} → HTTP ${res.status}`);
-    const entries = (await res.json()) as Array<{ path: string; type: 'file' | 'dir' }>;
-    const files: string[] = [];
+    const entries = (await res.json()) as Array<{ path: string; sha: string; type: 'file' | 'dir' }>;
+    const files: { path: string; sha: string }[] = [];
     for (const e of entries) {
-      if (e.type === 'file') files.push(e.path);
+      if (e.type === 'file') files.push({ path: e.path, sha: e.sha });
       else if (e.type === 'dir' && recursive) files.push(...(await this.listRepoDir(e.path, true)));
     }
     return files;
+  }
+
+  /** Borra un archivo del monorepo vía Contents API (necesita su sha actual). */
+  private async deleteFileFromRepo(path: string, sha: string, message: string): Promise<void> {
+    if (!this.writeToken) throw new Error('GITHUB_WRITE_TOKEN no configurado en el servidor.');
+    const res = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/contents/${path}`, {
+      method: 'DELETE',
+      headers: {
+        Authorization: `Bearer ${this.writeToken}`,
+        Accept: 'application/vnd.github+json',
+        'Content-Type': 'application/json',
+        'User-Agent': 'qa-portal-sales',
+      },
+      body: JSON.stringify({ message, sha, branch: 'main' }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      throw new Error(`GitHub contents DELETE ${path} → HTTP ${res.status}: ${text.slice(0, 300)}`);
+    }
   }
 
   private async readFileFromRepoRaw(path: string): Promise<{ isText: boolean; text?: string; base64: string }> {

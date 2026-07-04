@@ -9,12 +9,14 @@ import {
   Paperclip,
   Sparkles,
   Handshake,
+  Trash2,
 } from 'lucide-react';
 import {
   useSalesOpportunity,
   useSendSalesMessage,
   useSyncBrief,
   useHandoffToTl,
+  useDeleteOpportunity,
 } from '@/hooks/use-sales';
 import { useScrumMe } from '@/hooks/use-scrum';
 import { Card, CardContent } from '@/components/ui/card';
@@ -45,9 +47,16 @@ export function SalesChatPage() {
   const sendMessage = useSendSalesMessage(id ?? '');
   const syncBrief = useSyncBrief(id ?? '');
   const handoff = useHandoffToTl(id ?? '');
+  const deleteOpportunity = useDeleteOpportunity();
 
   const [draftMessage, setDraftMessage] = useState('');
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const confirmDelete = () => {
+    if (!id) return;
+    deleteOpportunity.mutate(id, { onSuccess: () => navigate('/ventas') });
+  };
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -268,6 +277,49 @@ export function SalesChatPage() {
                   <p className="text-xs text-destructive">
                     {((syncBrief.error ?? handoff.error) as Error).message}
                   </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
+          {isVendedor && (
+            <Card className="border-destructive/30">
+              <CardContent className="space-y-2 p-4">
+                {confirmingDelete ? (
+                  <>
+                    <p className="text-xs text-destructive">
+                      Esto borra <span className="font-semibold">todo</span>: los archivos en{' '}
+                      <code className="rounded bg-destructive/10 px-1">sales/{opp.cliente}/{opp.oportunidad}/</code>{' '}
+                      del monorepo y el registro acá. No se puede deshacer desde la plataforma.
+                      {opp.status !== 'brief' && (
+                        <> Esta oportunidad ya está en etapa <strong>{salesStatusMeta(opp.status).label}</strong> — verificá que de verdad quiera borrarla y no solo archivarla.</>
+                      )}
+                    </p>
+                    <div className="flex gap-2">
+                      <Button variant="outline" className="flex-1" onClick={() => setConfirmingDelete(false)}>
+                        Cancelar
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        className="flex-1"
+                        onClick={confirmDelete}
+                        disabled={deleteOpportunity.isPending}
+                      >
+                        {deleteOpportunity.isPending ? 'Borrando…' : 'Sí, borrar todo'}
+                      </Button>
+                    </div>
+                  </>
+                ) : (
+                  <Button
+                    variant="ghost"
+                    className="w-full text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    onClick={() => setConfirmingDelete(true)}
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" /> Eliminar del pipeline
+                  </Button>
+                )}
+                {deleteOpportunity.isError && (
+                  <p className="text-xs text-destructive">{(deleteOpportunity.error as Error).message}</p>
                 )}
               </CardContent>
             </Card>

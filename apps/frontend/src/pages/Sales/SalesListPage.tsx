@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { Plus, Handshake, Sparkles, KanbanSquare, Briefcase } from 'lucide-react';
+import { Plus, Handshake, Sparkles, KanbanSquare, Briefcase, LayoutDashboard } from 'lucide-react';
 import { useCreateOpportunity, useSalesOpportunities } from '@/hooks/use-sales';
 import { useScrumMe } from '@/hooks/use-scrum';
 import { Card, CardContent } from '@/components/ui/card';
@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { salesStatusMeta } from '@/lib/sales-status';
 import { ProspectsKanban } from './ProspectsKanban';
+import { SalesDashboard } from './SalesDashboard';
 
 function ManagedProjects() {
   const { data: me } = useScrumMe();
@@ -116,8 +117,11 @@ export function SalesListPage() {
         </div>
       </div>
 
-      <Tabs defaultValue="proyectos">
-        <TabsList className="grid h-auto w-full grid-cols-2 gap-1 py-1 sm:inline-grid sm:h-10 sm:w-auto sm:gap-0 sm:py-1">
+      <Tabs defaultValue="dashboard">
+        <TabsList className="grid h-auto w-full grid-cols-3 gap-1 py-1 sm:inline-grid sm:h-10 sm:w-auto sm:gap-0 sm:py-1">
+          <TabsTrigger value="dashboard" className="h-auto whitespace-normal py-2 text-center text-xs leading-tight sm:text-sm">
+            <LayoutDashboard className="mr-1.5 h-4 w-4 shrink-0 sm:mr-2" /> Dashboard
+          </TabsTrigger>
           <TabsTrigger value="prospectos" className="h-auto whitespace-normal py-2 text-center text-xs leading-tight sm:text-sm">
             <KanbanSquare className="mr-1.5 h-4 w-4 shrink-0 sm:mr-2" /> Gestión de prospectos
           </TabsTrigger>
@@ -125,6 +129,9 @@ export function SalesListPage() {
             <Briefcase className="mr-1.5 h-4 w-4 shrink-0 sm:mr-2" /> Proyectos gestionados
           </TabsTrigger>
         </TabsList>
+        <TabsContent value="dashboard">
+          <SalesDashboard />
+        </TabsContent>
         <TabsContent value="prospectos">
           <ProspectsKanban />
         </TabsContent>

@@ -59,3 +59,13 @@ export function useHandoffToTl(id: string) {
     },
   });
 }
+
+/** Borra la oportunidad COMPLETA: archivos del monorepo (sales/<cliente>/
+ *  <oportunidad>/**) + fila de Supabase. No reversible desde la plataforma. */
+export function useDeleteOpportunity() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete<{ deleted: true; filesDeleted: number }>(`/sales/opportunities/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['sales', 'opportunities'] }),
+  });
+}

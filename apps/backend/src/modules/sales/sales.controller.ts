@@ -1,4 +1,4 @@
-import { Body, Controller, ForbiddenException, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, ForbiddenException, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { SalesService } from './sales.service';
 import { RolesService } from '../scrum/roles.service';
 import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard';
@@ -74,5 +74,15 @@ export class SalesController {
       throw new ForbiddenException('Tu rol no tiene permiso para pasar la oportunidad al TL.');
     }
     return this.sales.handoff(id);
+  }
+
+  /** Borra la oportunidad COMPLETA: archivos del monorepo + fila de Supabase.
+   *  No es reversible desde la plataforma. Solo vendedor. */
+  @Delete('opportunities/:id')
+  async remove(@Param('id') id: string, @Req() req: RequestWithUser) {
+    if (!(await this.roles.canSell(githubLogin(req)))) {
+      throw new ForbiddenException('Tu rol no tiene permiso para eliminar oportunidades.');
+    }
+    return this.sales.deleteOpportunity(id);
   }
 }
