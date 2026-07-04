@@ -244,6 +244,19 @@ export class SalesService {
 
   async syncBrief(id: string): Promise<SalesSyncResult> {
     const opp = await this.getOpportunity(id);
+
+    // Gate de seguridad — caso real que pasó: una oportunidad DESCUBIERTA del
+    // monorepo (nunca se chateó en la plataforma) tiene draft={} por defecto.
+    // Sincronizar eso pisó un brief.md real con contenido genuino del
+    // cliente (corona/pantalla-interactiva) con la plantilla vacía. Si el
+    // draft está completamente vacío, no hay nada nuevo que aportar — negarse
+    // en vez de arriesgar sobrescribir contenido real que ya existía.
+    if (isDraftEmpty(opp.draft)) {
+      throw new BadRequestException(
+        'El draft está vacío — no hay nada que sincronizar. Si el brief.md ya tiene contenido (de antes de usar la plataforma), completá el draft chateando acá antes de sincronizar, para no arriesgarte a perder lo que ya existe.',
+      );
+    }
+
     const briefMd = renderBriefMd(opp.draft);
     const path = `sales/${opp.cliente}/${opp.oportunidad}/brief.md`;
     await this.writeFileToRepo(path, briefMd, `sales(${opp.cliente}): actualiza brief de ${opp.oportunidad} desde la plataforma`);
@@ -621,6 +634,19 @@ function parseAssistantResponse(raw: string): SalesSendMessageResult {
     // cae al fallback de abajo
   }
   throw new Error(`Respuesta del LLM no tiene el shape esperado: ${raw.slice(0, 200)}`);
+}
+
+/** ¿El draft no tiene NADA cargado? (ninguna sección de texto, sin
+ *  asunciones). Ver el gate en syncBrief() — esto es lo que evita pisar un
+ *  brief.md real con la plantilla vacía. */
+function isDraftEmpty(draft: SalesBriefDraft): boolean {
+  const textFields: (string | undefined)[] = [
+    draft.cliente, draft.problema, draft.outcomes, draft.usuariosYFuncionalidades,
+    draft.limites, draft.integraciones, draft.riesgos, draft.sensacionVendedor,
+  ];
+  const hasText = textFields.some((v) => (v ?? '').trim().length > 0);
+  const hasAsunciones = (draft.asunciones ?? []).length > 0;
+  return !hasText && !hasAsunciones;
 }
 
 // ─── Render de brief.md desde el draft ─────────────────────────────────────
