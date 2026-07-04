@@ -21,6 +21,8 @@ import { ClientsPage } from '@/pages/Clients/ClientsPage';
 import { ClientDetailPage } from '@/pages/Clients/ClientDetailPage';
 import { ActivityPage } from '@/pages/Activity/ActivityPage';
 import { BoardPage } from '@/pages/Board/BoardPage';
+import { SalesListPage } from '@/pages/Sales/SalesListPage';
+import { SalesChatPage } from '@/pages/Sales/SalesChatPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const user = useAuthStore((s) => s.user);
@@ -63,6 +65,8 @@ export default function App() {
           <Route path="/dashboard" element={<DashboardPage />} />
           <Route path="/board" element={<BoardPage />} />
           <Route path="/board/:slug" element={<BoardPage />} />
+          <Route path="/ventas" element={<SalesListPage />} />
+          <Route path="/ventas/:id" element={<SalesChatPage />} />
           <Route path="/clients" element={<ClientsPage />} />
           <Route path="/clients/:slug" element={<ClientDetailPage />} />
           <Route path="/activity" element={<ActivityPage />} />

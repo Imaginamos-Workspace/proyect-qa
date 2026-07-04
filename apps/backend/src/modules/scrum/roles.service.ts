@@ -18,6 +18,10 @@ const CACHE_TTL_MS = 60_000;
 // vendedor / designer / stakeholder solo ven. Ajustable acá.
 const MOVE_ROLES = new Set(['tl', 'pm', 'qa', 'dev', 'devops']);
 
+// Rol que puede operar el módulo de Ventas (chatear el brief, sincronizar al
+// monorepo, hacer el handoff a TL). Espejo del mismo modelo de rules/01.
+const SELL_ROLES = new Set(['vendedor']);
+
 @Injectable()
 export class RolesService {
   private readonly logger = new Logger(RolesService.name);
@@ -41,6 +45,12 @@ export class RolesService {
   async canMove(login: string | null | undefined): Promise<boolean> {
     const roles = await this.rolesFor(login);
     return roles.some((r) => MOVE_ROLES.has(r));
+  }
+
+  /** ¿El usuario puede operar el módulo de Ventas? */
+  async canSell(login: string | null | undefined): Promise<boolean> {
+    const roles = await this.rolesFor(login);
+    return roles.some((r) => SELL_ROLES.has(r));
   }
 
   private async load(): Promise<Map<string, TeamMember>> {

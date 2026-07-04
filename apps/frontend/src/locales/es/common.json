@@ -5,6 +5,7 @@
     "groupTesting": "PRUEBAS",
     "groupIntegration": "INTEGRACION",
     "groupConfig": "CONFIGURACION",
+    "groupSales": "VENTAS",
     "dashboard": "Panel",
     "board": "Tablero",
     "projects": "Proyectos",
@@ -15,7 +16,8 @@
     "settings": "Configuracion",
     "signOut": "Cerrar Sesion",
     "clients": "Clientes",
-    "activity": "Actividad"
+    "activity": "Actividad",
+    "sales": "Ventas"
   },
   "header": {
     "home": "Inicio",

@@ -7,3 +7,4 @@ export * from './ai.types';
 export * from './module.types';
 export * from './qa-portal.types';
 export * from './scrum.types';
+export * from './sales.types';

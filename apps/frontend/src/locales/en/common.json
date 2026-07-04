@@ -5,6 +5,7 @@
     "groupTesting": "TESTING",
     "groupIntegration": "INTEGRATION",
     "groupConfig": "CONFIG",
+    "groupSales": "SALES",
     "dashboard": "Dashboard",
     "board": "Board",
     "projects": "Projects",
@@ -15,7 +16,8 @@
     "settings": "Settings",
     "signOut": "Sign Out",
     "clients": "Clients",
-    "activity": "Activity"
+    "activity": "Activity",
+    "sales": "Sales"
   },
   "header": {
     "home": "Home",

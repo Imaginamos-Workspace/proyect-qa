@@ -5,3 +5,4 @@ export * from './report.types';
 export * from './jira.types';
 export * from './ai.types';
 export * from './scrum.types';
+export * from './sales.types';

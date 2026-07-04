@@ -14,6 +14,7 @@ import { IngestModule } from './modules/ingest/ingest.module';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { ScrumModule } from './modules/scrum/scrum.module';
 import { RegressionModule } from './modules/regression/regression.module';
+import { SalesModule } from './modules/sales/sales.module';
 import { SupabaseModule } from './config/supabase.module';
 
 @Module({
@@ -34,6 +35,7 @@ import { SupabaseModule } from './config/supabase.module';
     DashboardModule,
     ScrumModule,
     RegressionModule,
+    SalesModule,
   ],
 })
 export class AppModule {}

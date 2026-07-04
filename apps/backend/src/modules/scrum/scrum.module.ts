@@ -8,5 +8,6 @@ import { AuthModule } from '../auth/auth.module';
   imports: [AuthModule],
   controllers: [ScrumController],
   providers: [ScrumService, RolesService],
+  exports: [RolesService],
 })
 export class ScrumModule {}

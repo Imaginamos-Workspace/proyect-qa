@@ -11,6 +11,7 @@ import {
   Users,
   Activity,
   KanbanSquare,
+  Handshake,
   X,
 } from 'lucide-react';
 import { useAuthStore } from '@/stores/auth.store';
@@ -58,6 +59,10 @@ const navGroups: NavGroup[] = [
   {
     labelKey: 'nav.groupIntegration',
     items: [{ nameKey: 'nav.jira', href: '/jira', icon: Bug }],
+  },
+  {
+    labelKey: 'nav.groupSales',
+    items: [{ nameKey: 'nav.sales', href: '/ventas', icon: Handshake }],
   },
   {
     labelKey: 'nav.groupConfig',

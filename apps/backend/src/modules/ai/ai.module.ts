@@ -13,6 +13,6 @@ import { TestCasesModule } from '../test-cases/test-cases.module';
   imports: [AuthModule, ProjectsModule, TestSuitesModule, TestCasesModule],
   controllers: [AIController, SuggestionsController],
   providers: [AIService, SuggestionsService, GeminiProvider],
-  exports: [AIService, SuggestionsService],
+  exports: [AIService, SuggestionsService, GeminiProvider],
 })
 export class AIModule {}
