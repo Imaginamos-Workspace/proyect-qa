@@ -49,6 +49,13 @@ export class SalesController {
     return this.sales.getOpportunity(id);
   }
 
+  /** Link + contraseña de la propuesta ya generada (si existe). Lectura
+   *  abierta, igual que el detalle. */
+  @Get('opportunities/:id/proposal')
+  getProposal(@Param('id') id: string) {
+    return this.sales.getProposalAccess(id);
+  }
+
   /** Envía un mensaje del vendedor; el LLM responde y actualiza el draft. Solo vendedor. */
   @Post('opportunities/:id/messages')
   async sendMessage(@Param('id') id: string, @Body() body: SendMessageDto, @Req() req: RequestWithUser) {

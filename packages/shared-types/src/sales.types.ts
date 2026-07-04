@@ -63,3 +63,10 @@ export interface SalesSyncResult {
   url: string;
   syncedAt: string;
 }
+
+// generated=false → todavía no se corrió proposal:password/proposal:deploy
+// para esta oportunidad (rules/13). No confirma que el deploy en Cloudflare
+// esté al día, solo que la contraseña existe (precondición dura del deploy).
+export type SalesProposalAccess =
+  | { generated: false }
+  | { generated: true; url: string; password: string };

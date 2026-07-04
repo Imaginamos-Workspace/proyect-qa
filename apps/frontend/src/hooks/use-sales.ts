@@ -3,6 +3,7 @@ import { api } from '@/lib/api';
 import type {
   SalesOpportunity,
   SalesOpportunityDetail,
+  SalesProposalAccess,
   SalesSendMessageResult,
   SalesSyncResult,
 } from '@qa/shared-types';
@@ -20,6 +21,16 @@ export function useSalesOpportunity(id: string | null) {
     queryFn: () => api.get<SalesOpportunityDetail>(`/sales/opportunities/${id}`),
     enabled: !!id,
     staleTime: 10_000,
+  });
+}
+
+/** Link + contraseña de la propuesta ya generada (si existe). */
+export function useProposalAccess(id: string | null) {
+  return useQuery({
+    queryKey: ['sales', 'opportunities', id, 'proposal'],
+    queryFn: () => api.get<SalesProposalAccess>(`/sales/opportunities/${id}/proposal`),
+    enabled: !!id,
+    staleTime: 30_000,
   });
 }
 

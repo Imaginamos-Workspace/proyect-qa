@@ -25,6 +25,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { salesStatusMeta } from '@/lib/sales-status';
+import { SalesPipelineStepper } from './SalesPipelineStepper';
+import { ProposalAccessCard } from './ProposalAccessCard';
 
 const SECTIONS: { key: string; label: string }[] = [
   { key: 'cliente', label: 'Cliente' },
@@ -116,6 +118,11 @@ export function SalesChatPage() {
         </div>
         <Badge variant={statusMeta.variant}>{statusMeta.label}</Badge>
       </div>
+
+      {/* Lo primero que se ve al entrar: en qué parte real del pipeline
+          está el negocio, y si ya hay una propuesta para compartir. */}
+      <SalesPipelineStepper cliente={opp.cliente} status={opp.status} />
+      <ProposalAccessCard id={opp.id} cliente={opp.cliente} oportunidad={opp.oportunidad} />
 
       <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
         {/* Chat — inspirado en la UI de Gemini: mensajes livianos sin bubble

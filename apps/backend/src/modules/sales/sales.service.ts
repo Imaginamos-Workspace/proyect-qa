@@ -8,6 +8,7 @@ import type {
   SalesMessage,
   SalesOpportunity,
   SalesOpportunityDetail,
+  SalesProposalAccess,
   SalesSendMessageResult,
   SalesSyncResult,
 } from '../../shared-types';
@@ -276,6 +277,32 @@ export class SalesService {
       .eq('id', id);
 
     return result;
+  }
+
+  /** Acceso a la propuesta ya generada (link + contraseña), si existe.
+   *  `access.json` lo crea `proposal:password`/`proposal:deploy` (rules/13)
+   *  — su presencia confirma que se generó una contraseña, no que el deploy
+   *  en Cloudflare esté al día (no hay CLOUDFLARE_API_TOKEN acá para
+   *  verificar eso). Es la señal más confiable disponible sin infra nueva. */
+  async getProposalAccess(id: string): Promise<SalesProposalAccess> {
+    const opp = await this.getOpportunity(id);
+    const accessPath = `sales/${opp.cliente}/${opp.oportunidad}/access.json`;
+    const file = await this.readFileFromRepo(accessPath);
+    if (!file) return { generated: false };
+
+    let password: string | undefined;
+    try {
+      password = (JSON.parse(file.content) as { password?: string }).password;
+    } catch {
+      return { generated: false };
+    }
+    if (!password) return { generated: false };
+
+    return {
+      generated: true,
+      url: `https://qa-proposals.pages.dev/${opp.cliente}/${opp.oportunidad}/`,
+      password,
+    };
   }
 
   // ─── GitHub Contents API — helpers de lectura/escritura ──────────────────
