@@ -1,25 +1,14 @@
-import { useState } from 'react';
-import { Copy, Check, ExternalLink, MessageCircle, Mail, FileText, Info, ShieldAlert } from 'lucide-react';
-import { useProposalAccess } from '@/hooks/use-sales';
+import { Link } from 'react-router';
+import { FileText, Info, ShieldAlert, Settings, Eye } from 'lucide-react';
+import { useProposalAccess, useProposalMetrics } from '@/hooks/use-sales';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 
-function CopyButton({ value, label }: { value: string; label: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    await navigator.clipboard.writeText(value);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1500);
-  };
-  return (
-    <Button variant="outline" size="sm" onClick={copy} title={`Copiar ${label}`}>
-      {copied ? <Check className="h-3.5 w-3.5 text-success" /> : <Copy className="h-3.5 w-3.5" />}
-    </Button>
-  );
-}
-
-export function ProposalAccessCard({ id, cliente, oportunidad }: { id: string; cliente: string; oportunidad: string }) {
+/** Resumen compacto en el chat — el detalle (link, contraseña, regenerar,
+ *  métricas, compartir) vive en /ventas/:id/propuesta (ProposalConfigPage). */
+export function ProposalAccessCard({ id }: { id: string; cliente: string; oportunidad: string }) {
   const { data, isLoading } = useProposalAccess(id);
+  const { data: metrics } = useProposalMetrics(data?.generated ? id : null);
 
   if (isLoading || !data) return null;
 
@@ -37,77 +26,33 @@ export function ProposalAccessCard({ id, cliente, oportunidad }: { id: string; c
     );
   }
 
-  if (data.password === null) {
-    return (
-      <Card className="border-destructive/40">
-        <CardContent className="space-y-2 p-4">
-          <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-destructive">
-            <ShieldAlert className="h-3.5 w-3.5" /> Publicada sin contraseña
-          </p>
-          <p className="text-sm text-muted-foreground">
-            La propuesta ya está en línea, pero no tiene contraseña registrada — esto no cumple la regla del
-            equipo de que ninguna propuesta se publica sin proteger (rules/13).
-          </p>
-          <a
-            href={data.url}
-            target="_blank"
-            rel="noreferrer"
-            className="flex items-center gap-1 text-sm text-primary hover:underline"
-          >
-            {data.url} <ExternalLink className="h-3 w-3" />
-          </a>
-          <p className="text-xs text-muted-foreground">
-            Pedile al TL que corra <code className="rounded bg-muted px-1">proposal:password --regenerate</code>{' '}
-            y vuelva a publicar con <code className="rounded bg-muted px-1">proposal:deploy</code> para activar la protección.
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
-
-  const shareText = `Propuesta de ${cliente} — ${oportunidad}\n${data.url}\nContraseña: ${data.password}`;
+  const ungated = data.password === null;
 
   return (
-    <Card>
-      <CardContent className="space-y-3 p-4">
-        <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          <FileText className="h-3.5 w-3.5" /> Propuesta generada
-        </p>
-
+    <Card className={ungated ? 'border-destructive/40' : undefined}>
+      <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
         <div className="flex items-center gap-2">
-          <a
-            href={data.url}
-            target="_blank"
-            rel="noreferrer"
-            className="flex-1 truncate rounded-md border border-input bg-background px-3 py-2 text-sm text-primary hover:underline"
-          >
-            {data.url}
-          </a>
-          <CopyButton value={data.url} label="link" />
-          <Button variant="outline" size="icon" asChild title="Abrir propuesta">
-            <a href={data.url} target="_blank" rel="noreferrer"><ExternalLink className="h-4 w-4" /></a>
-          </Button>
+          {ungated ? (
+            <ShieldAlert className="h-4 w-4 shrink-0 text-destructive" />
+          ) : (
+            <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+          )}
+          <div>
+            <p className={`text-sm font-medium ${ungated ? 'text-destructive' : 'text-foreground'}`}>
+              {ungated ? 'Propuesta publicada sin contraseña' : 'Propuesta generada'}
+            </p>
+            {!ungated && metrics && (
+              <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                <Eye className="h-3 w-3" /> {metrics.totalViews} apertura{metrics.totalViews === 1 ? '' : 's'}
+              </p>
+            )}
+          </div>
         </div>
-
-        <div className="flex items-center gap-2">
-          <span className="flex-1 rounded-md border border-input bg-background px-3 py-2 font-mono text-sm">
-            {data.password}
-          </span>
-          <CopyButton value={data.password} label="contraseña" />
-        </div>
-
-        <div className="flex gap-2 pt-1">
-          <Button variant="outline" size="sm" className="flex-1" asChild>
-            <a href={`https://wa.me/?text=${encodeURIComponent(shareText)}`} target="_blank" rel="noreferrer">
-              <MessageCircle className="mr-2 h-4 w-4" /> WhatsApp
-            </a>
-          </Button>
-          <Button variant="outline" size="sm" className="flex-1" asChild>
-            <a href={`mailto:?subject=${encodeURIComponent(`Propuesta — ${cliente}`)}&body=${encodeURIComponent(shareText)}`}>
-              <Mail className="mr-2 h-4 w-4" /> Correo
-            </a>
-          </Button>
-        </div>
+        <Button variant="outline" size="sm" asChild>
+          <Link to={`/ventas/${id}/propuesta`}>
+            <Settings className="mr-2 h-3.5 w-3.5" /> Configurar propuesta
+          </Link>
+        </Button>
       </CardContent>
     </Card>
   );

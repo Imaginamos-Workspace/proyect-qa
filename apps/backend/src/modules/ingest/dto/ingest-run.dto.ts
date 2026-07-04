@@ -181,3 +181,10 @@ export class IngestActivityDto {
   @IsOptional() @IsString() ts?: string;
   @IsOptional() @IsObject() meta?: Record<string, unknown>;
 }
+
+/** El worker de qa-proposals avisa acá cada vez que alguien pasa el gate
+ *  de contraseña de una propuesta (métricas de apertura, módulo Ventas). */
+export class IngestProposalViewDto {
+  @IsString() cliente: string;
+  @IsString() oportunidad: string;
+}

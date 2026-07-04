@@ -56,6 +56,21 @@ export class SalesController {
     return this.sales.getProposalAccess(id);
   }
 
+  /** Total de aperturas + última fecha. Lectura abierta. */
+  @Get('opportunities/:id/proposal/metrics')
+  getProposalMetrics(@Param('id') id: string) {
+    return this.sales.getProposalMetrics(id);
+  }
+
+  /** Regenera la contraseña y vuelve a publicar (dispara CI). Solo vendedor. */
+  @Post('opportunities/:id/proposal/regenerate')
+  async regenerateProposal(@Param('id') id: string, @Req() req: RequestWithUser) {
+    if (!(await this.roles.canSell(githubLogin(req)))) {
+      throw new ForbiddenException('Tu rol no tiene permiso para regenerar la contraseña de la propuesta.');
+    }
+    return this.sales.regenerateProposalPassword(id);
+  }
+
   /** Envía un mensaje del vendedor; el LLM responde y actualiza el draft. Solo vendedor. */
   @Post('opportunities/:id/messages')
   async sendMessage(@Param('id') id: string, @Body() body: SendMessageDto, @Req() req: RequestWithUser) {

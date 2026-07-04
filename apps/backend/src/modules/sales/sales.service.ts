@@ -9,6 +9,8 @@ import type {
   SalesOpportunity,
   SalesOpportunityDetail,
   SalesProposalAccess,
+  SalesProposalMetrics,
+  SalesRegenerateProposalResult,
   SalesSendMessageResult,
   SalesSyncResult,
 } from '../../shared-types';
@@ -298,8 +300,10 @@ export class SalesService {
 
     if (file) {
       try {
-        const password = (JSON.parse(file.content) as { password?: string }).password;
-        if (password) return { generated: true, url, password };
+        const parsed = JSON.parse(file.content) as { password?: string; createdAt?: string; createdBy?: string | null };
+        if (parsed.password) {
+          return { generated: true, url, password: parsed.password, createdAt: parsed.createdAt, createdBy: parsed.createdBy ?? null };
+        }
       } catch { /* JSON corrupto — cae al chequeo en vivo de abajo */ }
     }
 
@@ -318,6 +322,59 @@ export class SalesService {
     } catch {
       return false;
     }
+  }
+
+  /** Total de aperturas + última fecha (sales_proposal_views, alimentada
+   *  por el worker de qa-proposals vía POST /ingest/proposal-view). */
+  async getProposalMetrics(id: string): Promise<SalesProposalMetrics> {
+    const opp = await this.getOpportunity(id);
+    const { data, error } = await this.supabase
+      .from('sales_proposal_views')
+      .select('viewed_at')
+      .eq('cliente', opp.cliente)
+      .eq('oportunidad', opp.oportunidad)
+      .order('viewed_at', { ascending: false });
+    if (error) throw new Error(error.message);
+
+    return {
+      totalViews: data?.length ?? 0,
+      lastViewedAt: data?.[0]?.viewed_at ?? null,
+    };
+  }
+
+  /** Dispara `proposal-deploy.yml` en el monorepo — regenera la contraseña
+   *  (invalida la anterior) y vuelve a publicar en Cloudflare Pages. Es
+   *  ASÍNCRONO: no devuelve la contraseña nueva al toque, tarda ~1-2 min en
+   *  CI. El frontend re-consulta `getProposalAccess` hasta verla cambiar. */
+  async regenerateProposalPassword(id: string): Promise<SalesRegenerateProposalResult> {
+    const opp = await this.getOpportunity(id);
+    if (!this.writeToken) throw new Error('GITHUB_WRITE_TOKEN no configurado en el servidor.');
+
+    const res = await fetch(
+      `https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows/proposal-deploy.yml/dispatches`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.writeToken}`,
+          Accept: 'application/vnd.github+json',
+          'Content-Type': 'application/json',
+          'User-Agent': 'qa-portal-sales',
+        },
+        body: JSON.stringify({
+          ref: 'main',
+          inputs: { cliente: opp.cliente, oportunidad: opp.oportunidad, regenerate: 'true' },
+        }),
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+    if (res.status !== 204) {
+      const text = await res.text().catch(() => '');
+      throw new Error(
+        `GitHub Actions rechazó el dispatch (HTTP ${res.status}): ${text.slice(0, 300)}. ` +
+          'Verificá que existe .github/workflows/proposal-deploy.yml en main y que GITHUB_WRITE_TOKEN tiene scope Actions:write.',
+      );
+    }
+    return { dispatched: true };
   }
 
   // ─── GitHub Contents API — helpers de lectura/escritura ──────────────────

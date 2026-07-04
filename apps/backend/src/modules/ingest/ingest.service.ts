@@ -1,7 +1,7 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../../config/supabase.module';
-import { IngestRunDto, IngestActivityDto, IngestUniverseDto, IngestCredentialsDto, IngestUniverseMapDto, IngestExtractModulesDto } from './dto/ingest-run.dto';
+import { IngestRunDto, IngestActivityDto, IngestUniverseDto, IngestCredentialsDto, IngestUniverseMapDto, IngestExtractModulesDto, IngestProposalViewDto } from './dto/ingest-run.dto';
 import { AIService } from '../ai/ai.service';
 
 interface FailingTest {
@@ -380,5 +380,16 @@ export class IngestService {
     }
     this.logger.log(`Credentials ${dto.client_slug}: ${credentials.qa_users.length} usuarios, ${Object.keys(credentials.environments).length} entornos`);
     return { ok: true, qa_users: credentials.qa_users.length, environments: Object.keys(credentials.environments).length };
+  }
+
+  /** El worker de qa-proposals llama esto (fire-and-forget) cada vez que un
+   *  visitante pasa el gate de contraseña — métricas de apertura del módulo Ventas. */
+  async ingestProposalView(dto: IngestProposalViewDto) {
+    const { error } = await this.supabase.from('sales_proposal_views').insert({
+      cliente: dto.cliente,
+      oportunidad: dto.oportunidad,
+    });
+    if (error) throw error;
+    return { ok: true };
   }
 }

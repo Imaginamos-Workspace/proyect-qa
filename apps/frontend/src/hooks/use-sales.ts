@@ -4,6 +4,8 @@ import type {
   SalesOpportunity,
   SalesOpportunityDetail,
   SalesProposalAccess,
+  SalesProposalMetrics,
+  SalesRegenerateProposalResult,
   SalesSendMessageResult,
   SalesSyncResult,
 } from '@qa/shared-types';
@@ -24,13 +26,35 @@ export function useSalesOpportunity(id: string | null) {
   });
 }
 
-/** Link + contraseña de la propuesta ya generada (si existe). */
-export function useProposalAccess(id: string | null) {
+/** Link + contraseña de la propuesta ya generada (si existe). `refetchInterval`
+ *  se usa mientras se está regenerando, para detectar la contraseña nueva
+ *  apenas termine el workflow de CI (~1-2 min). */
+export function useProposalAccess(id: string | null, refetchInterval: number | false = false) {
   return useQuery({
     queryKey: ['sales', 'opportunities', id, 'proposal'],
     queryFn: () => api.get<SalesProposalAccess>(`/sales/opportunities/${id}/proposal`),
     enabled: !!id,
     staleTime: 30_000,
+    refetchInterval,
+  });
+}
+
+/** Total de aperturas + última fecha (métricas reales, worker de qa-proposals). */
+export function useProposalMetrics(id: string | null) {
+  return useQuery({
+    queryKey: ['sales', 'opportunities', id, 'proposal', 'metrics'],
+    queryFn: () => api.get<SalesProposalMetrics>(`/sales/opportunities/${id}/proposal/metrics`),
+    enabled: !!id,
+    staleTime: 30_000,
+  });
+}
+
+/** Regenera la contraseña y vuelve a publicar (dispara CI, ~1-2 min). */
+export function useRegenerateProposal(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<SalesRegenerateProposalResult>(`/sales/opportunities/${id}/proposal/regenerate`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['sales', 'opportunities', id, 'proposal'] }),
   });
 }
 

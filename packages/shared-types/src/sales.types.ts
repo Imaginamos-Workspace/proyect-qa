@@ -70,4 +70,19 @@ export interface SalesSyncResult {
 // exige contraseña siempre; ver rules/13 §Contraseña por propuesta).
 export type SalesProposalAccess =
   | { generated: false }
-  | { generated: true; url: string; password: string | null };
+  | {
+      generated: true;
+      url: string;
+      password: string | null;
+      createdAt?: string;
+      createdBy?: string | null;
+    };
+
+export interface SalesProposalMetrics {
+  totalViews: number;
+  lastViewedAt: string | null;
+}
+
+export interface SalesRegenerateProposalResult {
+  dispatched: true;
+}
