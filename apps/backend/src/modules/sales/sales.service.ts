@@ -19,6 +19,11 @@ const MESSAGES_TABLE = 'sales_messages';
 // Últimos N turnos que entran al prompt — suficiente contexto conversacional
 // sin inflar tokens en cada mensaje (una sesión de brief son ~10-20 turnos).
 const HISTORY_WINDOW = 12;
+// Directorios de sales/ que NO son oportunidades reales — se saltan al descubrir.
+const NON_OPPORTUNITY_DIRS = new Set(['templates', '_stock']);
+// Throttle del descubrimiento — evita listar todo `sales/` en cada carga de la
+// lista (mismo criterio que los TTL de caché de scrum.service.ts).
+const DISCOVERY_TTL_MS = 60_000;
 
 interface DbOpportunity {
   id: string;
@@ -50,6 +55,7 @@ function toOpportunity(row: DbOpportunity): SalesOpportunity {
 export class SalesService {
   private readonly logger = new Logger(SalesService.name);
   private readonly writeToken: string | undefined;
+  private lastDiscoveryAt = 0;
 
   constructor(
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
@@ -60,12 +66,77 @@ export class SalesService {
   }
 
   async listOpportunities(): Promise<SalesOpportunity[]> {
+    await this.discoverOpportunitiesFromMonorepo();
+
     const { data, error } = await this.supabase
       .from(OPPORTUNITIES_TABLE)
       .select('*')
       .order('updated_at', { ascending: false });
     if (error) throw new Error(`No se pudieron listar las oportunidades: ${error.message}`);
     return (data ?? []).map(toOpportunity);
+  }
+
+  /** Las oportunidades creadas ANTES de que existiera este módulo (con
+   *  `sales:new` local) no tienen fila en Supabase — sin esto, quedarían
+   *  invisibles en la plataforma aunque ya existan en el monorepo (ej.
+   *  corona/pantalla-interactiva). Escanea `sales/<cliente>/<oportunidad>/`
+   *  y crea la fila que falte, leyendo estado/vendedor de su `status.md`
+   *  real — NUNCA pisa una fila que ya existe (no queremos clobbear un
+   *  draft en progreso). */
+  private async discoverOpportunitiesFromMonorepo(): Promise<void> {
+    if (Date.now() - this.lastDiscoveryAt < DISCOVERY_TTL_MS) return;
+    this.lastDiscoveryAt = Date.now();
+
+    try {
+      const clientes = await this.listRepoSubdirs('sales');
+      const found: { cliente: string; oportunidad: string }[] = [];
+      for (const cliente of clientes) {
+        if (NON_OPPORTUNITY_DIRS.has(cliente) || cliente.startsWith('_')) continue;
+        const oportunidades = await this.listRepoSubdirs(`sales/${cliente}`);
+        for (const oportunidad of oportunidades) found.push({ cliente, oportunidad });
+      }
+      if (!found.length) return;
+
+      const { data: existing } = await this.supabase.from(OPPORTUNITIES_TABLE).select('cliente, oportunidad');
+      const existingSet = new Set((existing ?? []).map((r) => `${r.cliente}/${r.oportunidad}`));
+      const missing = found.filter((f) => !existingSet.has(`${f.cliente}/${f.oportunidad}`));
+
+      for (const m of missing) {
+        const statusFile = await this
+          .readFileFromRepo(`sales/${m.cliente}/${m.oportunidad}/status.md`)
+          .catch(() => null);
+        if (!statusFile) continue; // sin status.md → no es una oportunidad real generada por sales:new
+
+        const status = statusFile.content.match(/\*\*Etapa actual:\*\*\s*(\S+)/)?.[1] ?? 'brief';
+        const vendedorLogin = statusFile.content.match(/\*\*Owner vendedor:\*\*\s*@?([\w-]+)/)?.[1] ?? 'desconocido';
+        const now = new Date().toISOString();
+        await this.supabase.from(OPPORTUNITIES_TABLE).insert({
+          cliente: m.cliente,
+          oportunidad: m.oportunidad,
+          vendedor_login: vendedorLogin,
+          status,
+          draft: {},
+          created_at: now,
+          updated_at: now,
+        });
+      }
+    } catch (err) {
+      this.logger.error(`Descubrimiento de oportunidades del monorepo falló: ${(err as Error).message}`);
+    }
+  }
+
+  private async listRepoSubdirs(path: string): Promise<string[]> {
+    const res = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/contents/${path}`, {
+      headers: {
+        Authorization: `Bearer ${this.writeToken}`,
+        Accept: 'application/vnd.github+json',
+        'User-Agent': 'qa-portal-sales',
+      },
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!res.ok) return [];
+    const entries = (await res.json()) as Array<{ name: string; type: 'file' | 'dir' }>;
+    return entries.filter((e) => e.type === 'dir').map((e) => e.name);
   }
 
   async createOpportunity(cliente: string, oportunidad: string, vendedorLogin: string): Promise<SalesOpportunity> {

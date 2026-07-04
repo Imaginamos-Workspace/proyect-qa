@@ -1,6 +1,15 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router';
-import { ArrowLeft, Send, RefreshCw, CheckCircle2, ExternalLink } from 'lucide-react';
+import {
+  ArrowLeft,
+  Send,
+  RefreshCw,
+  CheckCircle2,
+  ExternalLink,
+  Paperclip,
+  Sparkles,
+  Handshake,
+} from 'lucide-react';
 import {
   useSalesOpportunity,
   useSendSalesMessage,
@@ -13,7 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import { cn } from '@/lib/utils';
+import { salesStatusMeta } from '@/lib/sales-status';
 
 const SECTIONS: { key: string; label: string }[] = [
   { key: 'cliente', label: 'Cliente' },
@@ -38,6 +47,7 @@ export function SalesChatPage() {
   const handoff = useHandoffToTl(id ?? '');
 
   const [draftMessage, setDraftMessage] = useState('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -45,9 +55,19 @@ export function SalesChatPage() {
     sendMessage.mutate(draftMessage, { onSuccess: () => setDraftMessage('') });
   };
 
+  const onPickTranscript = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // permite volver a elegir el mismo archivo después
+    if (!file) return;
+    const text = await file.text();
+    // Se precarga en el input para que el vendedor revise/edite antes de
+    // mandarlo — no se envía solo (rules/13 §Modo C, "confirmar antes de seguir").
+    setDraftMessage((prev) => (prev ? `${prev}\n\n${text}` : text));
+  };
+
   if (isLoading || !opp) {
     return (
-      <div className="space-y-4">
+      <div className="mx-auto max-w-4xl space-y-4">
         <Skeleton className="h-8 w-64" />
         <Skeleton className="h-96 w-full" />
       </div>
@@ -56,9 +76,10 @@ export function SalesChatPage() {
 
   const draft = opp.draft ?? {};
   const asunciones = draft.asunciones ?? [];
+  const statusMeta = salesStatusMeta(opp.status);
 
   return (
-    <div className="space-y-4">
+    <div className="mx-auto max-w-6xl space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <Button variant="ghost" size="icon" onClick={() => navigate('/ventas')}>
@@ -69,58 +90,99 @@ export function SalesChatPage() {
             <p className="text-sm text-muted-foreground">{opp.cliente}</p>
           </div>
         </div>
-        <Badge variant={opp.status === 'brief' ? 'secondary' : 'success'}>
-          {opp.status === 'brief' ? 'Brief en armado' : 'Con el TL'}
-        </Badge>
+        <Badge variant={statusMeta.variant}>{statusMeta.label}</Badge>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
-        {/* Chat */}
-        <Card className="flex h-[70vh] flex-col">
-          <CardContent className="flex flex-1 flex-col overflow-hidden p-4">
-            <div className="flex-1 space-y-3 overflow-y-auto pr-1">
+        {/* Chat — inspirado en la UI de Gemini: mensajes livianos sin bubble
+            pesado para el asistente, input tipo "pill" con acciones adentro. */}
+        <Card className="flex h-[75vh] flex-col overflow-hidden">
+          <CardContent className="flex flex-1 flex-col overflow-hidden p-0">
+            <div className="flex-1 space-y-5 overflow-y-auto px-6 py-6">
               {opp.messages.length === 0 && (
-                <p className="text-sm text-muted-foreground">
-                  Contame del cliente y del problema que quiere resolver — o pegá la transcripción
-                  de la reunión si ya la tenés, y extraigo lo que pueda de ahí.
-                </p>
-              )}
-              {opp.messages.map((m) => (
-                <div
-                  key={m.id}
-                  className={cn(
-                    'max-w-[85%] rounded-lg px-3 py-2 text-sm',
-                    m.role === 'vendor' ? 'ml-auto bg-primary text-primary-foreground' : 'bg-muted text-foreground',
-                  )}
-                >
-                  {m.content}
+                <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+                  <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
+                    <Sparkles className="h-6 w-6 text-primary" />
+                  </div>
+                  <p className="max-w-sm text-sm text-muted-foreground">
+                    Contame del cliente y del problema que quiere resolver — o adjuntá la
+                    transcripción de la reunión (📎) y extraigo lo que pueda de ahí.
+                  </p>
                 </div>
-              ))}
+              )}
+              {opp.messages.map((m) =>
+                m.role === 'vendor' ? (
+                  <div key={m.id} className="flex justify-end">
+                    <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-primary px-4 py-2.5 text-sm text-primary-foreground">
+                      {m.content}
+                    </div>
+                  </div>
+                ) : (
+                  <div key={m.id} className="flex gap-3">
+                    <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10">
+                      <Sparkles className="h-3.5 w-3.5 text-primary" />
+                    </div>
+                    <div className="max-w-[80%] whitespace-pre-wrap text-sm leading-relaxed text-foreground">
+                      {m.content}
+                    </div>
+                  </div>
+                ),
+              )}
               {sendMessage.isPending && (
-                <div className="max-w-[85%] rounded-lg bg-muted px-3 py-2 text-sm text-muted-foreground">
-                  Pensando…
+                <div className="flex gap-3">
+                  <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10">
+                    <Sparkles className="h-3.5 w-3.5 animate-pulse text-primary" />
+                  </div>
+                  <p className="text-sm text-muted-foreground">Pensando…</p>
                 </div>
               )}
             </div>
 
             {isVendedor && (
-              <form onSubmit={submit} className="mt-3 flex gap-2">
-                <Textarea
-                  value={draftMessage}
-                  onChange={(e) => setDraftMessage(e.target.value)}
-                  placeholder="Escribí acá, o pegá la transcripción de la reunión…"
-                  className="min-h-[60px]"
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(e); }
-                  }}
-                />
-                <Button type="submit" disabled={sendMessage.isPending || !draftMessage.trim()}>
-                  <Send className="h-4 w-4" />
-                </Button>
-              </form>
-            )}
-            {sendMessage.isError && (
-              <p className="mt-2 text-sm text-destructive">{(sendMessage.error as Error).message}</p>
+              <div className="border-t border-border p-4">
+                <form
+                  onSubmit={submit}
+                  className="flex items-end gap-2 rounded-3xl border border-input bg-background px-3 py-2 shadow-sm focus-within:ring-2 focus-within:ring-ring"
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".txt,.md,text/plain"
+                    className="hidden"
+                    onChange={onPickTranscript}
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="shrink-0 rounded-full"
+                    title="Adjuntar transcripción de la reunión (.txt)"
+                    onClick={() => fileInputRef.current?.click()}
+                  >
+                    <Paperclip className="h-4 w-4" />
+                  </Button>
+                  <Textarea
+                    value={draftMessage}
+                    onChange={(e) => setDraftMessage(e.target.value)}
+                    placeholder="Escribí acá, o adjuntá la transcripción de la reunión…"
+                    className="min-h-[40px] flex-1 resize-none border-0 bg-transparent px-1 py-1.5 shadow-none focus-visible:ring-0"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(e); }
+                    }}
+                  />
+                  <Button
+                    type="submit"
+                    size="icon"
+                    className="shrink-0 rounded-full"
+                    disabled={sendMessage.isPending || !draftMessage.trim()}
+                  >
+                    <Send className="h-4 w-4" />
+                  </Button>
+                </form>
+                {sendMessage.isError && (
+                  <p className="mt-2 px-2 text-sm text-destructive">{(sendMessage.error as Error).message}</p>
+                )}
+              </div>
             )}
           </CardContent>
         </Card>
@@ -195,6 +257,10 @@ export function SalesChatPage() {
               </CardContent>
             </Card>
           )}
+
+          <p className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
+            <Handshake className="h-3.5 w-3.5" /> Vendedor: {opp.vendedorLogin}
+          </p>
         </div>
       </div>
 

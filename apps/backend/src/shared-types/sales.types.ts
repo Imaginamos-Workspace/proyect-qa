@@ -23,7 +23,12 @@ export interface SalesBriefDraft {
   sensacionVendedor?: string;
 }
 
-export type SalesOpportunityStatus = 'brief' | 'propuesta-en-armado';
+// El estado real completo lo define la state machine de rules/13 (status.md):
+// brief → propuesta-en-armado → propuesta-enviada → negociacion → ganada/perdida/congelada.
+// Se deja como string (no un union estricto) porque el dueño de esos valores
+// es el monorepo, no esta plataforma — no queremos romper si el monorepo
+// agrega/renombra un estado.
+export type SalesOpportunityStatus = string;
 
 export interface SalesOpportunity {
   id: string;

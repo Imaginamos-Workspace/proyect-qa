@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { Plus, Handshake } from 'lucide-react';
+import { Plus, Handshake, Sparkles } from 'lucide-react';
 import { useCreateOpportunity, useSalesOpportunities } from '@/hooks/use-sales';
 import { useScrumMe } from '@/hooks/use-scrum';
 import { Card, CardContent } from '@/components/ui/card';
@@ -8,11 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-
-const STATUS_LABEL: Record<string, string> = {
-  brief: 'Brief en armado',
-  'propuesta-en-armado': 'Con el TL',
-};
+import { salesStatusMeta } from '@/lib/sales-status';
 
 export function SalesListPage() {
   const { data: me } = useScrumMe();
@@ -76,25 +72,33 @@ export function SalesListPage() {
           {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-28 w-full" />)}
         </div>
       ) : !opportunities?.length ? (
-        <Card><CardContent className="p-8 text-center text-muted-foreground">Sin oportunidades todavía.</CardContent></Card>
+        <Card>
+          <CardContent className="flex flex-col items-center gap-3 p-10 text-center">
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
+              <Sparkles className="h-6 w-6 text-primary" />
+            </div>
+            <p className="text-sm text-muted-foreground">Sin oportunidades todavía.</p>
+          </CardContent>
+        </Card>
       ) : (
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {opportunities.map((o) => (
-            <Link key={o.id} to={`/ventas/${o.id}`}>
-              <Card className="h-full transition-colors hover:bg-accent/50">
-                <CardContent className="p-5">
-                  <div className="mb-2 flex items-center gap-2 text-muted-foreground">
-                    <Handshake className="h-4 w-4" />
-                    <span className="text-xs">{o.cliente}</span>
-                  </div>
-                  <p className="mb-3 font-medium text-foreground">{o.oportunidad}</p>
-                  <Badge variant={o.status === 'brief' ? 'secondary' : 'success'}>
-                    {STATUS_LABEL[o.status] ?? o.status}
-                  </Badge>
-                </CardContent>
-              </Card>
-            </Link>
-          ))}
+          {opportunities.map((o) => {
+            const statusMeta = salesStatusMeta(o.status);
+            return (
+              <Link key={o.id} to={`/ventas/${o.id}`}>
+                <Card className="h-full transition-colors hover:bg-accent/50">
+                  <CardContent className="p-5">
+                    <div className="mb-2 flex items-center gap-2 text-muted-foreground">
+                      <Handshake className="h-4 w-4" />
+                      <span className="text-xs">{o.cliente}</span>
+                    </div>
+                    <p className="mb-3 font-medium text-foreground">{o.oportunidad}</p>
+                    <Badge variant={statusMeta.variant}>{statusMeta.label}</Badge>
+                  </CardContent>
+                </Card>
+              </Link>
+            );
+          })}
         </div>
       )}
     </div>
