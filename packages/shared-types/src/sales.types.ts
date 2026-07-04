@@ -64,9 +64,10 @@ export interface SalesSyncResult {
   syncedAt: string;
 }
 
-// generated=false → todavía no se corrió proposal:password/proposal:deploy
-// para esta oportunidad (rules/13). No confirma que el deploy en Cloudflare
-// esté al día, solo que la contraseña existe (precondición dura del deploy).
+// generated=false → no hay deploy real (ni access.json ni contenido en vivo).
+// password=null → la propuesta está publicada y en vivo, pero SIN
+// contraseña registrada en el repo (hueco de seguridad real — rules/13
+// exige contraseña siempre; ver rules/13 §Contraseña por propuesta).
 export type SalesProposalAccess =
   | { generated: false }
-  | { generated: true; url: string; password: string };
+  | { generated: true; url: string; password: string | null };

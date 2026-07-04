@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Copy, Check, ExternalLink, MessageCircle, Mail, FileText, Info } from 'lucide-react';
+import { Copy, Check, ExternalLink, MessageCircle, Mail, FileText, Info, ShieldAlert } from 'lucide-react';
 import { useProposalAccess } from '@/hooks/use-sales';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -31,6 +31,34 @@ export function ProposalAccessCard({ id, cliente, oportunidad }: { id: string; c
           <p className="text-sm text-muted-foreground">
             La propuesta todavía no fue generada. El TL la arma con <code className="rounded bg-muted px-1">proposals:build</code>{' '}
             y la publica con <code className="rounded bg-muted px-1">proposal:deploy</code> — mientras tanto podés seguir completando el brief más abajo.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (data.password === null) {
+    return (
+      <Card className="border-destructive/40">
+        <CardContent className="space-y-2 p-4">
+          <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-destructive">
+            <ShieldAlert className="h-3.5 w-3.5" /> Publicada sin contraseña
+          </p>
+          <p className="text-sm text-muted-foreground">
+            La propuesta ya está en línea, pero no tiene contraseña registrada — esto no cumple la regla del
+            equipo de que ninguna propuesta se publica sin proteger (rules/13).
+          </p>
+          <a
+            href={data.url}
+            target="_blank"
+            rel="noreferrer"
+            className="flex items-center gap-1 text-sm text-primary hover:underline"
+          >
+            {data.url} <ExternalLink className="h-3 w-3" />
+          </a>
+          <p className="text-xs text-muted-foreground">
+            Pedile al TL que corra <code className="rounded bg-muted px-1">proposal:password --regenerate</code>{' '}
+            y vuelva a publicar con <code className="rounded bg-muted px-1">proposal:deploy</code> para activar la protección.
           </p>
         </CardContent>
       </Card>

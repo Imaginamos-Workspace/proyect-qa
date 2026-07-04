@@ -280,29 +280,44 @@ export class SalesService {
   }
 
   /** Acceso a la propuesta ya generada (link + contraseña), si existe.
-   *  `access.json` lo crea `proposal:password`/`proposal:deploy` (rules/13)
-   *  — su presencia confirma que se generó una contraseña, no que el deploy
-   *  en Cloudflare esté al día (no hay CLOUDFLARE_API_TOKEN acá para
-   *  verificar eso). Es la señal más confiable disponible sin infra nueva. */
+   *  `access.json` lo crea `proposal:password`/`proposal:deploy` (rules/13).
+   *
+   *  Caso real encontrado (corona/pantalla-interactiva): el deploy existe y
+   *  está en vivo, pero `access.json` nunca se commiteó al monorepo — el
+   *  manifest de contraseñas de `proposal:deploy` quedó sin esa entrada, y
+   *  el worker cae a su fallback público (rules/13 exige contraseña
+   *  SIEMPRE — esto es un hueco real de seguridad, no solo cosmético). Por
+   *  eso, si no hay `access.json`, chequeamos en vivo si la URL sirve
+   *  contenido real (no el placeholder genérico de Cloudflare Pages) para
+   *  poder avisar del hueco en vez de decir "no generada" sin más. */
   async getProposalAccess(id: string): Promise<SalesProposalAccess> {
     const opp = await this.getOpportunity(id);
+    const url = `https://qa-proposals.pages.dev/${opp.cliente}/${opp.oportunidad}/`;
     const accessPath = `sales/${opp.cliente}/${opp.oportunidad}/access.json`;
     const file = await this.readFileFromRepo(accessPath);
-    if (!file) return { generated: false };
 
-    let password: string | undefined;
-    try {
-      password = (JSON.parse(file.content) as { password?: string }).password;
-    } catch {
-      return { generated: false };
+    if (file) {
+      try {
+        const password = (JSON.parse(file.content) as { password?: string }).password;
+        if (password) return { generated: true, url, password };
+      } catch { /* JSON corrupto — cae al chequeo en vivo de abajo */ }
     }
-    if (!password) return { generated: false };
 
-    return {
-      generated: true,
-      url: `https://qa-proposals.pages.dev/${opp.cliente}/${opp.oportunidad}/`,
-      password,
-    };
+    const isLive = await this.isProposalLive(url);
+    return isLive ? { generated: true, url, password: null } : { generated: false };
+  }
+
+  /** ¿La URL sirve contenido real de propuesta, o el fallback genérico de
+   *  Cloudflare Pages ("imaginamos.co" a secas) para una ruta sin build? */
+  private async isProposalLive(url: string): Promise<boolean> {
+    try {
+      const res = await fetch(url, { signal: AbortSignal.timeout(8_000) });
+      if (!res.ok) return false;
+      const text = await res.text();
+      return !text.includes('imaginamos.co</body>') && !text.includes('<title>Imaginamos</title>');
+    } catch {
+      return false;
+    }
   }
 
   // ─── GitHub Contents API — helpers de lectura/escritura ──────────────────
