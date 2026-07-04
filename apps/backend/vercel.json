@@ -5,7 +5,7 @@
   "ignoreCommand": "npx turbo-ignore backend",
   "outputDirectory": "dist",
   "functions": {
-    "api/index.js": { "includeFiles": "dist/**" },
+    "api/index.js": { "includeFiles": "dist/**", "maxDuration": 60 },
     "api/generate-stream.js": { "includeFiles": "dist/**" },
     "api/explore-stream.js": { "includeFiles": "dist/**" }
   },

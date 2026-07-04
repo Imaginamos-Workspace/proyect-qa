@@ -341,14 +341,20 @@ export class SalesService {
     today: string,
   ): Promise<void> {
     const templateFiles = await this.listRepoDir('sales/templates', true);
-    for (const file of templateFiles) {
-      const existing = await this.readFileFromRepoRaw(file);
-      const destPath = file.replace(/^sales\/templates\//, `sales/${cliente}/${oportunidad}/`);
-      const substituted = existing.isText
-        ? substitutePlaceholders(existing.text!, { cliente, oportunidad, vendedorLogin, today })
-        : null;
-      await this.writeBinaryOrTextToRepo(destPath, existing, substituted);
-    }
+    // En paralelo: son ~11 archivos independientes entre sí (2 llamadas a
+    // GitHub cada uno). Secuencial se acerca/supera el timeout de la función
+    // serverless (Vercel Hobby); en paralelo el wall-clock es el del archivo
+    // más lento, no la suma de todos.
+    await Promise.all(
+      templateFiles.map(async (file) => {
+        const existing = await this.readFileFromRepoRaw(file);
+        const destPath = file.replace(/^sales\/templates\//, `sales/${cliente}/${oportunidad}/`);
+        const substituted = existing.isText
+          ? substitutePlaceholders(existing.text!, { cliente, oportunidad, vendedorLogin, today })
+          : null;
+        await this.writeBinaryOrTextToRepo(destPath, existing, substituted);
+      }),
+    );
   }
 
   private async listRepoDir(path: string, recursive: boolean): Promise<string[]> {
