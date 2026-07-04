@@ -1,13 +1,142 @@
-import { Check, ExternalLink, X, Pause } from 'lucide-react';
+import { type ReactNode } from 'react';
+import { Check, ExternalLink, X, Pause, Circle } from 'lucide-react';
 import { useScrumBoard } from '@/hooks/use-scrum';
+import { useClient } from '@/hooks/use-dashboard';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
 
-// Pasos reales de la máquina de estados de ventas (rules/13 §status.md).
-// `perdida`/`congelada` son salidas alternativas, no siguen la línea feliz.
-const HAPPY_PATH = ['brief', 'propuesta-en-armado', 'propuesta-enviada', 'negociacion', 'ganada'] as const;
-const STEP_LABEL: Record<(typeof HAPPY_PATH)[number], string> = {
+// Máquina de estados real de ventas (rules/13 §status.md).
+const SALES_PATH = ['brief', 'propuesta-en-armado', 'propuesta-enviada', 'negociacion', 'ganada'] as const;
+const SALES_DESC: Record<(typeof SALES_PATH)[number], string> = {
+  brief: 'El vendedor arma el brief con el cliente.',
+  'propuesta-en-armado': 'El TL arma las 3 propuestas (media/sólida/económica).',
+  'propuesta-enviada': 'El cliente evalúa la propuesta enviada.',
+  negociacion: 'Ajustes de alcance, tiempos o precio antes de cerrar.',
+  ganada: 'Venta cerrada. Se dispara el traspaso a QA y Diseño (rules/13).',
+};
+
+// Mismo criterio "terminada" que usa el resto de la plataforma
+// (board-roadmap.tsx) — para calcular el % real de desarrollo.
+const isDone = (s: string | null) => !!s && /\b(done|hecho|listo|complet|cerrad|finaliz|resuel)/i.test(s);
+
+type StepStatus = 'done' | 'current' | 'pending';
+
+interface TimelineStep {
+  key: string;
+  title: string;
+  description: string;
+  status: StepStatus;
+  meta?: ReactNode;
+}
+
+export function SalesPipelineStepper({ cliente, status }: { cliente: string; status: string }) {
+  const ganada = status === 'ganada';
+  // Solo pedimos board/cliente si ya ganó — antes de eso no hay nada que traspasar.
+  const { data: board } = useScrumBoard(ganada ? cliente : '');
+  const { data: clientDetail } = useClient(ganada ? cliente : '');
+
+  const isTerminalAlt = status === 'perdida' || status === 'congelada';
+  const salesIdx = SALES_PATH.indexOf(status as (typeof SALES_PATH)[number]);
+  const effectiveSalesIdx = salesIdx >= 0 ? salesIdx : SALES_PATH.indexOf('negociacion');
+
+  const salesSteps: TimelineStep[] = SALES_PATH.map((step, i) => ({
+    key: step,
+    title: SALES_STEP_LABEL[step],
+    description: SALES_DESC[step],
+    status: i < effectiveSalesIdx || (i === effectiveSalesIdx && !isTerminalAlt) ? (i === effectiveSalesIdx ? 'current' : 'done') : 'pending',
+  }));
+
+  const postSaleSteps: TimelineStep[] = [];
+  if (ganada) {
+    const configured = !!board?.configured;
+    const designsUrl = clientDetail?.designs_url ?? null;
+
+    const allCards = board?.columns.flatMap((c) => c.cards) ?? [];
+    const relevant = allCards.filter((c) => c.type === 'story' || c.type === 'task' || c.type === 'bug');
+    const doneCount = relevant.filter((c) => isDone(c.status)).length;
+    const devPct = relevant.length ? Math.round((doneCount / relevant.length) * 100) : 0;
+
+    postSaleSteps.push(
+      {
+        key: 'traspaso',
+        title: 'Traspaso a QA y Diseño',
+        description: 'Se crean el repo, el board y los issues iniciales para QA y Diseño.',
+        status: configured ? 'done' : 'current',
+      },
+      {
+        key: 'diseno',
+        title: 'Diseño',
+        description: designsUrl ? 'Hay diseños publicados para este cliente.' : 'Todavía no hay diseños publicados.',
+        status: designsUrl ? 'done' : configured ? 'current' : 'pending',
+        meta: designsUrl && (
+          <a href={designsUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+            Ver diseños <ExternalLink className="h-3 w-3" />
+          </a>
+        ),
+      },
+      {
+        key: 'roadmap',
+        title: 'Roadmap y plan de sprints',
+        description: configured ? 'El PM armó épicas, historias y sprints en el board.' : 'Todavía no se armó el roadmap de este proyecto.',
+        status: configured ? 'done' : 'pending',
+        meta: configured && (
+          <a href={`/board/${cliente}?view=roadmap`} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+            Ver roadmap <ExternalLink className="h-3 w-3" />
+          </a>
+        ),
+      },
+      {
+        key: 'desarrollo',
+        title: 'Desarrollo',
+        description: configured ? `${devPct}% de las historias/tareas están Done (${doneCount}/${relevant.length}).` : 'Arranca cuando el roadmap esté armado.',
+        status: !configured ? 'pending' : devPct >= 100 ? 'done' : 'current',
+        meta: configured && (
+          <a href={`/board/${cliente}?view=sprint`} target="_blank" rel="noreferrer" className="flex items-center gap-1 text-xs font-medium text-primary hover:underline">
+            Ver sprints <ExternalLink className="h-3 w-3" />
+          </a>
+        ),
+      },
+      {
+        key: 'entrega',
+        title: 'Entrega',
+        description: configured && devPct >= 100 ? 'Todo lo del roadmap está Done.' : 'Se marca sola cuando el desarrollo llega al 100%.',
+        status: configured && devPct >= 100 ? 'done' : 'pending',
+      },
+    );
+  }
+
+  return (
+    <Card>
+      <CardContent className="p-4 sm:p-5">
+        <ol className="space-y-0">
+          {salesSteps.map((step, i) => (
+            <TimelineItem key={step.key} step={step} isLast={i === salesSteps.length - 1 && postSaleSteps.length === 0 && !isTerminalAlt} />
+          ))}
+          {isTerminalAlt && (
+            <li className="flex items-start gap-3 pb-1">
+              <div className="flex flex-col items-center">
+                <div className={cn('flex h-6 w-6 items-center justify-center rounded-full', status === 'perdida' ? 'bg-destructive text-destructive-foreground' : 'bg-muted text-muted-foreground')}>
+                  {status === 'perdida' ? <X className="h-3.5 w-3.5" /> : <Pause className="h-3.5 w-3.5" />}
+                </div>
+              </div>
+              <div className="pt-0.5">
+                <Badge variant={status === 'perdida' ? 'destructive' : 'secondary'}>
+                  {status === 'perdida' ? 'Perdida' : 'Congelada'}
+                </Badge>
+              </div>
+            </li>
+          )}
+          {postSaleSteps.map((step, i) => (
+            <TimelineItem key={step.key} step={step} isLast={i === postSaleSteps.length - 1} />
+          ))}
+        </ol>
+      </CardContent>
+    </Card>
+  );
+}
+
+const SALES_STEP_LABEL: Record<(typeof SALES_PATH)[number], string> = {
   brief: 'Brief',
   'propuesta-en-armado': 'Propuesta en armado',
   'propuesta-enviada': 'Propuesta enviada',
@@ -15,87 +144,33 @@ const STEP_LABEL: Record<(typeof HAPPY_PATH)[number], string> = {
   ganada: 'Ganada',
 };
 
-export function SalesPipelineStepper({ cliente, status }: { cliente: string; status: string }) {
-  const isTerminalAlt = status === 'perdida' || status === 'congelada';
-  const currentIdx = HAPPY_PATH.indexOf(status as (typeof HAPPY_PATH)[number]);
-  // Si el estado no está en la línea feliz (perdida/congelada), marcamos
-  // todo hasta "negociación" como completado — es lo último real que pasó.
-  const effectiveIdx = currentIdx >= 0 ? currentIdx : HAPPY_PATH.indexOf('negociacion');
-
+function TimelineItem({ step, isLast }: { step: TimelineStep; isLast: boolean }) {
   return (
-    <Card>
-      <CardContent className="p-4 sm:p-5">
-        <div className="flex flex-wrap items-center gap-x-1 gap-y-3">
-          {HAPPY_PATH.map((step, i) => {
-            const done = i < effectiveIdx || (i === effectiveIdx && !isTerminalAlt && status === step);
-            const isCurrent = !isTerminalAlt && step === status;
-            return (
-              <div key={step} className="flex items-center">
-                <div className="flex flex-col items-center gap-1.5">
-                  <div
-                    className={cn(
-                      'flex h-8 w-8 items-center justify-center rounded-full border-2 text-xs font-semibold transition-colors',
-                      done
-                        ? 'border-primary bg-primary text-primary-foreground'
-                        : isCurrent
-                          ? 'border-primary bg-primary/10 text-primary'
-                          : 'border-border bg-background text-muted-foreground',
-                    )}
-                  >
-                    {done ? <Check className="h-4 w-4" /> : i + 1}
-                  </div>
-                  <span className={cn('max-w-[90px] text-center text-[11px] leading-tight', done || isCurrent ? 'font-medium text-foreground' : 'text-muted-foreground')}>
-                    {STEP_LABEL[step]}
-                  </span>
-                </div>
-                {i < HAPPY_PATH.length - 1 && (
-                  <div className={cn('mx-1.5 h-0.5 w-6 sm:w-10', i < effectiveIdx ? 'bg-primary' : 'bg-border')} />
-                )}
-              </div>
-            );
-          })}
-
-          {isTerminalAlt && (
-            <Badge variant={status === 'perdida' ? 'destructive' : 'secondary'} className="ml-2">
-              {status === 'perdida' ? <X className="mr-1 h-3 w-3" /> : <Pause className="mr-1 h-3 w-3" />}
-              {status === 'perdida' ? 'Perdida' : 'Congelada'}
-            </Badge>
+    <li className="flex gap-3">
+      <div className="flex flex-col items-center">
+        <div
+          className={cn(
+            'flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-[11px] font-semibold',
+            step.status === 'done'
+              ? 'bg-primary text-primary-foreground'
+              : step.status === 'current'
+                ? 'bg-primary/15 text-primary ring-2 ring-primary'
+                : 'bg-muted text-muted-foreground/60',
           )}
-        </div>
-
-        {status === 'ganada' && <PostSaleProgress cliente={cliente} />}
-      </CardContent>
-    </Card>
-  );
-}
-
-/** Diseño/desarrollo/entrega no tienen un % único calculado en ningún
- *  lado de la plataforma (solo progreso por sprint o por épica, en el
- *  Board) — en vez de inventar un número, enlazamos a la vista real. */
-function PostSaleProgress({ cliente }: { cliente: string }) {
-  const { data: board } = useScrumBoard(cliente);
-  const configured = !!board?.configured;
-
-  return (
-    <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-border bg-muted/30 px-3 py-2.5">
-      <div className="flex items-center gap-2">
-        <Badge variant={configured ? 'info' : 'secondary'}>
-          {configured ? 'Diseño y desarrollo — en curso' : 'Diseño y desarrollo'}
-        </Badge>
-        {!configured && (
-          <span className="text-xs text-muted-foreground">Todavía no se armó el roadmap de este proyecto en la plataforma.</span>
-        )}
-      </div>
-      {configured && (
-        <a
-          href={`/board/${cliente}?view=roadmap`}
-          target="_blank"
-          rel="noreferrer"
-          className="flex items-center gap-1 text-xs font-medium text-primary hover:underline"
         >
-          Ver progreso real <ExternalLink className="h-3 w-3" />
-        </a>
-      )}
-    </div>
+          {step.status === 'done' ? <Check className="h-3.5 w-3.5" /> : step.status === 'current' ? <Circle className="h-2 w-2 fill-current" /> : null}
+        </div>
+        {!isLast && <div className={cn('w-0.5 flex-1 my-0.5', step.status === 'done' ? 'bg-primary' : 'bg-border')} style={{ minHeight: 24 }} />}
+      </div>
+      <div className={cn('flex-1 pb-4', isLast && 'pb-0.5')}>
+        <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+          <p className={cn('text-sm font-medium', step.status === 'pending' ? 'text-muted-foreground' : 'text-foreground')}>
+            {step.title}
+          </p>
+          {step.meta}
+        </div>
+        <p className="text-xs text-muted-foreground">{step.description}</p>
+      </div>
+    </li>
   );
 }
