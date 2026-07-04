@@ -41,7 +41,7 @@ export function SalesChatPage() {
   const { data: me } = useScrumMe();
   const isVendedor = !!me?.roles.includes('vendedor');
 
-  const { data: opp, isLoading } = useSalesOpportunity(id ?? null);
+  const { data: opp, isLoading, isError, error } = useSalesOpportunity(id ?? null);
   const sendMessage = useSendSalesMessage(id ?? '');
   const syncBrief = useSyncBrief(id ?? '');
   const handoff = useHandoffToTl(id ?? '');
@@ -64,6 +64,21 @@ export function SalesChatPage() {
     // mandarlo — no se envía solo (rules/13 §Modo C, "confirmar antes de seguir").
     setDraftMessage((prev) => (prev ? `${prev}\n\n${text}` : text));
   };
+
+  if (isError) {
+    return (
+      <div className="mx-auto max-w-4xl space-y-4">
+        <Card>
+          <CardContent className="p-6 text-sm text-destructive">
+            No se pudo cargar la oportunidad: {(error as Error).message}
+          </CardContent>
+        </Card>
+        <Link to="/ventas" className="text-sm text-muted-foreground hover:underline">
+          ← Volver a oportunidades
+        </Link>
+      </div>
+    );
+  }
 
   if (isLoading || !opp) {
     return (
