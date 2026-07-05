@@ -67,11 +67,18 @@ export function useCreateOpportunity() {
   });
 }
 
+// La cascada de IA (Gemini flash→pro→Groq→DeepSeek, cada uno con reintentos
+// y backoff) puede tardar legítimamente más de los 20s por defecto del
+// cliente — el backend ya permite hasta 60s (vercel.json maxDuration). Sin
+// este override, un mensaje que tarda 25-30s por una cascada real (no un
+// cuelgue) se abortaba desde el navegador antes de que el backend terminara.
+const SEND_MESSAGE_TIMEOUT_MS = 55_000;
+
 export function useSendSalesMessage(id: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (content: string) =>
-      api.post<SalesSendMessageResult>(`/sales/opportunities/${id}/messages`, { content }),
+      api.post<SalesSendMessageResult>(`/sales/opportunities/${id}/messages`, { content }, SEND_MESSAGE_TIMEOUT_MS),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sales', 'opportunities', id] }),
   });
 }

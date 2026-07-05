@@ -44,8 +44,17 @@ async function request<T>(
 
 export const api = {
   get: <T>(path: string) => request<T>(path),
-  post: <T>(path: string, body?: unknown) =>
-    request<T>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined }),
+  // `timeoutMs` opcional — por defecto 20s, pero llamadas que disparan una
+  // cascada de LLM (Gemini flash→pro→Groq→DeepSeek, cada uno con reintentos
+  // y backoff) pueden legítimamente tardar más que eso sin estar colgadas.
+  // El backend ya permite hasta 60s (vercel.json maxDuration) — sin esto, el
+  // cliente aborta antes de que el backend siquiera termine de intentar.
+  post: <T>(path: string, body?: unknown, timeoutMs?: number) =>
+    request<T>(path, {
+      method: 'POST',
+      body: body ? JSON.stringify(body) : undefined,
+      ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
+    }),
   patch: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: 'PATCH', body: body ? JSON.stringify(body) : undefined }),
   delete: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
