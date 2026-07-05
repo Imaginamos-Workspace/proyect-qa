@@ -68,7 +68,11 @@ export function SalesChatPage() {
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!draftMessage.trim()) return;
+    // isPending también, no solo el texto — sin esto, Enter repetido rápido
+    // (o mantenido) dispara un segundo mutate() mientras el primero sigue en
+    // vuelo: dos prompts que no se ven entre sí, y el update del draft final
+    // es last-write-wins — una de las dos respuestas del LLM se pierde.
+    if (!draftMessage.trim() || sendMessage.isPending) return;
     sendMessage.mutate(draftMessage, { onSuccess: () => setDraftMessage('') });
   };
 

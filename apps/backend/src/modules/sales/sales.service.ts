@@ -27,6 +27,10 @@ const NON_OPPORTUNITY_DIRS = new Set(['templates', '_stock']);
 // Throttle del descubrimiento — evita listar todo `sales/` en cada carga de la
 // lista (mismo criterio que los TTL de caché de scrum.service.ts).
 const DISCOVERY_TTL_MS = 60_000;
+// Ventana en la que se rechaza un segundo dispatch de "regenerar contraseña"
+// para la misma oportunidad — un poco más que el timeout de polling del
+// frontend (2 min), para cubrir el caso de un CI lento.
+const REGENERATE_COOLDOWN_MS = 3 * 60_000;
 
 interface DbOpportunity {
   id: string;
@@ -143,6 +147,19 @@ export class SalesService {
   }
 
   async createOpportunity(cliente: string, oportunidad: string, vendedorLogin: string): Promise<SalesOpportunity> {
+    // Gate: si esta oportunidad YA existe de verdad en el monorepo (creada
+    // antes con sales:new local, o por otro vendedor) pero todavía no la
+    // "descubrimos" (ventana de DISCOVERY_TTL_MS, o le falta status.md),
+    // NO crear una fila nueva encima — quedaría una fila con draft={} tapando
+    // una carpeta real, y el scaffold fallaría en silencio al toparse con
+    // archivos que ya existen (GitHub Contents API rechaza el PUT sin sha).
+    const existing = await this.readFileFromRepo(`sales/${cliente}/${oportunidad}/status.md`);
+    if (existing) {
+      throw new BadRequestException(
+        `${cliente}/${oportunidad} ya existe en el monorepo — no se puede crear de nuevo. Si no aparece en la lista, esperá un minuto (el descubrimiento tiene un caché corto) o refrescá la página.`,
+      );
+    }
+
     const now = new Date().toISOString();
     const { data, error } = await this.supabase
       .from(OPPORTUNITIES_TABLE)
@@ -358,10 +375,28 @@ export class SalesService {
   /** Dispara `proposal-deploy.yml` en el monorepo — regenera la contraseña
    *  (invalida la anterior) y vuelve a publicar en Cloudflare Pages. Es
    *  ASÍNCRONO: no devuelve la contraseña nueva al toque, tarda ~1-2 min en
-   *  CI. El frontend re-consulta `getProposalAccess` hasta verla cambiar. */
+   *  CI. El frontend re-consulta `getProposalAccess` hasta verla cambiar.
+   *
+   *  Gate de concurrencia: si el vendedor recarga la página y vuelve a
+   *  apretar "Regenerar" mientras el primer dispatch todavía está corriendo
+   *  en CI, dos regeneraciones en carrera podrían invalidar una contraseña
+   *  que el vendedor ya compartió con el cliente. Se rechaza un segundo
+   *  dispatch dentro de la ventana de cooldown. */
   async regenerateProposalPassword(id: string): Promise<SalesRegenerateProposalResult> {
     const opp = await this.getOpportunity(id);
     if (!this.writeToken) throw new Error('GITHUB_WRITE_TOKEN no configurado en el servidor.');
+
+    const { data: row } = await this.supabase
+      .from(OPPORTUNITIES_TABLE)
+      .select('password_regenerate_requested_at')
+      .eq('id', id)
+      .maybeSingle();
+    const requestedAt = row?.password_regenerate_requested_at as string | null | undefined;
+    if (requestedAt && Date.now() - new Date(requestedAt).getTime() < REGENERATE_COOLDOWN_MS) {
+      throw new BadRequestException(
+        'Ya hay una regeneración en curso para esta propuesta — esperá un par de minutos antes de volver a intentar, para no invalidar una contraseña que todavía está terminando de publicarse.',
+      );
+    }
 
     const res = await fetch(
       `https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows/proposal-deploy.yml/dispatches`,
@@ -387,6 +422,12 @@ export class SalesService {
           'Verificá que existe .github/workflows/proposal-deploy.yml en main y que GITHUB_WRITE_TOKEN tiene scope Actions:write.',
       );
     }
+
+    await this.supabase
+      .from(OPPORTUNITIES_TABLE)
+      .update({ password_regenerate_requested_at: new Date().toISOString() })
+      .eq('id', id);
+
     return { dispatched: true };
   }
 

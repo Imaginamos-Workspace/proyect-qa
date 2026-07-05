@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { Check, ExternalLink, X, Pause, Circle } from 'lucide-react';
+import { Check, ExternalLink, X, Pause, Circle, AlertTriangle } from 'lucide-react';
 import { useScrumBoard } from '@/hooks/use-scrum';
 import { useClient } from '@/hooks/use-dashboard';
 import { Card, CardContent } from '@/components/ui/card';
@@ -38,13 +38,24 @@ export function SalesPipelineStepper({ cliente, status }: { cliente: string; sta
 
   const isTerminalAlt = status === 'perdida' || status === 'congelada';
   const salesIdx = SALES_PATH.indexOf(status as (typeof SALES_PATH)[number]);
-  const effectiveSalesIdx = salesIdx >= 0 ? salesIdx : SALES_PATH.indexOf('negociacion');
+  // `status` es texto libre en la base (rules/13 puede agregar/renombrar
+  // estados) — si no lo reconocemos y tampoco es perdida/congelada, NO
+  // adivinamos una posición (antes caía en "negociación" en silencio, una
+  // etapa incorrecta mostrada con total confianza). Mostramos el aviso de
+  // abajo y dejamos los pasos sin ninguno marcado como actual.
+  const isUnknownStatus = salesIdx < 0 && !isTerminalAlt;
+  const effectiveSalesIdx = salesIdx >= 0 ? salesIdx : -1;
 
   const salesSteps: TimelineStep[] = SALES_PATH.map((step, i) => ({
     key: step,
     title: SALES_STEP_LABEL[step],
     description: SALES_DESC[step],
-    status: i < effectiveSalesIdx || (i === effectiveSalesIdx && !isTerminalAlt) ? (i === effectiveSalesIdx ? 'current' : 'done') : 'pending',
+    status:
+      effectiveSalesIdx < 0
+        ? 'pending'
+        : i < effectiveSalesIdx || (i === effectiveSalesIdx && !isTerminalAlt)
+          ? (i === effectiveSalesIdx ? 'current' : 'done')
+          : 'pending',
   }));
 
   const postSaleSteps: TimelineStep[] = [];
@@ -109,6 +120,15 @@ export function SalesPipelineStepper({ cliente, status }: { cliente: string; sta
   return (
     <Card>
       <CardContent className="p-4 sm:p-5">
+        {isUnknownStatus && (
+          <div className="mb-4 flex items-start gap-2 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2">
+            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+            <p className="text-xs text-muted-foreground">
+              Estado <span className="font-mono font-medium text-foreground">"{status}"</span> no
+              reconocido — no podemos ubicarlo con certeza en el pipeline de abajo.
+            </p>
+          </div>
+        )}
         <ol className="space-y-0">
           {salesSteps.map((step, i) => (
             <TimelineItem key={step.key} step={step} isLast={i === salesSteps.length - 1 && postSaleSteps.length === 0 && !isTerminalAlt} />

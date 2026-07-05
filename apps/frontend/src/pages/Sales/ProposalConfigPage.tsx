@@ -56,20 +56,24 @@ export function ProposalConfigPage() {
 
   const [regenerating, setRegenerating] = useState(false);
   const { data: opp, isLoading: loadingOpp } = useSalesOpportunity(id ?? null);
-  const { data: access, isLoading: loadingAccess, dataUpdatedAt } = useProposalAccess(
+  const { data: access, isLoading: loadingAccess } = useProposalAccess(
     id ?? null,
     regenerating ? REGENERATE_POLL_MS : false,
   );
   const { data: metrics } = useProposalMetrics(id ?? null);
   const regenerate = useRegenerateProposal(id ?? '');
 
-  // Corta el sondeo solo por timeout — cuando la password cambie, el propio
-  // useProposalAccess ya refleja el valor nuevo (no hace falta comparar acá).
+  // Timeout fijo desde que arrancó el sondeo — OJO: `dataUpdatedAt` NO va en
+  // las deps. Bug real que hubo acá: al incluirlo, cada poll exitoso (cada
+  // 10s) reiniciaba este efecto (cleanup + timeout nuevo), así que el
+  // timeout de 2 min nunca llegaba a dispararse mientras el fetch siguiera
+  // funcionando — "Regenerando…" quedaba pegado para siempre si el workflow
+  // de CI tardaba más de la cuenta o colgaba.
   useEffect(() => {
     if (!regenerating) return;
     const t = setTimeout(() => setRegenerating(false), REGENERATE_TIMEOUT_MS);
     return () => clearTimeout(t);
-  }, [regenerating, dataUpdatedAt]);
+  }, [regenerating]);
 
   const onRegenerate = () => {
     setRegenerating(true);
