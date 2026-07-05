@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router';
 import {
   ArrowLeft,
@@ -13,6 +13,7 @@ import {
   MessageSquare,
   FileText,
   Settings,
+  RotateCcw,
 } from 'lucide-react';
 import {
   useSalesOpportunity,
@@ -59,11 +60,25 @@ export function SalesChatPage() {
 
   const [draftMessage, setDraftMessage] = useState('');
   const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [failedMessage, setFailedMessage] = useState<string | null>(null);
+  const [elapsedSec, setElapsedSec] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const confirmDelete = () => {
     if (!id) return;
     deleteOpportunity.mutate(id, { onSuccess: () => navigate('/ventas') });
+  };
+
+  const send = (content: string) => {
+    setFailedMessage(null);
+    sendMessage.mutate(content, {
+      onSuccess: () => setDraftMessage(''),
+      // Guardamos EXACTAMENTE lo que falló (no lo que esté en el input en
+      // ese momento — el vendedor puede haber seguido escribiendo mientras
+      // esperaba) para que "Reintentar" mande lo mismo, no algo distinto.
+      onError: () => setFailedMessage(content),
+    });
   };
 
   const submit = (e: React.FormEvent) => {
@@ -73,8 +88,23 @@ export function SalesChatPage() {
     // vuelo: dos prompts que no se ven entre sí, y el update del draft final
     // es last-write-wins — una de las dos respuestas del LLM se pierde.
     if (!draftMessage.trim() || sendMessage.isPending) return;
-    sendMessage.mutate(draftMessage, { onSuccess: () => setDraftMessage('') });
+    send(draftMessage);
   };
+
+  // Contador de segundos mientras el LLM responde — la cascada (Gemini→
+  // Groq→DeepSeek) puede tardar 20-30s en picos de carga; sin este número
+  // visible, un vendedor no puede distinguir "está pensando" de "se colgó".
+  useEffect(() => {
+    if (!sendMessage.isPending) { setElapsedSec(0); return; }
+    const t = setInterval(() => setElapsedSec((s) => s + 1), 1000);
+    return () => clearInterval(t);
+  }, [sendMessage.isPending]);
+
+  // Auto-scroll al último mensaje (o al indicador de "Pensando…") — un chat
+  // que no baja solo con cada mensaje nuevo se siente roto/no-reactivo.
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [opp?.messages.length, sendMessage.isPending]);
 
   const onPickTranscript = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -186,9 +216,13 @@ export function SalesChatPage() {
                     <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10">
                       <Sparkles className="h-3.5 w-3.5 animate-pulse text-primary" />
                     </div>
-                    <p className="text-sm text-muted-foreground">Pensando…</p>
+                    <p className="text-sm text-muted-foreground">
+                      Pensando{elapsedSec > 0 ? `… (${elapsedSec}s)` : '…'}
+                      {elapsedSec >= 15 && ' — puede tardar hasta ~1 min si el modelo principal está saturado.'}
+                    </p>
                   </div>
                 )}
+                <div ref={messagesEndRef} />
               </div>
 
               {isVendedor && (
@@ -233,7 +267,20 @@ export function SalesChatPage() {
                     </Button>
                   </form>
                   {sendMessage.isError && (
-                    <p className="mt-2 px-2 text-sm text-destructive">{(sendMessage.error as Error).message}</p>
+                    <div className="mt-2 flex items-center justify-between gap-2 px-2">
+                      <p className="text-sm text-destructive">{(sendMessage.error as Error).message}</p>
+                      {failedMessage && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="shrink-0"
+                          onClick={() => send(failedMessage)}
+                          disabled={sendMessage.isPending}
+                        >
+                          <RotateCcw className="mr-1.5 h-3.5 w-3.5" /> Reintentar
+                        </Button>
+                      )}
+                    </div>
                   )}
                 </div>
               )}

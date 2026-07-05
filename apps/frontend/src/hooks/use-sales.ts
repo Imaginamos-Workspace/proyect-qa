@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type {
+  SalesMessage,
   SalesOpportunity,
   SalesOpportunityDetail,
   SalesProposalAccess,
@@ -74,12 +75,52 @@ export function useCreateOpportunity() {
 // cuelgue) se abortaba desde el navegador antes de que el backend terminara.
 const SEND_MESSAGE_TIMEOUT_MS = 55_000;
 
+/** Manda un mensaje del vendedor y la respuesta del LLM, con update
+ *  optimista — el mensaje del vendedor aparece al instante (no espera la
+ *  ida y vuelta de red) y la respuesta se pinta apenas llega, sin esperar
+ *  un segundo refetch de la oportunidad completa (eso pasaba antes: un
+ *  salto/flash entre "Pensando…" desapareciendo y el mensaje apareciendo).
+ *  Se invalida en segundo plano igual, para reconciliar con los ids/fechas
+ *  reales que ya quedaron persistidos — pero eso no bloquea la UI. */
 export function useSendSalesMessage(id: string) {
   const qc = useQueryClient();
+  const key = ['sales', 'opportunities', id];
+
   return useMutation({
     mutationFn: (content: string) =>
       api.post<SalesSendMessageResult>(`/sales/opportunities/${id}/messages`, { content }, SEND_MESSAGE_TIMEOUT_MS),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['sales', 'opportunities', id] }),
+    onMutate: async (content) => {
+      await qc.cancelQueries({ queryKey: key });
+      const prev = qc.getQueryData<SalesOpportunityDetail>(key);
+      if (prev) {
+        const optimisticVendorMsg: SalesMessage = {
+          id: `optimistic-${Date.now()}`,
+          opportunityId: id,
+          role: 'vendor',
+          content,
+          createdAt: new Date().toISOString(),
+        };
+        qc.setQueryData(key, { ...prev, messages: [...prev.messages, optimisticVendorMsg] });
+      }
+      return { prev };
+    },
+    onSuccess: (result) => {
+      const current = qc.getQueryData<SalesOpportunityDetail>(key);
+      if (current) {
+        const assistantMsg: SalesMessage = {
+          id: `optimistic-reply-${Date.now()}`,
+          opportunityId: id,
+          role: 'assistant',
+          content: result.reply,
+          createdAt: new Date().toISOString(),
+        };
+        qc.setQueryData(key, { ...current, draft: result.draft, messages: [...current.messages, assistantMsg] });
+      }
+      qc.invalidateQueries({ queryKey: key });
+    },
+    onError: (_err, _content, ctx) => {
+      if (ctx?.prev) qc.setQueryData(key, ctx.prev);
+    },
   });
 }
 
