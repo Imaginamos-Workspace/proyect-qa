@@ -1,6 +1,11 @@
-import { Building2, Sparkles } from 'lucide-react';
+import { useState } from 'react';
+import { useNavigate } from 'react-router';
+import { Building2, Sparkles, Loader2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { useCreateOpportunity } from '@/hooks/use-sales';
+import { useScrumMe } from '@/hooks/use-scrum';
+import { api } from '@/lib/api';
 
 interface MockProspect {
   company: string;
@@ -66,7 +71,53 @@ function scoreVariant(score: number): 'success' | 'warning' | 'secondary' {
   return 'secondary';
 }
 
+// Mismo criterio kebab-case que exige CreateOpportunityDto en el backend.
+function slugify(text: string): string {
+  return text
+    .normalize('NFD').replace(/[̀-ͯ]/g, '') // saca acentos
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
 export function ProspectsKanban() {
+  const navigate = useNavigate();
+  const { data: me } = useScrumMe();
+  const isVendedor = !!me?.roles.includes('vendedor');
+  const createOpportunity = useCreateOpportunity();
+  const [loadingKey, setLoadingKey] = useState<string | null>(null);
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // Convierte un prospecto del mockup en una oportunidad real y arranca el
+  // chat con lo que "ya sabemos" de Apollo — el vendedor no repite a mano lo
+  // que el prospecto ya trae. Reusa el mismo endpoint de mensajes que usa el
+  // chat normal (el LLM extrae esto al draft igual que cualquier otro texto).
+  const onProspectClick = async (p: MockProspect) => {
+    if (!isVendedor) return;
+    const key = p.company;
+    setErrorMsg(null);
+    setLoadingKey(key);
+    try {
+      const cliente = slugify(p.company);
+      const oportunidad = 'contacto-inicial';
+      const opp = await createOpportunity.mutateAsync({ cliente, oportunidad });
+      const seedMessage =
+        `Prospecto detectado por Apollo.io — ${p.company} (${p.industry}). ` +
+        `Contacto: ${p.contact}, ${p.role}. Score de calificación: ${p.score}. ` +
+        `Ayudame a armar el brief con esto como punto de partida.`;
+      await api.post(`/sales/opportunities/${opp.id}/messages`, { content: seedMessage });
+      navigate(`/ventas/${opp.id}`);
+    } catch (err) {
+      setErrorMsg(
+        err instanceof Error
+          ? `No se pudo iniciar la conversación con ${p.company}: ${err.message}`
+          : `No se pudo iniciar la conversación con ${p.company}.`,
+      );
+    } finally {
+      setLoadingKey(null);
+    }
+  };
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-dashed border-primary/40 bg-primary/5 px-4 py-3">
@@ -74,9 +125,15 @@ export function ProspectsKanban() {
         <p className="text-sm text-muted-foreground">
           <span className="font-medium text-foreground">Vista previa — Fase 2.</span>{' '}
           Los prospectos de acá van a venir automáticamente de Apollo.io. Por ahora son datos de
-          ejemplo para validar el layout antes de conectar la fuente real.
+          ejemplo{isVendedor ? ' — tocá uno para arrancar la conversación con el agente, ya con estos datos precargados.' : '.'}
         </p>
       </div>
+
+      {errorMsg && (
+        <p className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          {errorMsg}
+        </p>
+      )}
 
       <div className="flex gap-4 overflow-x-auto pb-2">
         {MOCK_COLUMNS.map((col) => (
@@ -86,19 +143,37 @@ export function ProspectsKanban() {
               <Badge variant="secondary">{col.prospects.length}</Badge>
             </div>
             <div className="space-y-3">
-              {col.prospects.map((p, i) => (
-                <Card key={i} className="border-dashed">
-                  <CardContent className="space-y-2 p-4">
-                    <div className="flex items-center gap-2 text-muted-foreground">
-                      <Building2 className="h-3.5 w-3.5" />
-                      <span className="text-xs">{p.industry}</span>
-                    </div>
-                    <p className="font-medium text-foreground">{p.company}</p>
-                    <p className="text-xs text-muted-foreground">{p.contact} — {p.role}</p>
-                    <Badge variant={scoreVariant(p.score)}>Score {p.score}</Badge>
-                  </CardContent>
-                </Card>
-              ))}
+              {col.prospects.map((p, i) => {
+                const isLoading = loadingKey === p.company;
+                return (
+                  <Card
+                    key={i}
+                    role={isVendedor ? 'button' : undefined}
+                    tabIndex={isVendedor ? 0 : undefined}
+                    onClick={() => !loadingKey && onProspectClick(p)}
+                    onKeyDown={(e) => { if (e.key === 'Enter' && !loadingKey) onProspectClick(p); }}
+                    className={`border-dashed transition-colors ${
+                      !isVendedor
+                        ? 'border-dashed'
+                        : loadingKey
+                          ? 'cursor-default opacity-70'
+                          : 'cursor-pointer hover:border-primary hover:bg-primary/5'
+                    }`}
+                  >
+                    <CardContent className="space-y-2 p-4">
+                      <div className="flex items-center justify-between gap-2 text-muted-foreground">
+                        <span className="flex items-center gap-2 text-xs">
+                          <Building2 className="h-3.5 w-3.5" /> {p.industry}
+                        </span>
+                        {isLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />}
+                      </div>
+                      <p className="font-medium text-foreground">{p.company}</p>
+                      <p className="text-xs text-muted-foreground">{p.contact} — {p.role}</p>
+                      <Badge variant={scoreVariant(p.score)}>Score {p.score}</Badge>
+                    </CardContent>
+                  </Card>
+                );
+              })}
               {col.prospects.length === 0 && (
                 <p className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">
                   Sin prospectos
