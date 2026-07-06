@@ -1,4 +1,5 @@
-import { ArrayMaxSize, IsArray, IsInt, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, Min } from 'class-validator';
+import { ArrayMaxSize, IsArray, IsInt, IsNotEmpty, IsObject, IsOptional, IsString, Matches, MaxLength, Min, ValidateNested } from 'class-validator';
+import { Type } from 'class-transformer';
 
 const YMD = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -39,4 +40,23 @@ export class AssignSprintDto {
 export class SetDatesDto {
   @IsOptional() @IsString() @Matches(YMD, { message: 'Inicio inválido (YYYY-MM-DD).' }) startDate?: string;
   @IsOptional() @IsString() @Matches(YMD, { message: 'Entrega inválida (YYYY-MM-DD).' }) dueDate?: string;
+}
+
+/** Pedir una URL firmada para subir un archivo de evidencia. */
+export class EvidenceUploadUrlDto {
+  @IsString() @IsNotEmpty() @MaxLength(200) filename: string;
+}
+
+/** Un archivo ya subido a la storage (ruta devuelta por el upload-url). */
+export class EvidenceFileDto {
+  @IsString() @IsNotEmpty() @MaxLength(400) path: string;
+  @IsString() @IsNotEmpty() @MaxLength(200) name: string;
+}
+
+/** Publicar comentario + evidencias en un issue del board. */
+export class AddEvidenceDto {
+  @IsOptional() @IsString() @MaxLength(8_000) comment?: string;
+  @IsOptional() @IsArray() @ArrayMaxSize(10) @ValidateNested({ each: true }) @Type(() => EvidenceFileDto)
+  @IsObject({ each: true })
+  files?: EvidenceFileDto[];
 }

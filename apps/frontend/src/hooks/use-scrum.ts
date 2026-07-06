@@ -1,11 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
+import { supabase } from '@/lib/supabase';
 import type { ScrumBoard, ScrumBoardSummary, ScrumCard } from '@qa/shared-types';
 
 export interface ScrumMe {
   login: string | null;
+  email: string | null;
+  displayName: string;
   roles: string[];
   canMove: boolean;
+  canUploadEvidence: boolean;
 }
 
 export function useScrumBoards() {
@@ -33,6 +37,44 @@ export function useIssueDetail(slug: string, issueNumber: number | null) {
     queryFn: () => api.get<ScrumIssueDetail>(`/scrum/boards/${slug}/issues/${issueNumber}/detail`),
     enabled: !!slug && issueNumber != null,
     staleTime: 30_000,
+  });
+}
+
+interface UploadUrlResult {
+  bucket: string;
+  path: string;
+  token: string;
+  name: string;
+}
+
+/** Carga evidencia + comentario en un issue. Flujo en 3 pasos por archivo:
+ *  (1) pide URL firmada al backend, (2) sube el archivo DIRECTO a Supabase
+ *  Storage (evita el límite de 4.5MB de Vercel), (3) postea el comentario con
+ *  los links al issue de GitHub (atribuido, vía token de servicio). */
+export function useAddEvidence(slug: string, issueNumber: number) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ comment, files }: { comment: string; files: File[] }) => {
+      const uploaded: { path: string; name: string }[] = [];
+      for (const file of files) {
+        const signed = await api.post<UploadUrlResult>(
+          `/scrum/boards/${slug}/issues/${issueNumber}/evidence/upload-url`,
+          { filename: file.name },
+        );
+        const { error } = await supabase.storage
+          .from(signed.bucket)
+          .uploadToSignedUrl(signed.path, signed.token, file);
+        if (error) throw new Error(`No se pudo subir ${file.name}: ${error.message}`);
+        uploaded.push({ path: signed.path, name: signed.name });
+      }
+      return api.post<{ url: string }>(
+        `/scrum/boards/${slug}/issues/${issueNumber}/evidence`,
+        { comment, files: uploaded },
+        60_000,
+      );
+    },
+    onSuccess: () =>
+      qc.invalidateQueries({ queryKey: ['scrum', 'boards', slug, 'issues', issueNumber, 'detail'] }),
   });
 }
 

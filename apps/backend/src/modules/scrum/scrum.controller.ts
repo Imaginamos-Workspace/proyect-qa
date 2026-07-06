@@ -10,13 +10,22 @@ import {
 } from '@nestjs/common';
 import { ScrumService } from './scrum.service';
 import { RolesService } from './roles.service';
+import { EvidenceService } from './evidence.service';
 import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard';
-import { CreateIssueDto, SetDatesDto, CarryOverDto, AssignSprintDto } from './dto/create-issue.dto';
+import {
+  CreateIssueDto,
+  SetDatesDto,
+  CarryOverDto,
+  AssignSprintDto,
+  EvidenceUploadUrlDto,
+  AddEvidenceDto,
+} from './dto/create-issue.dto';
 
 // El guard pone el usuario de Supabase en request.user. De GitHub OAuth, el login
-// viene en user_metadata (user_name / preferred_username).
+// viene en user_metadata (user_name / preferred_username). El email está en
+// user.email — es lo que identifica a un QA SIN GitHub (login por email/contraseña).
 interface RequestWithUser {
-  user?: { user_metadata?: Record<string, unknown> };
+  user?: { email?: string | null; user_metadata?: Record<string, unknown> };
 }
 
 function githubLogin(req: RequestWithUser): string | null {
@@ -29,12 +38,17 @@ function githubLogin(req: RequestWithUser): string | null {
   );
 }
 
+function userEmail(req: RequestWithUser): string | null {
+  return req.user?.email ?? null;
+}
+
 @Controller('scrum')
 @UseGuards(SupabaseAuthGuard)
 export class ScrumController {
   constructor(
     private readonly scrum: ScrumService,
     private readonly roles: RolesService,
+    private readonly evidence: EvidenceService,
   ) {}
 
   /** Clientes con board disponible. */
@@ -43,16 +57,26 @@ export class ScrumController {
     return this.scrum.listBoards();
   }
 
-  /** El usuario actual: login de GitHub, sus roles (team.json del monorepo) y si
-   *  puede mover tarjetas. El frontend usa `canMove` para habilitar el drag. */
+  /** El usuario actual: identidad (login de GitHub O email), roles (team.json) y
+   *  permisos. Resuelve por email para el QA sin GitHub (login por contraseña).
+   *  El frontend usa `canMove`/`canUploadEvidence` para habilitar acciones. */
   @Get('me')
   async me(@Req() req: RequestWithUser) {
     const login = githubLogin(req);
-    const [roles, canMove] = await Promise.all([
-      this.roles.rolesFor(login),
-      this.roles.canMove(login),
+    const email = userEmail(req);
+    const [actor, canUploadEvidence] = await Promise.all([
+      this.roles.resolveActor(login, email),
+      this.roles.canUploadEvidence(login, email),
     ]);
-    return { login, roles, canMove };
+    const canMove = actor.roles.some((r) => ['tl', 'pm', 'qa', 'dev', 'devops'].includes(r));
+    return {
+      login: actor.githubLogin,
+      email,
+      displayName: actor.displayName,
+      roles: actor.roles,
+      canMove,
+      canUploadEvidence,
+    };
   }
 
   /** Board normalizado de un cliente (kanban tipo Jira). */
@@ -72,6 +96,50 @@ export class ScrumController {
   @Get('boards/:slug/issues/:number/detail')
   issueDetail(@Param('slug') slug: string, @Param('number') number: string) {
     return this.scrum.getIssueDetail(slug, Number(number));
+  }
+
+  /** URL firmada para subir un archivo de evidencia DIRECTO a la storage (evita
+   *  el límite de body de Vercel). Solo roles de ejecución (QA/TL/PM/dev/devops),
+   *  por login de GitHub o por email (QA sin GitHub). */
+  @Post('boards/:slug/issues/:number/evidence/upload-url')
+  async evidenceUploadUrl(
+    @Param('slug') slug: string,
+    @Param('number') number: string,
+    @Body() body: EvidenceUploadUrlDto,
+    @Req() req: RequestWithUser,
+  ) {
+    await this.requireEvidence(req);
+    return this.evidence.createUploadUrl(slug, Number(number), body.filename);
+  }
+
+  /** Publica comentario + evidencias (links a la storage) en el issue del
+   *  cliente, atribuido al QA real. Escribe con el token de servicio. */
+  @Post('boards/:slug/issues/:number/evidence')
+  async addEvidence(
+    @Param('slug') slug: string,
+    @Param('number') number: string,
+    @Body() body: AddEvidenceDto,
+    @Req() req: RequestWithUser,
+  ) {
+    const actor = await this.requireEvidence(req);
+    // El detalle del issue (con sus comentarios) se lee en vivo de GitHub en
+    // cada carga — no hay caché que invalidar; el comentario nuevo aparece solo.
+    return this.evidence.postEvidenceComment(slug, Number(number), {
+      comment: body.comment ?? '',
+      files: body.files ?? [],
+      actorName: actor.displayName,
+    });
+  }
+
+  /** Rol de evidencia (QA/TL/PM/dev/devops) o 403. Devuelve el actor resuelto
+   *  (por login de GitHub o email) para atribuir el comentario. */
+  private async requireEvidence(req: RequestWithUser) {
+    const login = githubLogin(req);
+    const email = userEmail(req);
+    if (!(await this.roles.canUploadEvidence(login, email))) {
+      throw new ForbiddenException('Tu rol no tiene permiso para cargar evidencia en el board.');
+    }
+    return this.roles.resolveActor(login, email);
   }
 
   /** Crea un issue (cualquier tipo) en GitHub + el board, con autor = creador.

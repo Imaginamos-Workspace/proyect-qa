@@ -2,12 +2,13 @@ import { Module } from '@nestjs/common';
 import { ScrumController } from './scrum.controller';
 import { ScrumService } from './scrum.service';
 import { RolesService } from './roles.service';
+import { EvidenceService } from './evidence.service';
 import { AuthModule } from '../auth/auth.module';
 
 @Module({
   imports: [AuthModule],
   controllers: [ScrumController],
-  providers: [ScrumService, RolesService],
+  providers: [ScrumService, RolesService, EvidenceService],
   exports: [RolesService],
 })
 export class ScrumModule {}

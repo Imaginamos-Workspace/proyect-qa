@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 interface TeamMember {
   github_user: string;
   name?: string;
+  email?: string | null;
   allowed_roles?: string[];
   active?: boolean;
 }
@@ -23,11 +24,25 @@ const MOVE_ROLES = new Set(['tl', 'pm', 'qa', 'dev', 'devops']);
 // monorepo, hacer el handoff a TL). Espejo del mismo modelo de rules/01.
 const SELL_ROLES = new Set(['vendedor']);
 
+// Roles que pueden cargar evidencia y comentar en un issue del board desde la
+// plataforma (mismo set de EJECUCIÓN que mueve tarjetas — el QA es el caso
+// principal, pero TL/PM/dev/devops también trabajan el board).
+const EVIDENCE_ROLES = MOVE_ROLES;
+
+/** Identidad resuelta de quien hace una acción — sirve para autorizar Y para
+ *  atribuir en el contenido (el comentario que se postea a GitHub). Un QA sin
+ *  GitHub se resuelve por email (team.json ya trae el email por miembro). */
+export interface ResolvedActor {
+  githubLogin: string | null;
+  displayName: string;
+  roles: string[];
+}
+
 @Injectable()
 export class RolesService {
   private readonly logger = new Logger(RolesService.name);
   private readonly token: string | undefined;
-  private cache: { ts: number; byUser: Map<string, TeamMember> } | null = null;
+  private cache: { ts: number; byUser: Map<string, TeamMember>; byEmail: Map<string, TeamMember> } | null = null;
 
   constructor(config: ConfigService) {
     // Lectura del repo privado: GITHUB_TOKEN (read) o el write si está elevado.
@@ -40,6 +55,41 @@ export class RolesService {
     const team = await this.load();
     const m = team.get(login.toLowerCase());
     return m && m.active !== false ? m.allowed_roles ?? [] : [];
+  }
+
+  /** Miembro activo de team.json por login de GitHub O por email (para QA sin
+   *  GitHub, que se loguea con email/contraseña). El login tiene prioridad. */
+  private async memberFor(login: string | null, email: string | null): Promise<TeamMember | null> {
+    await this.load();
+    const byUser = this.cache!.byUser;
+    const byEmail = this.cache!.byEmail;
+    const m =
+      (login ? byUser.get(login.toLowerCase()) : undefined) ??
+      (email ? byEmail.get(email.toLowerCase()) : undefined);
+    return m && m.active !== false ? m : null;
+  }
+
+  /** Resuelve la identidad de quien actúa (login de GitHub o email). Devuelve
+   *  roles + un displayName para atribuir en el contenido posteado a GitHub. */
+  async resolveActor(login: string | null, email: string | null): Promise<ResolvedActor> {
+    const m = await this.memberFor(login, email);
+    const displayName =
+      m?.name?.trim() ||
+      (m?.github_user ? `@${m.github_user}` : null) ||
+      (login ? `@${login}` : null) ||
+      email ||
+      'usuario de la plataforma';
+    return {
+      githubLogin: m?.github_user ?? login ?? null,
+      displayName,
+      roles: m?.allowed_roles ?? [],
+    };
+  }
+
+  /** ¿Puede cargar evidencia / comentar en un issue del board? (por login o email) */
+  async canUploadEvidence(login: string | null, email: string | null): Promise<boolean> {
+    const m = await this.memberFor(login, email);
+    return (m?.allowed_roles ?? []).some((r) => EVIDENCE_ROLES.has(r));
   }
 
   /** ¿El usuario puede mover tarjetas (cambiar Status) en el board? */
@@ -71,6 +121,7 @@ export class RolesService {
   private async load(): Promise<Map<string, TeamMember>> {
     if (this.cache && Date.now() - this.cache.ts < CACHE_TTL_MS) return this.cache.byUser;
     const byUser = new Map<string, TeamMember>();
+    const byEmail = new Map<string, TeamMember>();
     try {
       const res = await fetch(`https://api.github.com/repos/${TEAM_REPO}/contents/${TEAM_PATH}`, {
         headers: {
@@ -84,12 +135,13 @@ export class RolesService {
       const json = JSON.parse(await res.text()) as { members?: TeamMember[] };
       for (const m of json.members ?? []) {
         if (m.github_user) byUser.set(m.github_user.toLowerCase(), m);
+        if (m.email) byEmail.set(m.email.toLowerCase(), m); // QA sin GitHub → resuelto por email
       }
     } catch (err) {
       // Fail-closed: si no se puede leer team.json, nadie tiene roles → nadie mueve.
       this.logger.error(`No se pudo leer team.json del monorepo: ${(err as Error).message}`);
     }
-    this.cache = { ts: Date.now(), byUser };
+    this.cache = { ts: Date.now(), byUser, byEmail };
     return byUser;
   }
 }

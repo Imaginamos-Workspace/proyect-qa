@@ -1,9 +1,10 @@
+import { useRef, useState } from 'react';
 import * as Dialog from '@radix-ui/react-dialog';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ExternalLink, X, Loader2, GitBranch } from 'lucide-react';
+import { ExternalLink, X, Loader2, GitBranch, Paperclip, Send, CheckCircle2 } from 'lucide-react';
 import type { ScrumCard } from '@qa/shared-types';
-import { useIssueDetail } from '@/hooks/use-scrum';
+import { useIssueDetail, useScrumMe, useAddEvidence } from '@/hooks/use-scrum';
 import { IssueTypeIcon, PriorityFlag, IssueKey, EstimateChip } from '@/components/scrum/issue-bits';
 import { Avatar } from './board-toolbar';
 
@@ -135,6 +136,8 @@ export function IssueDetailPanel({
                       ))}
                     </div>
                   )}
+
+                  {card.number != null && <EvidenceForm slug={slug} issueNumber={card.number} />}
                 </>
               )}
             </>
@@ -142,5 +145,96 @@ export function IssueDetailPanel({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
+  );
+}
+
+/**
+ * Cargar evidencia + comentario en el issue, sin salir de la plataforma. Solo
+ * para roles de ejecución (QA/TL/PM/dev/devops) — el QA puede no tener silla en
+ * GitHub: se identifica por email y la plataforma postea el comentario con el
+ * token de servicio, atribuido a esa persona. Los archivos van a la storage de
+ * la plataforma; el issue queda con el link.
+ */
+function EvidenceForm({ slug, issueNumber }: { slug: string; issueNumber: number }) {
+  const { data: me } = useScrumMe();
+  const addEvidence = useAddEvidence(slug, issueNumber);
+  const [comment, setComment] = useState('');
+  const [files, setFiles] = useState<File[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  if (!me?.canUploadEvidence) return null;
+
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (addEvidence.isPending || (!comment.trim() && files.length === 0)) return;
+    addEvidence.mutate(
+      { comment, files },
+      { onSuccess: () => { setComment(''); setFiles([]); } },
+    );
+  };
+
+  return (
+    <form onSubmit={submit} className="mt-6 space-y-2 border-t border-border pt-4">
+      <p className="text-xs font-semibold text-muted-foreground">Cargar evidencia / comentario</p>
+      <textarea
+        value={comment}
+        onChange={(e) => setComment(e.target.value)}
+        placeholder="Qué probaste, resultado, pasos… (opcional si adjuntás evidencia)"
+        rows={3}
+        className="w-full resize-none rounded-lg border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+      />
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept=".png,.jpg,.jpeg,.gif,.webp,.svg,.mp4,.webm,.mov,.pdf,.txt,.log,.json,.zip,.har"
+        className="hidden"
+        onChange={(e) => {
+          setFiles((prev) => [...prev, ...Array.from(e.target.files ?? [])]);
+          e.target.value = '';
+        }}
+      />
+      {files.length > 0 && (
+        <ul className="space-y-1">
+          {files.map((f, i) => (
+            <li key={i} className="flex items-center justify-between rounded bg-muted/50 px-2 py-1 text-xs text-foreground">
+              <span className="truncate">{f.name}</span>
+              <button
+                type="button"
+                onClick={() => setFiles((prev) => prev.filter((_, j) => j !== i))}
+                className="ml-2 shrink-0 text-muted-foreground hover:text-destructive"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <div className="flex items-center justify-between gap-2">
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-muted"
+        >
+          <Paperclip className="h-3.5 w-3.5" /> Adjuntar evidencia
+        </button>
+        <button
+          type="submit"
+          disabled={addEvidence.isPending || (!comment.trim() && files.length === 0)}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
+        >
+          {addEvidence.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+          {addEvidence.isPending ? 'Publicando…' : 'Publicar en el issue'}
+        </button>
+      </div>
+      {addEvidence.isSuccess && (
+        <p className="flex items-center gap-1.5 text-xs text-success">
+          <CheckCircle2 className="h-3.5 w-3.5" /> Publicado en el issue.
+        </p>
+      )}
+      {addEvidence.isError && (
+        <p className="text-xs text-destructive">{(addEvidence.error as Error).message}</p>
+      )}
+    </form>
   );
 }
