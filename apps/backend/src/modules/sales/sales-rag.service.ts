@@ -60,7 +60,7 @@ export class SalesRagService {
       const [embedding] = await this.gemini.embed([query.slice(0, 2000)]);
       if (!embedding) return [];
       const { data, error } = await this.supabase.rpc('match_sales_knowledge', {
-        query_embedding: embedding,
+        query_embedding: JSON.stringify(embedding), // formato texto de pgvector, no arreglo JS crudo
         match_count: RETRIEVE_K,
         filter_cliente: cliente,
       });
@@ -101,7 +101,10 @@ export class SalesRagService {
       cliente: opp.cliente,
       vendedor_login: opp.vendedorLogin,
       chunk,
-      embedding: embeddings[i],
+      // pgvector espera el formato texto "[0.1,0.2,...]" (idéntico a
+      // JSON.stringify de un number[]) — mandar el arreglo JS crudo hace que
+      // PostgREST falle el insert en la columna vector.
+      embedding: JSON.stringify(embeddings[i]),
       updated_at: now,
     }));
     const { error } = await this.supabase.from(KNOWLEDGE_TABLE).insert(rows);
@@ -153,7 +156,10 @@ export class SalesRagService {
       cliente,
       vendedor_login: vendedorLogin,
       chunk,
-      embedding: embeddings[i],
+      // pgvector espera el formato texto "[0.1,0.2,...]" (idéntico a
+      // JSON.stringify de un number[]) — mandar el arreglo JS crudo hace que
+      // PostgREST falle el insert en la columna vector.
+      embedding: JSON.stringify(embeddings[i]),
       updated_at: now,
     }));
     const { error } = await this.supabase.from(KNOWLEDGE_TABLE).insert(rows);
