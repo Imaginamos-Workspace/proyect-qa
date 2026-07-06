@@ -20,6 +20,7 @@ import { validateAndFixTestCode } from '../utils/test-validator';
 export class GeminiProvider implements AIProvider {
   private readonly model;
   private readonly fallbackModel;
+  private readonly embedModel;
 
   constructor(private readonly configService: ConfigService) {
     const apiKey = this.configService.getOrThrow('GEMINI_API_KEY');
@@ -31,6 +32,24 @@ export class GeminiProvider implements AIProvider {
     // overloaded (503 spikes during peak hours). Slower + more expensive but
     // capacity is independent. Auto-engaged after retries on -flash exhaust.
     this.fallbackModel = genAI.getGenerativeModel({ model: 'gemini-2.5-pro' });
+    // Embeddings para el RAG de ventas — 768 dims, capa gratuita. Misma key,
+    // sin dependencia nueva.
+    this.embedModel = genAI.getGenerativeModel({ model: 'text-embedding-004' });
+  }
+
+  /**
+   * Embeddings (768 dims) para el RAG. batchEmbedContents mete todos los
+   * fragmentos en UNA llamada — clave para no gastar cuota gratuita al indexar
+   * un brief entero. Devuelve un vector por texto, en el mismo orden.
+   */
+  async embed(texts: string[]): Promise<number[][]> {
+    if (texts.length === 0) return [];
+    const res = await this.embedModel.batchEmbedContents({
+      requests: texts.map((text) => ({
+        content: { role: 'user', parts: [{ text }] },
+      })),
+    });
+    return res.embeddings.map((e) => e.values);
   }
 
   /**

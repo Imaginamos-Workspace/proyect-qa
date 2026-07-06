@@ -70,6 +70,15 @@ export function useCreateOpportunity() {
   });
 }
 
+/** Reconstruye la base de conocimiento del RAG (metodología + negocios
+ *  ganados). Idempotente — puede tardar unos segundos (embeddings). */
+export function useReindexKnowledge() {
+  return useMutation({
+    mutationFn: () =>
+      api.post<{ methodology: number; wonDeals: number }>('/sales/rag/reindex', undefined, 60_000),
+  });
+}
+
 /** Vendedores elegibles para recibir un proceso cedido (team.json). */
 export function useVendedores() {
   return useQuery({

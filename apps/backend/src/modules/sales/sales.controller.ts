@@ -57,6 +57,14 @@ export class SalesController {
     return this.roles.listVendedores();
   }
 
+  /** Reconstruye la base de conocimiento del RAG (metodología + negocios
+   *  ganados). Idempotente. Solo vendedor. */
+  @Post('rag/reindex')
+  async reindexKnowledge(@Req() req: RequestWithUser) {
+    await this.requireSeller(req);
+    return this.sales.reindexKnowledge();
+  }
+
   /** Link + contraseña de la propuesta ya generada (si existe). El service
    *  bloquea si el proceso es de otro vendedor (la contraseña es sensible). */
   @Get('opportunities/:id/proposal')

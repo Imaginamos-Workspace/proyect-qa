@@ -1,8 +1,10 @@
-import { Briefcase, Trophy, TrendingUp, Clock } from 'lucide-react';
+import { Briefcase, Trophy, TrendingUp, Clock, BrainCircuit } from 'lucide-react';
 import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { useSalesOpportunities } from '@/hooks/use-sales';
+import { useSalesOpportunities, useReindexKnowledge } from '@/hooks/use-sales';
+import { useScrumMe } from '@/hooks/use-scrum';
 import { StatCard } from '@/components/ui/stat-card';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
 import { Skeleton, StatCardSkeleton } from '@/components/ui/skeleton';
 import { SALES_STATUS_META } from '@/lib/sales-status';
 
@@ -18,6 +20,9 @@ const VARIANT_COLOR: Record<string, string> = {
 
 export function SalesDashboard() {
   const { data: opportunities, isLoading } = useSalesOpportunities();
+  const { data: me } = useScrumMe();
+  const isVendedor = !!me?.roles.includes('vendedor');
+  const reindex = useReindexKnowledge();
   const list = opportunities ?? [];
 
   const total = list.length;
@@ -67,7 +72,7 @@ export function SalesDashboard() {
         <CardContent>
           {total === 0 ? (
             <p className="py-10 text-center text-sm text-muted-foreground">
-              Sin datos todavía — creá o sincronizá alguna oportunidad.
+              Sin datos todavía — crea o sincroniza alguna oportunidad.
             </p>
           ) : (
             <div className="h-[280px] w-full">
@@ -109,6 +114,46 @@ export function SalesDashboard() {
           )}
         </CardContent>
       </Card>
+
+      {/* Base de conocimiento del agente (RAG): metodología (rules/13 +
+          plantilla) + negocios ganados como ejemplos. El agente ya indexa la
+          memoria de cada proceso solo, con cada mensaje; esto refresca lo
+          compartido del equipo. */}
+      {isVendedor && (
+        <Card>
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+            <div className="flex items-start gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                <BrainCircuit className="h-5 w-5 text-primary" />
+              </div>
+              <div className="text-sm">
+                <p className="font-medium text-foreground">Base de conocimiento del agente</p>
+                <p className="text-muted-foreground">
+                  Reindexa la metodología y los negocios ganados para que el agente proponga con
+                  ejemplos reales. La memoria de cada proceso se guarda sola.
+                </p>
+                {reindex.data && (
+                  <p className="mt-1 text-xs text-success">
+                    Listo: {reindex.data.methodology} fuente(s) de metodología y {reindex.data.wonDeals} negocio(s) ganado(s).
+                  </p>
+                )}
+                {reindex.isError && (
+                  <p className="mt-1 text-xs text-destructive">{(reindex.error as Error).message}</p>
+                )}
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              className="shrink-0"
+              onClick={() => reindex.mutate()}
+              disabled={reindex.isPending}
+            >
+              <BrainCircuit className="mr-2 h-4 w-4" />
+              {reindex.isPending ? 'Reindexando…' : 'Reindexar conocimiento'}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

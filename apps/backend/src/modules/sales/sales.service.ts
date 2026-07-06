@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../../config/supabase.module';
 import { GeminiProvider } from '../ai/providers/gemini.provider';
+import { SalesRagService } from './sales-rag.service';
 import type {
   SalesBriefDraft,
   SalesMessage,
@@ -68,6 +69,7 @@ export class SalesService {
   constructor(
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
     private readonly gemini: GeminiProvider,
+    private readonly rag: SalesRagService,
     config: ConfigService,
   ) {
     this.writeToken = process.env.GITHUB_WRITE_TOKEN || config.get<string>('GITHUB_TOKEN');
@@ -352,11 +354,19 @@ export class SalesService {
       created_at: now,
     });
 
-    // 2. Llamar al LLM (cascada Gemini flash→pro→Groq→DeepSeek ya incluida en
-    //    GeminiProvider — nada nuevo que construir acá).
+    // 2. RAG: recuperar SOLO los fragmentos relevantes al mensaje actual
+    //    (memoria del proceso + metodología + casos ganados). Esto es lo que
+    //    permite "continuar donde quedó" sin mandarle toda la conversación al
+    //    LLM gratuito: la memoria vieja se trae solo si es relevante ahora.
+    //    Best-effort — si el RAG falla, el chat sigue con draft + ventana corta.
+    const context = await this.rag.retrieve(content, opp.cliente);
+
+    // 3. Llamar al LLM (cascada Gemini flash→pro→Groq→DeepSeek ya incluida en
+    //    GeminiProvider). El prompt lleva: draft (estado acumulado) + últimos
+    //    HISTORY_WINDOW turnos + el contexto recuperado, todo acotado.
     const history = [...messages, { role: 'vendor' as const, content, id: '', opportunityId: id, createdAt: now }]
       .slice(-HISTORY_WINDOW);
-    const prompt = buildBriefPrompt(opp.draft, history);
+    const prompt = buildBriefPrompt(opp.draft, history, context);
 
     const raw = await this.gemini.generateRaw({
       prompt,
@@ -367,7 +377,7 @@ export class SalesService {
 
     const parsed = parseAssistantResponse(raw);
 
-    // 3. Persistir la respuesta + draft actualizado.
+    // 4. Persistir la respuesta + draft actualizado.
     const nowReply = new Date().toISOString();
     await this.supabase.from(MESSAGES_TABLE).insert({
       opportunity_id: id,
@@ -380,7 +390,48 @@ export class SalesService {
       .update({ draft: parsed.draft, updated_at: nowReply })
       .eq('id', id);
 
+    // 5. Post-turno. OJO serverless (Vercel): el trabajo lanzado sin await se
+    //    corta cuando la función retorna → NO usar fire-and-forget. Se AWAITea,
+    //    pero cada sub-tarea es resiliente por dentro: si una falla, la otra
+    //    igual corre y el turno (ya persistido arriba) nunca se pierde.
+    await this.afterTurn(id, opp, content, parsed);
+
     return parsed;
+  }
+
+  /** Tareas post-turno: (a) indexar el turno nuevo en la memoria RAG del
+   *  proceso (incremental, 1 sola llamada de embeddings); (b) mantener el
+   *  monorepo al día auto-sincronizando brief.md. Cada una es best-effort:
+   *  su fallo se loguea pero no rompe el chat ni frena a la otra. */
+  private async afterTurn(
+    id: string,
+    opp: SalesOpportunity,
+    vendorContent: string,
+    parsed: SalesSendMessageResult,
+  ): Promise<void> {
+    await this.rag
+      .indexTurn({ ...opp, draft: parsed.draft }, vendorContent, parsed.reply)
+      .catch((err) => this.logger.warn(`RAG indexTurn de ${opp.cliente}/${opp.oportunidad} degradó: ${(err as Error).message}`));
+
+    // Auto-sync del monorepo: brief.md siempre refleja el último estado, sin
+    // que el vendedor tenga que apretar "Sincronizar". No pisamos con un draft
+    // vacío (mismo guardado que syncBrief). Commit con [skip ci].
+    if (!isDraftEmpty(parsed.draft)) {
+      try {
+        const path = `sales/${opp.cliente}/${opp.oportunidad}/brief.md`;
+        await this.writeFileToRepo(
+          path,
+          renderBriefMd(parsed.draft),
+          `sales(${opp.cliente}): auto-sync brief de ${opp.oportunidad} desde el chat [skip ci]`,
+        );
+        await this.supabase
+          .from(OPPORTUNITIES_TABLE)
+          .update({ synced_at: new Date().toISOString() })
+          .eq('id', id);
+      } catch (err) {
+        this.logger.warn(`Auto-sync de brief.md de ${opp.cliente}/${opp.oportunidad} degradó: ${(err as Error).message}`);
+      }
+    }
   }
 
   async syncBrief(id: string, requesterLogin: string | null): Promise<SalesSyncResult> {
@@ -657,7 +708,34 @@ export class SalesService {
     const { error } = await this.supabase.from(OPPORTUNITIES_TABLE).delete().eq('id', id);
     if (error) throw new Error(`Se borraron los archivos del monorepo pero no la fila de Supabase: ${error.message}`);
 
+    // La memoria RAG de este proceso ya no aplica → la sacamos.
+    await this.rag.forgetOpportunity(id).catch(() => undefined);
+
     return { deleted: true, filesDeleted: files.length };
+  }
+
+  /** Reconstruye la base de conocimiento del RAG: metodología (rules/13 +
+   *  plantilla) + los negocios GANADOS (brief + propuestas.yml) como ejemplos.
+   *  Idempotente — se puede re-correr sin duplicar. Lo dispara un vendedor
+   *  desde el módulo cuando quiere refrescar los ejemplos/metodología. */
+  async reindexKnowledge(): Promise<{ methodology: number; wonDeals: number }> {
+    const meth = await this.rag.indexMethodology();
+
+    const { data } = await this.supabase.from(OPPORTUNITIES_TABLE).select('*');
+    const ganadas = (data ?? [])
+      .map((r) => toOpportunity(r as DbOpportunity))
+      .filter((o) => o.status.toLowerCase() === 'ganada');
+
+    let wonDeals = 0;
+    for (const opp of ganadas) {
+      const base = `sales/${opp.cliente}/${opp.oportunidad}`;
+      const brief = await this.readFileFromRepo(`${base}/brief.md`).catch(() => null);
+      const propuestas = await this.readFileFromRepo(`${base}/propuestas.yml`).catch(() => null);
+      if (!brief && !propuestas) continue;
+      await this.rag.indexWonDeal(opp, brief?.content ?? '', propuestas?.content ?? null);
+      wonDeals++;
+    }
+    return { methodology: meth.indexed, wonDeals };
   }
 
   private async listRepoDir(path: string, recursive: boolean): Promise<{ path: string; sha: string }[]> {
@@ -768,26 +846,35 @@ function substitutePlaceholders(
 function buildBriefPrompt(
   draft: SalesBriefDraft,
   history: Array<{ role: string; content: string }>,
+  context: string[] = [],
 ): string {
   const historyText = history.map((m) => `${m.role === 'vendor' ? 'VENDEDOR' : 'ASISTENTE'}: ${m.content}`).join('\n\n');
+  // Bloque de contexto recuperado (RAG). Solo entra si hay algo relevante — así
+  // el prompt no crece cuando no aporta (economía de cuota del LLM gratuito).
+  const contextBlock = context.length
+    ? `\nCONTEXTO RECUPERADO (memoria de este proceso + metodología + casos ganados — úsalo si aplica, NO lo copies literal):\n${context.map((c) => `— ${c}`).join('\n\n')}\n`
+    : '';
 
-  return `Sos el asistente que ayuda a un vendedor a llenar el brief de una oportunidad comercial (rules/13 del monorepo).
+  return `Eres el asistente que ayuda a un vendedor a llenar el brief de una oportunidad comercial (rules/13 del monorepo).
+
+El DRAFT es la memoria acumulada del proceso: contiene todo lo que ya se extrajo en sesiones previas. Continúa desde ahí — no vuelvas a preguntar lo que ya está cargado.
 
 DRAFT ACTUAL (JSON, puede estar vacío o parcial):
 ${JSON.stringify(draft, null, 2)}
-
+${contextBlock}
 CONVERSACIÓN RECIENTE:
 ${historyText}
 
 INSTRUCCIONES:
-1. Extraé del último mensaje del vendedor SOLO lo que dijo explícitamente — NUNCA inventes outcomes, prioridades, asunciones o riesgos que no se mencionaron.
-2. Actualizá el draft fusionando lo nuevo con lo que ya había (no borres campos previos salvo que el vendedor los corrija explícitamente).
-3. Si el mensaje trae una transcripción larga de reunión, tratala igual: extraé todo lo explícito, sección por sección.
-4. Cada asunción en "asunciones" necesita su "impactoSiFalla" (qué cambia en tiempo/costo/alcance si la asunción resulta falsa) — si el vendedor no lo dijo, preguntaselo en tu respuesta en vez de inventarlo.
-5. En tu respuesta ("reply"), decile al vendedor qué extrajiste y hacé UNA pregunta puntual por lo que falta o quedó ambiguo — no repitas preguntas ya respondidas.
-6. Nunca inventes valores. Si falta algo no obligatorio, dejalo vacío y seguí.
+1. Extrae del último mensaje del vendedor SOLO lo que dijo explícitamente — NUNCA inventes outcomes, prioridades, asunciones o riesgos que no se mencionaron.
+2. Actualiza el draft fusionando lo nuevo con lo que ya había (no borres campos previos salvo que el vendedor los corrija explícitamente).
+3. Si el mensaje trae una transcripción larga de reunión, trátala igual: extrae todo lo explícito, sección por sección.
+4. Cada asunción en "asunciones" necesita su "impactoSiFalla" (qué cambia en tiempo/costo/alcance si la asunción resulta falsa) — si el vendedor no lo dijo, pregúntaselo en tu respuesta en vez de inventarlo.
+5. En tu respuesta ("reply"), dile al vendedor qué extrajiste y haz UNA pregunta puntual por lo que falta o quedó ambiguo — no repitas preguntas ya respondidas.
+6. Nunca inventes valores. Si falta algo no obligatorio, déjalo vacío y sigue.
+7. Escribe en español neutral, sin modismos ni regionalismos (nada de voseo: "tú", no "vos"; "puedes", no "podés").
 
-Devolvé SOLO este JSON (sin markdown, sin texto fuera del JSON):
+Devuelve SOLO este JSON (sin markdown, sin texto fuera del JSON):
 {
   "reply": "tu respuesta conversacional al vendedor",
   "draft": { /* draft completo actualizado, mismo shape que el de arriba */ }
