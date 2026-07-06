@@ -33,6 +33,11 @@ const DISCOVERY_TTL_MS = 60_000;
 // para la misma oportunidad — un poco más que el timeout de polling del
 // frontend (2 min), para cubrir el caso de un CI lento.
 const REGENERATE_COOLDOWN_MS = 3 * 60_000;
+// Auto-sync de brief.md al monorepo por checkpoints: durante una ráfaga de
+// mensajes se sincroniza como MÁXIMO una vez cada 10 min, en vez de un commit
+// por turno (que ensuciaría el historial de main). El botón "Sincronizar" y el
+// handoff siguen forzando la sincronización inmediata sin este límite.
+const AUTOSYNC_DEBOUNCE_MS = 10 * 60_000;
 
 interface DbOpportunity {
   id: string;
@@ -413,10 +418,12 @@ export class SalesService {
       .indexTurn({ ...opp, draft: parsed.draft }, vendorContent, parsed.reply)
       .catch((err) => this.logger.warn(`RAG indexTurn de ${opp.cliente}/${opp.oportunidad} degradó: ${(err as Error).message}`));
 
-    // Auto-sync del monorepo: brief.md siempre refleja el último estado, sin
-    // que el vendedor tenga que apretar "Sincronizar". No pisamos con un draft
-    // vacío (mismo guardado que syncBrief). Commit con [skip ci].
-    if (!isDraftEmpty(parsed.draft)) {
+    // Auto-sync del monorepo por CHECKPOINT: brief.md se mantiene al día, pero
+    // sin un commit por turno. Solo sincroniza si nunca se sincronizó o si pasó
+    // el debounce desde la última vez (una ráfaga de mensajes colapsa en ~1
+    // commit por ventana). El botón "Sincronizar" y el handoff fuerzan aparte.
+    // No pisamos con un draft vacío (mismo guardado que syncBrief).
+    if (!isDraftEmpty(parsed.draft) && this.autoSyncDue(opp.syncedAt)) {
       try {
         const path = `sales/${opp.cliente}/${opp.oportunidad}/brief.md`;
         await this.writeFileToRepo(
@@ -432,6 +439,13 @@ export class SalesService {
         this.logger.warn(`Auto-sync de brief.md de ${opp.cliente}/${opp.oportunidad} degradó: ${(err as Error).message}`);
       }
     }
+  }
+
+  /** ¿Toca auto-sincronizar? Sí si nunca se sincronizó o si pasó el debounce
+   *  desde la última sincronización (manual o automática). */
+  private autoSyncDue(syncedAt: string | null): boolean {
+    if (!syncedAt) return true;
+    return Date.now() - new Date(syncedAt).getTime() >= AUTOSYNC_DEBOUNCE_MS;
   }
 
   async syncBrief(id: string, requesterLogin: string | null): Promise<SalesSyncResult> {
