@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link } from 'react-router';
-import { Plus, Handshake, Sparkles, KanbanSquare, Briefcase, LayoutDashboard, Trash2 } from 'lucide-react';
+import { Plus, Handshake, Sparkles, KanbanSquare, Briefcase, LayoutDashboard, Trash2, Lock, UserPlus } from 'lucide-react';
 import { useCreateOpportunity, useSalesOpportunities, useDeleteOpportunity } from '@/hooks/use-sales';
 import { useScrumMe } from '@/hooks/use-scrum';
 import { Card, CardContent } from '@/components/ui/card';
@@ -16,6 +16,7 @@ import { SalesDashboard } from './SalesDashboard';
 function ManagedProjects() {
   const { data: me } = useScrumMe();
   const isVendedor = !!me?.roles.includes('vendedor');
+  const myLogin = me?.login?.toLowerCase() ?? null;
   const { data: opportunities, isLoading } = useSalesOpportunities();
   const createOpportunity = useCreateOpportunity();
   const deleteOpportunity = useDeleteOpportunity();
@@ -91,16 +92,21 @@ function ManagedProjects() {
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
           {opportunities.map((o) => {
             const statusMeta = salesStatusMeta(o.status);
+            const owner = (o.vendedorLogin ?? '').toLowerCase();
+            const isUnowned = !owner || owner === 'desconocido';
+            const isMine = !!myLogin && owner === myLogin;
+            const locked = !isMine && !isUnowned;
             return (
               <Link key={o.id} to={`/ventas/${o.id}`} className="relative block">
-                <Card className="h-full transition-all hover:-translate-y-0.5 hover:shadow-md">
+                <Card className={`h-full transition-all hover:-translate-y-0.5 hover:shadow-md ${locked ? 'opacity-75' : ''}`}>
                   <CardContent className="p-5">
                     <div className="mb-2 flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 text-muted-foreground">
                         <Handshake className="h-4 w-4" />
                         <span className="text-xs">{o.cliente}</span>
                       </div>
-                      {isVendedor && (
+                      {/* Solo el dueño borra desde la lista (el backend lo re-verifica). */}
+                      {isVendedor && isMine && (
                         <button
                           type="button"
                           title="Eliminar del pipeline"
@@ -112,7 +118,22 @@ function ManagedProjects() {
                       )}
                     </div>
                     <p className="mb-3 font-medium text-foreground">{o.oportunidad}</p>
-                    <Badge variant={statusMeta.variant}>{statusMeta.label}</Badge>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant={statusMeta.variant}>{statusMeta.label}</Badge>
+                      {/* Dueño del proceso: candado si es de otro, "sin dueño"
+                          si nadie lo tomó, o mío si soy yo. */}
+                      {locked ? (
+                        <span className="flex items-center gap-1 text-xs text-amber-600" title={`Proceso de @${o.vendedorLogin}`}>
+                          <Lock className="h-3 w-3" /> @{o.vendedorLogin}
+                        </span>
+                      ) : isUnowned ? (
+                        <span className="flex items-center gap-1 text-xs text-primary" title="Sin vendedor asignado — reclamable">
+                          <UserPlus className="h-3 w-3" /> Sin dueño
+                        </span>
+                      ) : (
+                        <span className="text-xs text-muted-foreground" title="Tu proceso">@{o.vendedorLogin}</span>
+                      )}
+                    </div>
                   </CardContent>
                 </Card>
               </Link>

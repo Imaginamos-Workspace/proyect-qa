@@ -104,8 +104,12 @@ export function ProspectsKanban() {
       const seedMessage =
         `Prospecto detectado por Apollo.io — ${p.company} (${p.industry}). ` +
         `Contacto: ${p.contact}, ${p.role}. Score de calificación: ${p.score}. ` +
-        `Ayudame a armar el brief con esto como punto de partida.`;
-      await api.post(`/sales/opportunities/${opp.id}/messages`, { content: seedMessage });
+        `Ayúdame a armar el brief con esto como punto de partida.`;
+      // Timeout largo (55s), igual que el chat normal: este primer mensaje
+      // dispara la cascada del LLM (Gemini→Groq→DeepSeek) y puede tardar más
+      // que el default de 20s de api.post — sin esto abortaba a los 20s y la
+      // conversación quedaba vacía al abrir /ventas/:id (bug reportado).
+      await api.post(`/sales/opportunities/${opp.id}/messages`, { content: seedMessage }, 55_000);
       navigate(`/ventas/${opp.id}`);
     } catch (err) {
       setErrorMsg(

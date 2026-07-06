@@ -1,4 +1,4 @@
-import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../../config/supabase.module';
@@ -8,6 +8,7 @@ import type {
   SalesMessage,
   SalesOpportunity,
   SalesOpportunityDetail,
+  SalesOwnershipResult,
   SalesProposalAccess,
   SalesProposalMetrics,
   SalesRegenerateProposalResult,
@@ -189,7 +190,11 @@ export class SalesService {
     return toOpportunity(data as DbOpportunity);
   }
 
-  async getOpportunity(id: string): Promise<SalesOpportunityDetail> {
+  /** Carga interna COMPLETA (sin lógica de candado) — la usan los métodos que
+   *  ya validaron permiso aparte (sendMessage, syncBrief, etc.). NUNCA se
+   *  expone al controller directamente: la vista pública pasa por
+   *  getOpportunityDetail, que aplica el candado por propiedad. */
+  private async loadOpportunity(id: string): Promise<{ opp: SalesOpportunity; messages: SalesMessage[] }> {
     const { data: oppRow, error: oppErr } = await this.supabase
       .from(OPPORTUNITIES_TABLE)
       .select('*')
@@ -213,11 +218,130 @@ export class SalesService {
       createdAt: m.created_at,
     }));
 
-    return { ...toOpportunity(oppRow as DbOpportunity), messages };
+    return { opp: toOpportunity(oppRow as DbOpportunity), messages };
   }
 
-  async sendMessage(id: string, content: string): Promise<SalesSendMessageResult> {
-    const detail = await this.getOpportunity(id);
+  /** ¿Quién es el dueño y qué puede hacer el que consulta? (rules/13: solo el
+   *  dueño abre el chat/edita; sin dueño real se puede reclamar). */
+  private ownership(vendedorLogin: string, requesterLogin: string | null) {
+    const owner = (vendedorLogin ?? '').toLowerCase();
+    const me = (requesterLogin ?? '').toLowerCase();
+    const unowned = !owner || owner === 'desconocido';
+    const isOwner = !!me && me === owner;
+    return { unowned, isOwner, locked: !isOwner && !unowned };
+  }
+
+  /** Verifica que el que consulta puede EDITAR (chatear/sincronizar/borrar/
+   *  regenerar). Falla con un mensaje claro si el proceso es de otro o si no
+   *  tiene dueño (hay que reclamarlo primero). */
+  private assertCanEdit(opp: SalesOpportunity, requesterLogin: string | null): void {
+    const { unowned, isOwner } = this.ownership(opp.vendedorLogin, requesterLogin);
+    if (isOwner) return;
+    if (unowned) {
+      throw new ForbiddenException(
+        'Este proceso no tiene un vendedor asignado. Reclámalo primero para poder trabajarlo.',
+      );
+    }
+    throw new ForbiddenException(
+      `Este proceso es de @${opp.vendedorLogin}. Pídele que te lo ceda para poder abrirlo.`,
+    );
+  }
+
+  /** Verifica que el que consulta puede VER datos sensibles del proceso
+   *  (link/contraseña de la propuesta, métricas). Permite al dueño y a los
+   *  procesos sin dueño; bloquea los ajenos. */
+  private assertCanView(opp: SalesOpportunity, requesterLogin: string | null): void {
+    const { locked } = this.ownership(opp.vendedorLogin, requesterLogin);
+    if (locked) {
+      throw new ForbiddenException(`Este proceso es de @${opp.vendedorLogin} — no puedes ver su propuesta.`);
+    }
+  }
+
+  /** Vista pública: detalle + candado por propiedad. Si está bloqueado (es de
+   *  otro vendedor), el historial de mensajes NO viaja — solo se ve el estado
+   *  general del proceso, no la conversación privada. */
+  async getOpportunityDetail(id: string, requesterLogin: string | null): Promise<SalesOpportunityDetail> {
+    const { opp, messages } = await this.loadOpportunity(id);
+    const { unowned, isOwner, locked } = this.ownership(opp.vendedorLogin, requesterLogin);
+    return {
+      ...opp,
+      messages: locked ? [] : messages,
+      isOwner,
+      locked,
+      canClaim: unowned,
+    };
+  }
+
+  /** Reclama un proceso SIN dueño real ('desconocido'/vacío) — el que reclama
+   *  se vuelve el vendedor. Deja rastro de sistema en el chat y actualiza el
+   *  owner en status.md del monorepo (best-effort). */
+  async claimOpportunity(id: string, requesterLogin: string): Promise<SalesOwnershipResult> {
+    const { opp } = await this.loadOpportunity(id);
+    const { unowned } = this.ownership(opp.vendedorLogin, requesterLogin);
+    if (!unowned) {
+      throw new ForbiddenException(
+        `Este proceso ya es de @${opp.vendedorLogin} — no se puede reclamar. Si necesitas trabajarlo, pídele que te lo ceda.`,
+      );
+    }
+    await this.setOwner(id, opp, requesterLogin, `Proceso reclamado por @${requesterLogin}.`);
+    return { vendedorLogin: requesterLogin };
+  }
+
+  /** Cede el proceso a otro vendedor: el histórico de la conversación viaja
+   *  con él (sigue colgado del mismo opportunity_id). Solo el dueño actual
+   *  puede ceder; el destino debe ser un vendedor (lo valida el controller). */
+  async transferOpportunity(id: string, requesterLogin: string, toLogin: string): Promise<SalesOwnershipResult> {
+    const { opp } = await this.loadOpportunity(id);
+    this.assertCanEdit(opp, requesterLogin);
+    if (toLogin.toLowerCase() === opp.vendedorLogin.toLowerCase()) {
+      throw new BadRequestException('El proceso ya es de ese vendedor.');
+    }
+    await this.setOwner(id, opp, toLogin, `Proceso cedido de @${opp.vendedorLogin} a @${toLogin}.`);
+    return { vendedorLogin: toLogin };
+  }
+
+  /** Cambia el dueño (Supabase + status.md del monorepo) y deja una nota de
+   *  sistema en el chat. Centraliza claim y transfer. */
+  private async setOwner(id: string, opp: SalesOpportunity, newLogin: string, note: string): Promise<void> {
+    const now = new Date().toISOString();
+    const { error } = await this.supabase
+      .from(OPPORTUNITIES_TABLE)
+      .update({ vendedor_login: newLogin, updated_at: now })
+      .eq('id', id);
+    if (error) throw new Error(`No se pudo cambiar el dueño del proceso: ${error.message}`);
+
+    await this.supabase.from(MESSAGES_TABLE).insert({
+      opportunity_id: id,
+      role: 'system',
+      content: note,
+      created_at: now,
+    });
+
+    // status.md del monorepo: mantener el owner sincronizado (best-effort — no
+    // rompemos la cesión si el archivo no está o falla la escritura).
+    try {
+      const statusPath = `sales/${opp.cliente}/${opp.oportunidad}/status.md`;
+      const current = await this.readFileFromRepo(statusPath);
+      if (current && /\*\*Owner vendedor:\*\*/.test(current.content)) {
+        const updated = current.content.replace(
+          /\*\*Owner vendedor:\*\*\s*@?[\w-]+/,
+          `**Owner vendedor:** @${newLogin}`,
+        );
+        await this.writeFileToRepo(
+          statusPath,
+          updated,
+          `sales(${opp.cliente}): ${opp.oportunidad} cambia de owner a @${newLogin}`,
+          current.sha,
+        );
+      }
+    } catch (err) {
+      this.logger.warn(`No se pudo actualizar el owner en status.md de ${opp.cliente}/${opp.oportunidad}: ${(err as Error).message}`);
+    }
+  }
+
+  async sendMessage(id: string, content: string, requesterLogin: string | null): Promise<SalesSendMessageResult> {
+    const { opp, messages } = await this.loadOpportunity(id);
+    this.assertCanEdit(opp, requesterLogin);
     const now = new Date().toISOString();
 
     // 1. Persistir el mensaje del vendedor primero — si el LLM falla, no se pierde.
@@ -230,9 +354,9 @@ export class SalesService {
 
     // 2. Llamar al LLM (cascada Gemini flash→pro→Groq→DeepSeek ya incluida en
     //    GeminiProvider — nada nuevo que construir acá).
-    const history = [...detail.messages, { role: 'vendor' as const, content, id: '', opportunityId: id, createdAt: now }]
+    const history = [...messages, { role: 'vendor' as const, content, id: '', opportunityId: id, createdAt: now }]
       .slice(-HISTORY_WINDOW);
-    const prompt = buildBriefPrompt(detail.draft, history);
+    const prompt = buildBriefPrompt(opp.draft, history);
 
     const raw = await this.gemini.generateRaw({
       prompt,
@@ -259,8 +383,9 @@ export class SalesService {
     return parsed;
   }
 
-  async syncBrief(id: string): Promise<SalesSyncResult> {
-    const opp = await this.getOpportunity(id);
+  async syncBrief(id: string, requesterLogin: string | null): Promise<SalesSyncResult> {
+    const { opp } = await this.loadOpportunity(id);
+    this.assertCanEdit(opp, requesterLogin);
 
     // Gate de seguridad — caso real que pasó: una oportunidad DESCUBIERTA del
     // monorepo (nunca se chateó en la plataforma) tiene draft={} por defecto.
@@ -284,9 +409,9 @@ export class SalesService {
     return { url: `https://github.com/${OWNER}/${REPO}/blob/main/${path}`, syncedAt };
   }
 
-  async handoff(id: string): Promise<SalesSyncResult> {
-    const result = await this.syncBrief(id);
-    const opp = await this.getOpportunity(id);
+  async handoff(id: string, requesterLogin: string | null): Promise<SalesSyncResult> {
+    const result = await this.syncBrief(id, requesterLogin); // ya verifica dueño
+    const { opp } = await this.loadOpportunity(id);
 
     const statusPath = `sales/${opp.cliente}/${opp.oportunidad}/status.md`;
     const current = await this.readFileFromRepo(statusPath);
@@ -322,8 +447,9 @@ export class SalesService {
    *  eso, si no hay `access.json`, chequeamos en vivo si la URL sirve
    *  contenido real (no el placeholder genérico de Cloudflare Pages) para
    *  poder avisar del hueco en vez de decir "no generada" sin más. */
-  async getProposalAccess(id: string): Promise<SalesProposalAccess> {
-    const opp = await this.getOpportunity(id);
+  async getProposalAccess(id: string, requesterLogin: string | null): Promise<SalesProposalAccess> {
+    const { opp } = await this.loadOpportunity(id);
+    this.assertCanView(opp, requesterLogin); // la contraseña es sensible → no a procesos ajenos
     const url = `https://qa-proposals.pages.dev/${opp.cliente}/${opp.oportunidad}/`;
     const accessPath = `sales/${opp.cliente}/${opp.oportunidad}/access.json`;
     const file = await this.readFileFromRepo(accessPath);
@@ -356,8 +482,9 @@ export class SalesService {
 
   /** Total de aperturas + última fecha (sales_proposal_views, alimentada
    *  por el worker de qa-proposals vía POST /ingest/proposal-view). */
-  async getProposalMetrics(id: string): Promise<SalesProposalMetrics> {
-    const opp = await this.getOpportunity(id);
+  async getProposalMetrics(id: string, requesterLogin: string | null): Promise<SalesProposalMetrics> {
+    const { opp } = await this.loadOpportunity(id);
+    this.assertCanView(opp, requesterLogin);
     const { data, error } = await this.supabase
       .from('sales_proposal_views')
       .select('viewed_at')
@@ -382,8 +509,9 @@ export class SalesService {
    *  en CI, dos regeneraciones en carrera podrían invalidar una contraseña
    *  que el vendedor ya compartió con el cliente. Se rechaza un segundo
    *  dispatch dentro de la ventana de cooldown. */
-  async regenerateProposalPassword(id: string): Promise<SalesRegenerateProposalResult> {
-    const opp = await this.getOpportunity(id);
+  async regenerateProposalPassword(id: string, requesterLogin: string | null): Promise<SalesRegenerateProposalResult> {
+    const { opp } = await this.loadOpportunity(id);
+    this.assertCanEdit(opp, requesterLogin);
     if (!this.writeToken) throw new Error('GITHUB_WRITE_TOKEN no configurado en el servidor.');
 
     const { data: row } = await this.supabase
@@ -514,8 +642,9 @@ export class SalesService {
    *  monorepo (sales/<cliente>/<oportunidad>/**) Y la fila de Supabase (los
    *  mensajes caen solos por ON DELETE CASCADE). No es "ocultar de la lista"
    *  — es sacarla del pipeline de verdad, como pidió el vendedor. */
-  async deleteOpportunity(id: string): Promise<{ deleted: true; filesDeleted: number }> {
-    const opp = await this.getOpportunity(id);
+  async deleteOpportunity(id: string, requesterLogin: string | null): Promise<{ deleted: true; filesDeleted: number }> {
+    const { opp } = await this.loadOpportunity(id);
+    this.assertCanEdit(opp, requesterLogin);
     const basePath = `sales/${opp.cliente}/${opp.oportunidad}`;
 
     const files = await this.listRepoDir(basePath, true);

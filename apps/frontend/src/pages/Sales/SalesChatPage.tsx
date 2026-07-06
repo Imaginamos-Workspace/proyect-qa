@@ -14,6 +14,9 @@ import {
   FileText,
   Settings,
   RotateCcw,
+  Lock,
+  UserPlus,
+  Users,
 } from 'lucide-react';
 import {
   useSalesOpportunity,
@@ -21,6 +24,9 @@ import {
   useSyncBrief,
   useHandoffToTl,
   useDeleteOpportunity,
+  useClaimOpportunity,
+  useTransferOpportunity,
+  useVendedores,
 } from '@/hooks/use-sales';
 import { useScrumMe } from '@/hooks/use-scrum';
 import { Card, CardContent } from '@/components/ui/card';
@@ -57,11 +63,15 @@ export function SalesChatPage() {
   const syncBrief = useSyncBrief(id ?? '');
   const handoff = useHandoffToTl(id ?? '');
   const deleteOpportunity = useDeleteOpportunity();
+  const claim = useClaimOpportunity(id ?? '');
+  const transfer = useTransferOpportunity(id ?? '');
+  const { data: vendedores } = useVendedores();
 
   const [draftMessage, setDraftMessage] = useState('');
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [failedMessage, setFailedMessage] = useState<string | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
+  const [transferTo, setTransferTo] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
@@ -155,6 +165,9 @@ export function SalesChatPage() {
   const draft = opp.draft ?? {};
   const asunciones = draft.asunciones ?? [];
   const statusMeta = salesStatusMeta(opp.status);
+  // Solo el dueño (vendedor) edita: chatear, sincronizar, ceder, borrar. El
+  // backend lo re-verifica; esto es solo para no mostrar controles inútiles.
+  const canEdit = isVendedor && opp.isOwner;
 
   return (
     <div className="mx-auto max-w-4xl space-y-4">
@@ -174,6 +187,49 @@ export function SalesChatPage() {
       {/* El tracker va siempre de primero, visible sin importar qué pestaña
           esté activa abajo — es el "dónde estamos" del negocio. */}
       <SalesPipelineStepper cliente={opp.cliente} status={opp.status} />
+
+      {/* Proceso ajeno: bloqueado. El chat no viaja (el backend lo oculta) —
+          solo se ve el estado general de arriba. */}
+      {opp.locked && (
+        <Card className="border-amber-500/40 bg-amber-500/5">
+          <CardContent className="flex items-start gap-3 p-4">
+            <Lock className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+            <div className="text-sm">
+              <p className="font-medium text-foreground">
+                Este proceso es de <span className="font-semibold">@{opp.vendedorLogin}</span>.
+              </p>
+              <p className="text-muted-foreground">
+                Solo su dueño puede abrir la conversación y editar el brief. Pídele que te lo
+                ceda desde su módulo si necesitas continuarlo.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Proceso sin dueño (descubierto del monorepo/legacy): reclamable. */}
+      {opp.canClaim && isVendedor && (
+        <Card className="border-primary/40 bg-primary/5">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+            <div className="flex items-start gap-3 text-sm">
+              <UserPlus className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+              <div>
+                <p className="font-medium text-foreground">Este proceso no tiene vendedor asignado.</p>
+                <p className="text-muted-foreground">
+                  Reclámalo para volverte su dueño y poder trabajar el brief desde el chat.
+                </p>
+              </div>
+            </div>
+            <Button onClick={() => claim.mutate()} disabled={claim.isPending} className="shrink-0">
+              <UserPlus className="mr-2 h-4 w-4" />
+              {claim.isPending ? 'Reclamando…' : 'Reclamar proceso'}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
+      {claim.isError && (
+        <p className="px-1 text-sm text-destructive">{(claim.error as Error).message}</p>
+      )}
 
       <Tabs defaultValue="chat">
         <TabsList className="grid h-auto w-full grid-cols-3 gap-1 py-1">
@@ -197,16 +253,27 @@ export function SalesChatPage() {
                 {opp.messages.length === 0 && (
                   <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
                     <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
-                      <Sparkles className="h-6 w-6 text-primary" />
+                      {canEdit ? <Sparkles className="h-6 w-6 text-primary" /> : <Lock className="h-6 w-6 text-muted-foreground" />}
                     </div>
                     <p className="max-w-sm text-sm text-muted-foreground">
-                      Contame del cliente y del problema que quiere resolver — o adjuntá la
-                      transcripción de la reunión (📎) y extraigo lo que pueda de ahí.
+                      {canEdit
+                        ? 'Cuéntame del cliente y del problema que quiere resolver — o adjunta la transcripción de la reunión (📎) y extraigo lo que pueda de ahí.'
+                        : opp.locked
+                          ? `La conversación de este proceso es privada de @${opp.vendedorLogin}.`
+                          : opp.canClaim
+                            ? 'Reclama el proceso (arriba) para empezar la conversación.'
+                            : 'Todavía no hay conversación en este proceso.'}
                     </p>
                   </div>
                 )}
                 {opp.messages.map((m) =>
-                  m.role === 'vendor' ? (
+                  m.role === 'system' ? (
+                    <div key={m.id} className="flex justify-center">
+                      <p className="rounded-full bg-muted px-3 py-1 text-xs text-muted-foreground">
+                        {m.content}
+                      </p>
+                    </div>
+                  ) : m.role === 'vendor' ? (
                     <div key={m.id} className="flex justify-end">
                       <div className="max-w-[80%] whitespace-pre-wrap rounded-2xl rounded-tr-sm bg-primary px-4 py-2.5 text-sm text-primary-foreground">
                         {m.content}
@@ -236,7 +303,7 @@ export function SalesChatPage() {
                 )}
               </div>
 
-              {isVendedor && (
+              {canEdit && (
                 <div className="border-t border-border p-4">
                   <form
                     onSubmit={submit}
@@ -332,7 +399,7 @@ export function SalesChatPage() {
             </CardContent>
           </Card>
 
-          {isVendedor && (
+          {canEdit && (
             <Card>
               <CardContent className="space-y-2 p-4">
                 <Button
@@ -370,14 +437,70 @@ export function SalesChatPage() {
               </CardContent>
             </Card>
           )}
+
+          {/* Ceder el proceso a otro vendedor — el histórico de la conversación
+              viaja con él. Tras ceder, este vendedor pierde el acceso. */}
+          {canEdit && (
+            <Card>
+              <CardContent className="space-y-3 p-4">
+                <div className="flex items-center gap-2">
+                  <Users className="h-4 w-4 text-muted-foreground" />
+                  <p className="text-sm font-medium text-foreground">Ceder el proceso a otro vendedor</p>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  La conversación y el brief se transfieren completos. Vas a dejar de ver este
+                  proceso cuando lo cedas.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <select
+                    value={transferTo}
+                    onChange={(e) => setTransferTo(e.target.value)}
+                    className="min-w-[200px] flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="">Elegí un vendedor…</option>
+                    {(vendedores ?? [])
+                      .filter((v) => v.login.toLowerCase() !== opp.vendedorLogin.toLowerCase())
+                      .map((v) => (
+                        <option key={v.login} value={v.login}>
+                          {v.name ? `${v.name} (@${v.login})` : `@${v.login}`}
+                        </option>
+                      ))}
+                  </select>
+                  <Button
+                    variant="outline"
+                    className="shrink-0"
+                    disabled={!transferTo || transfer.isPending}
+                    onClick={() =>
+                      transfer.mutate(transferTo, { onSuccess: () => navigate('/ventas') })
+                    }
+                  >
+                    <Handshake className="mr-2 h-4 w-4" />
+                    {transfer.isPending ? 'Cediendo…' : 'Ceder'}
+                  </Button>
+                </div>
+                {transfer.isError && (
+                  <p className="text-xs text-destructive">{(transfer.error as Error).message}</p>
+                )}
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
 
         {/* ── Propuesta: link/contraseña/métricas (resumen — el detalle vive
             en /ventas/:id/propuesta) + la zona de peligro de la oportunidad. ── */}
         <TabsContent value="propuesta" className="space-y-4">
-          <ProposalAccessCard id={opp.id} cliente={opp.cliente} oportunidad={opp.oportunidad} />
+          {opp.locked ? (
+            <Card>
+              <CardContent className="flex items-center gap-2 p-4 text-sm text-muted-foreground">
+                <Lock className="h-4 w-4 shrink-0" />
+                La propuesta (link y contraseña) es privada de @{opp.vendedorLogin}.
+              </CardContent>
+            </Card>
+          ) : (
+            <ProposalAccessCard id={opp.id} cliente={opp.cliente} oportunidad={opp.oportunidad} />
+          )}
 
-          {isVendedor && (
+          {canEdit && (
             <Card className="border-destructive/30">
               <CardContent className="space-y-2 p-4">
                 {confirmingDelete ? (

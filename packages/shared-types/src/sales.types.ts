@@ -40,7 +40,9 @@ export interface SalesOpportunity {
   updatedAt: string;
 }
 
-export type SalesMessageRole = 'vendor' | 'assistant';
+// 'system' = notas del propio pipeline (proceso cedido/reclamado), no las
+// escribe ni el vendedor ni el LLM — se muestran como línea de sistema.
+export type SalesMessageRole = 'vendor' | 'assistant' | 'system';
 
 export interface SalesMessage {
   id: string;
@@ -52,6 +54,24 @@ export interface SalesMessage {
 
 export interface SalesOpportunityDetail extends SalesOpportunity {
   messages: SalesMessage[];
+  // Propiedad del proceso (rules/13): solo el dueño abre el chat y edita.
+  // isOwner = el que consulta es el vendedor_login de la oportunidad.
+  // locked = tiene dueño y NO soy yo → chat oculto (messages viene vacío).
+  // canClaim = sin dueño real ('desconocido'/vacío) → cualquiera puede
+  //   reclamarlo para volverse el dueño.
+  isOwner: boolean;
+  locked: boolean;
+  canClaim: boolean;
+}
+
+// Vendedor elegible para recibir un proceso cedido (de team.json del monorepo).
+export interface SalesVendedor {
+  login: string;
+  name: string | null;
+}
+
+export interface SalesOwnershipResult {
+  vendedorLogin: string;
 }
 
 export interface SalesSendMessageResult {

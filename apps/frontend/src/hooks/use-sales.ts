@@ -4,11 +4,13 @@ import type {
   SalesMessage,
   SalesOpportunity,
   SalesOpportunityDetail,
+  SalesOwnershipResult,
   SalesProposalAccess,
   SalesProposalMetrics,
   SalesRegenerateProposalResult,
   SalesSendMessageResult,
   SalesSyncResult,
+  SalesVendedor,
 } from '@qa/shared-types';
 
 export function useSalesOpportunities() {
@@ -65,6 +67,42 @@ export function useCreateOpportunity() {
     mutationFn: (input: { cliente: string; oportunidad: string }) =>
       api.post<SalesOpportunity>('/sales/opportunities', input),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sales', 'opportunities'] }),
+  });
+}
+
+/** Vendedores elegibles para recibir un proceso cedido (team.json). */
+export function useVendedores() {
+  return useQuery({
+    queryKey: ['sales', 'vendedores'],
+    queryFn: () => api.get<SalesVendedor[]>('/sales/vendedores'),
+    staleTime: 5 * 60_000,
+  });
+}
+
+/** Reclama un proceso sin dueño ('desconocido'/legacy) — el que reclama se
+ *  vuelve el vendedor y a partir de ahí puede abrir el chat. */
+export function useClaimOpportunity(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<SalesOwnershipResult>(`/sales/opportunities/${id}/claim`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sales', 'opportunities', id] });
+      qc.invalidateQueries({ queryKey: ['sales', 'opportunities'] });
+    },
+  });
+}
+
+/** Cede el proceso a otro vendedor (el histórico viaja con él). Tras ceder, el
+ *  que cedió pierde el acceso — el detalle queda bloqueado. */
+export function useTransferOpportunity(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (toLogin: string) =>
+      api.post<SalesOwnershipResult>(`/sales/opportunities/${id}/transfer`, { toLogin }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sales', 'opportunities', id] });
+      qc.invalidateQueries({ queryKey: ['sales', 'opportunities'] });
+    },
   });
 }
 

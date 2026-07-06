@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 
 interface TeamMember {
   github_user: string;
+  name?: string;
   allowed_roles?: string[];
   active?: boolean;
 }
@@ -51,6 +52,20 @@ export class RolesService {
   async canSell(login: string | null | undefined): Promise<boolean> {
     const roles = await this.rolesFor(login);
     return roles.some((r) => SELL_ROLES.has(r));
+  }
+
+  /** Vendedores activos de team.json — para el selector de "ceder proceso".
+   *  Devuelve login + nombre (si team.json lo tiene). */
+  async listVendedores(): Promise<{ login: string; name: string | null }[]> {
+    const team = await this.load();
+    const out: { login: string; name: string | null }[] = [];
+    for (const m of team.values()) {
+      if (m.active === false) continue;
+      if ((m.allowed_roles ?? []).some((r) => SELL_ROLES.has(r))) {
+        out.push({ login: m.github_user, name: m.name ?? null });
+      }
+    }
+    return out.sort((a, b) => (a.name ?? a.login).localeCompare(b.name ?? b.login));
   }
 
   private async load(): Promise<Map<string, TeamMember>> {
