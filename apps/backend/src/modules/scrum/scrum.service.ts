@@ -1127,7 +1127,7 @@ mutation($projectId:ID!, $itemId:ID!, $fieldId:ID!, $value:ProjectV2FieldValue!)
 // Siembra las iteraciones del campo Sprint (red de seguridad — solo corre si
 // el campo tiene 0 iteraciones; NO toca los ítems existentes del board).
 const SEED_ITERATIONS_MUTATION = `
-mutation($fieldId:ID!, $startDate:Date!, $duration:Int!, $iterations:[IterationInput!]!) {
+mutation($fieldId:ID!, $startDate:Date!, $duration:Int!, $iterations:[ProjectV2Iteration!]!) {
   updateProjectV2Field(input:{ fieldId:$fieldId, iterationConfiguration:{ startDate:$startDate, duration:$duration, iterations:$iterations } }) {
     projectV2Field { ... on ProjectV2IterationField { id } }
   }
