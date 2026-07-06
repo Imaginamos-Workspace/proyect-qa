@@ -64,11 +64,11 @@ export class ScrumController {
   async me(@Req() req: RequestWithUser) {
     const login = githubLogin(req);
     const email = userEmail(req);
-    const [actor, canUploadEvidence] = await Promise.all([
+    const [actor, canMove, canUploadEvidence] = await Promise.all([
       this.roles.resolveActor(login, email),
+      this.roles.canMove(login, email),
       this.roles.canUploadEvidence(login, email),
     ]);
-    const canMove = actor.roles.some((r) => ['tl', 'pm', 'qa', 'dev', 'devops'].includes(r));
     return {
       login: actor.githubLogin,
       email,
@@ -183,7 +183,7 @@ export class ScrumController {
     @Body() body: CarryOverDto,
     @Req() req: RequestWithUser,
   ) {
-    if (!(await this.roles.canMove(githubLogin(req)))) {
+    if (!(await this.roles.canMove(githubLogin(req), userEmail(req)))) {
       throw new ForbiddenException('Tu rol no tiene permiso para mover tarjetas de sprint.');
     }
     return this.scrum.carryOverIssues(slug, title, body.issues, body.to);
@@ -198,7 +198,7 @@ export class ScrumController {
     @Body() body: AssignSprintDto,
     @Req() req: RequestWithUser,
   ) {
-    if (!(await this.roles.canMove(githubLogin(req)))) {
+    if (!(await this.roles.canMove(githubLogin(req), userEmail(req)))) {
       throw new ForbiddenException('Tu rol no tiene permiso para cambiar el sprint de una tarjeta.');
     }
     return this.scrum.assignSprint(slug, Number(number), body.title);

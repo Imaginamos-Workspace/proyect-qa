@@ -92,10 +92,12 @@ export class RolesService {
     return (m?.allowed_roles ?? []).some((r) => EVIDENCE_ROLES.has(r));
   }
 
-  /** ¿El usuario puede mover tarjetas (cambiar Status) en el board? */
-  async canMove(login: string | null | undefined): Promise<boolean> {
-    const roles = await this.rolesFor(login);
-    return roles.some((r) => MOVE_ROLES.has(r));
+  /** ¿El usuario puede mover tarjetas (cambiar Status) en el board? Resuelve por
+   *  login de GitHub O por email (para roles que entran a la plataforma sin
+   *  GitHub) — mismo criterio que /scrum/me y que la carga de evidencia. */
+  async canMove(login: string | null | undefined, email: string | null = null): Promise<boolean> {
+    const m = await this.memberFor(login ?? null, email);
+    return (m?.allowed_roles ?? []).some((r) => MOVE_ROLES.has(r));
   }
 
   /** ¿El usuario puede operar el módulo de Ventas? */
