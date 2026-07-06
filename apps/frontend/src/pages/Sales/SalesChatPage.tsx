@@ -63,7 +63,7 @@ export function SalesChatPage() {
   const [failedMessage, setFailedMessage] = useState<string | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
 
   const confirmDelete = () => {
     if (!id) return;
@@ -102,8 +102,20 @@ export function SalesChatPage() {
 
   // Auto-scroll al último mensaje (o al indicador de "Pensando…") — un chat
   // que no baja solo con cada mensaje nuevo se siente roto/no-reactivo.
+  //
+  // OJO: antes usaba scrollIntoView({behavior:'smooth'}) en un div ancla al
+  // final. Bug real: el mensaje del vendedor y la respuesta del asistente
+  // llegan MUY seguidos (update optimista + respuesta real), cada uno
+  // disparaba una animación smooth nueva que cancelaba a la anterior a
+  // mitad de camino — el scroll quedaba pegado antes de llegar al final,
+  // tapando el final de la última respuesta. Set directo de scrollTop es
+  // instantáneo (sin animación que interrumpir) y siempre llega al fondo real.
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = messagesContainerRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+    // Nota: elapsedSec (el contador de "Pensando…") NO va acá a propósito —
+    // si el vendedor scrollea para arriba a releer algo mientras espera, no
+    // queremos forzarlo de vuelta al fondo cada 1s.
   }, [opp?.messages.length, sendMessage.isPending]);
 
   const onPickTranscript = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -181,7 +193,7 @@ export function SalesChatPage() {
         <TabsContent value="chat">
           <Card className="flex h-[65vh] flex-col overflow-hidden">
             <CardContent className="flex flex-1 flex-col overflow-hidden p-0">
-              <div className="flex-1 space-y-5 overflow-y-auto px-6 py-6">
+              <div ref={messagesContainerRef} className="flex-1 space-y-5 overflow-y-auto px-6 py-6">
                 {opp.messages.length === 0 && (
                   <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
                     <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
@@ -222,7 +234,6 @@ export function SalesChatPage() {
                     </p>
                   </div>
                 )}
-                <div ref={messagesEndRef} />
               </div>
 
               {isVendedor && (
