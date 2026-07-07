@@ -1,6 +1,6 @@
-import { Briefcase, Trophy, TrendingUp, Clock, BrainCircuit } from 'lucide-react';
+import { Briefcase, Trophy, TrendingUp, Clock, BrainCircuit, Activity, CheckCircle2, XCircle } from 'lucide-react';
 import { BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { useSalesOpportunities, useReindexKnowledge } from '@/hooks/use-sales';
+import { useSalesOpportunities, useReindexKnowledge, useAiHealth } from '@/hooks/use-sales';
 import { useScrumMe } from '@/hooks/use-scrum';
 import { StatCard } from '@/components/ui/stat-card';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
@@ -23,6 +23,7 @@ export function SalesDashboard() {
   const { data: me } = useScrumMe();
   const isVendedor = !!me?.roles.includes('vendedor');
   const reindex = useReindexKnowledge();
+  const aiHealth = useAiHealth();
   const list = opportunities ?? [];
 
   const total = list.length;
@@ -151,6 +152,59 @@ export function SalesDashboard() {
               <BrainCircuit className="mr-2 h-4 w-4" />
               {reindex.isPending ? 'Reindexando…' : 'Reindexar conocimiento'}
             </Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Diagnóstico de los proveedores de IA — para ver si Gemini está saturado
+          y si Groq/DeepSeek responden como respaldo. */}
+      {isVendedor && (
+        <Card>
+          <CardContent className="space-y-3 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                  <Activity className="h-5 w-5 text-primary" />
+                </div>
+                <div className="text-sm">
+                  <p className="font-medium text-foreground">Estado del asistente (IA)</p>
+                  <p className="text-muted-foreground">
+                    Prueba en vivo qué modelo responde. Si el chat falla, acá ves cuál está caído.
+                  </p>
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                className="shrink-0"
+                onClick={() => aiHealth.mutate()}
+                disabled={aiHealth.isPending}
+              >
+                <Activity className="mr-2 h-4 w-4" />
+                {aiHealth.isPending ? 'Probando…' : 'Probar modelos'}
+              </Button>
+            </div>
+            {aiHealth.data && (
+              <ul className="grid gap-1.5 sm:grid-cols-2">
+                {aiHealth.data.map((p) => (
+                  <li key={p.provider} className="flex items-center gap-2 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs">
+                    {!p.configured ? (
+                      <XCircle className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                    ) : p.ok ? (
+                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" />
+                    ) : (
+                      <XCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />
+                    )}
+                    <span className="font-medium text-foreground">{p.provider}</span>
+                    <span className="ml-auto text-muted-foreground">
+                      {!p.configured ? 'sin key' : p.ok ? `ok · ${p.ms}ms` : 'falla'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {aiHealth.isError && (
+              <p className="text-xs text-destructive">{(aiHealth.error as Error).message}</p>
+            )}
           </CardContent>
         </Card>
       )}

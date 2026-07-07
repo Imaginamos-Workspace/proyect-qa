@@ -70,6 +70,22 @@ export function useCreateOpportunity() {
   });
 }
 
+export interface AiProviderHealth {
+  provider: string;
+  configured: boolean;
+  ok: boolean;
+  ms: number | null;
+  error?: string;
+}
+
+/** Diagnóstico en vivo de los proveedores de IA (Gemini/Groq/DeepSeek). Se
+ *  dispara a mano (cuesta un poco de cuota) — muestra cuál responde y en cuánto. */
+export function useAiHealth() {
+  return useMutation({
+    mutationFn: () => api.get<AiProviderHealth[]>('/ai/health'),
+  });
+}
+
 /** Reconstruye la base de conocimiento del RAG (metodología + negocios
  *  ganados). Idempotente — puede tardar unos segundos (embeddings). */
 export function useReindexKnowledge() {

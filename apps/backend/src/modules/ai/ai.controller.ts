@@ -1,5 +1,6 @@
 import { Controller, Post, Get, Patch, Body, Param, UseGuards } from '@nestjs/common';
 import { AIService } from './ai.service';
+import { GeminiProvider } from './providers/gemini.provider';
 import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import { Public } from '../auth/decorators/public.decorator';
@@ -13,7 +14,18 @@ import {
 @Controller('ai')
 @UseGuards(SupabaseAuthGuard)
 export class AIController {
-  constructor(private readonly aiService: AIService) {}
+  constructor(
+    private readonly aiService: AIService,
+    private readonly gemini: GeminiProvider,
+  ) {}
+
+  /** Diagnóstico en vivo: pinguea cada proveedor de IA y reporta cuál responde
+   *  (y en cuánto). Para ver si Gemini está saturado y si Groq/DeepSeek están
+   *  disponibles como respaldo. */
+  @Get('health')
+  aiHealth() {
+    return this.gemini.checkProviders();
+  }
 
   @Post('generate-tests')
   async generateTests(

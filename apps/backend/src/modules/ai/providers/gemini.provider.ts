@@ -535,6 +535,47 @@ Return a single JSON object (NOT an array) with this exact shape:
     return result.response.text();
   }
 
+  /** Diagnóstico: pinguea cada proveedor por separado (generación mínima) y
+   *  reporta cuál responde y en cuánto. Alimenta el endpoint GET /ai/health,
+   *  para ver EN VIVO si Gemini está saturado y si Groq/DeepSeek responden. */
+  async checkProviders(): Promise<
+    Array<{ provider: string; configured: boolean; ok: boolean; ms: number | null; error?: string }>
+  > {
+    const req = {
+      contents: [{ role: 'user', parts: [{ text: 'Responde solo con: OK' }] }],
+      generationConfig: { temperature: 0, maxOutputTokens: 8 },
+    } as Parameters<typeof this.model.generateContent>[0];
+
+    const time = async (provider: string, run: () => Promise<unknown>) => {
+      const t0 = Date.now();
+      try {
+        await raceTimeout(run(), 8_000, provider);
+        return { provider, configured: true, ok: true, ms: Date.now() - t0 };
+      } catch (e) {
+        return { provider, configured: true, ok: false, ms: Date.now() - t0, error: (e as Error).message.slice(0, 160) };
+      }
+    };
+
+    const groqKey = this.configService.get<string>('GROQ_API_KEY');
+    const dsKey = this.configService.get<string>('DEEPSEEK_API_KEY');
+    const pingOpenAI = (provider: string, baseUrl: string, apiKey: string, model: string) =>
+      time(provider, async () => {
+        const r = await callOpenAICompatible({ baseUrl, apiKey, model, request: req as OpenAICompatCall['request'] });
+        if (!r.ok) throw new Error(r.error?.message ?? 'sin respuesta');
+      });
+
+    return Promise.all([
+      time('gemini-flash', () => this.model.generateContent(req)),
+      time('gemini-pro', () => this.fallbackModel.generateContent(req)),
+      groqKey
+        ? pingOpenAI('groq', 'https://api.groq.com/openai/v1', groqKey, 'llama-3.3-70b-versatile')
+        : Promise.resolve({ provider: 'groq', configured: false, ok: false, ms: null }),
+      dsKey
+        ? pingOpenAI('deepseek', 'https://api.deepseek.com', dsKey, 'deepseek-chat')
+        : Promise.resolve({ provider: 'deepseek', configured: false, ok: false, ms: null }),
+    ]);
+  }
+
   async analyzeUrl(url: string, pageData: string): Promise<string> {
     const prompt = buildAnalyzePrompt(url, pageData);
 

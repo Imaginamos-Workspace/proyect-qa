@@ -46,6 +46,13 @@ const AUTOSYNC_DEBOUNCE_MS = 10 * 60_000;
 const LLM_DEADLINE_MS = 38_000;
 // El RAG es un extra: si su embedding se cuelga, no puede demorar la respuesta.
 const RAG_RETRIEVE_DEADLINE_MS = 6_000;
+// Metodología de ventas (rules/13 del monorepo) inyectada SIEMPRE en el prompt,
+// para que la IA se base en las reglas/fases reales (no genérico). Cacheada:
+// los cambios que haga el PM en rules/13 se reflejan solos en ≤10 min, sin
+// reindexar. Acotada en chars para no inflar el prompt del LLM gratuito.
+const METHODOLOGY_PATH = 'rules/13-ventas-y-propuestas.md';
+const METHODOLOGY_TTL_MS = 10 * 60_000;
+const METHODOLOGY_MAX_CHARS = 3500;
 
 interface DbOpportunity {
   id: string;
@@ -78,6 +85,7 @@ export class SalesService {
   private readonly logger = new Logger(SalesService.name);
   private readonly writeToken: string | undefined;
   private lastDiscoveryAt = 0;
+  private methodologyCache: { ts: number; text: string } | null = null;
 
   constructor(
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
@@ -373,15 +381,17 @@ export class SalesService {
       // 2. RAG: recuperar SOLO los fragmentos relevantes al mensaje actual. Con
       //    deadline corto — si el embedding del RAG se cuelga, NO puede demorar
       //    la respuesta (best-effort → sin contexto, sigue con draft + ventana).
-      const context = await withTimeout(this.rag.retrieve(content, opp.cliente), RAG_RETRIEVE_DEADLINE_MS)
-        .catch(() => [] as string[]);
+      const [context, methodology] = await Promise.all([
+        withTimeout(this.rag.retrieve(content, opp.cliente), RAG_RETRIEVE_DEADLINE_MS).catch(() => [] as string[]),
+        this.getMethodologyText().catch(() => ''),
+      ]);
 
       // 3. Llamar al LLM CON DEADLINE DURO: si tarda más de LLM_DEADLINE_MS,
       //    cortamos con un error accionable en vez de dejar la request colgada
       //    indefinidamente (el usuario veía "Pensando… (200s)" sin fin).
       const history = [...messages, { role: 'vendor' as const, content, id: '', opportunityId: id, createdAt: now }]
         .slice(-HISTORY_WINDOW);
-      const prompt = buildBriefPrompt(opp.draft, history, context);
+      const prompt = buildBriefPrompt(opp.draft, history, context, methodology, opp.status);
 
       const raw = await withTimeout(
         this.gemini.generateRaw({
@@ -478,6 +488,20 @@ export class SalesService {
   private autoSyncDue(syncedAt: string | null): boolean {
     if (!syncedAt) return true;
     return Date.now() - new Date(syncedAt).getTime() >= AUTOSYNC_DEBOUNCE_MS;
+  }
+
+  /** Metodología de ventas (rules/13) del monorepo, acotada y cacheada. Se
+   *  inyecta SIEMPRE en el prompt para que la IA respete las reglas/fases
+   *  reales que define el PM. Best-effort: si no se puede leer, el chat sigue
+   *  sin ella (devuelve ''). Los cambios en rules/13 se ven en ≤10 min (TTL). */
+  private async getMethodologyText(): Promise<string> {
+    if (this.methodologyCache && Date.now() - this.methodologyCache.ts < METHODOLOGY_TTL_MS) {
+      return this.methodologyCache.text;
+    }
+    const file = await this.readFileFromRepo(METHODOLOGY_PATH).catch(() => null);
+    const text = file ? file.content.slice(0, METHODOLOGY_MAX_CHARS) : '';
+    this.methodologyCache = { ts: Date.now(), text };
+    return text;
   }
 
   async syncBrief(id: string, requesterLogin: string | null): Promise<SalesSyncResult> {
@@ -904,37 +928,51 @@ function buildBriefPrompt(
   draft: SalesBriefDraft,
   history: Array<{ role: string; content: string }>,
   context: string[] = [],
+  methodology = '',
+  status = '',
 ): string {
   const historyText = history.map((m) => `${m.role === 'vendor' ? 'VENDEDOR' : 'ASISTENTE'}: ${m.content}`).join('\n\n');
   // Bloque de contexto recuperado (RAG). Solo entra si hay algo relevante — así
   // el prompt no crece cuando no aporta (economía de cuota del LLM gratuito).
   const contextBlock = context.length
-    ? `\nCONTEXTO RECUPERADO (memoria de este proceso + metodología + casos ganados — úsalo si aplica, NO lo copies literal):\n${context.map((c) => `— ${c}`).join('\n\n')}\n`
+    ? `\nCONTEXTO RECUPERADO (memoria de este proceso + casos ganados — úsalo si aplica, NO lo copies literal):\n${context.map((c) => `— ${c}`).join('\n\n')}\n`
     : '';
+  // Metodología de ventas del monorepo (rules/13). Es la FUENTE DE VERDAD del
+  // proceso/fases que definió el PM — la IA debe respetarla (la usuaria puede
+  // haber recortado fases; esto refleja los cambios en ≤10 min).
+  const methodologyBlock = methodology.trim()
+    ? `\nMETODOLOGÍA Y REGLAS DE VENTA DEL MONOREPO (rules/13 — ES LA FUENTE DE VERDAD, respétala; si define fases/pasos, seguilos, no inventes otros):\n${methodology.trim()}\n`
+    : '';
+  const statusBlock = status ? `\nFASE ACTUAL DE ESTA OPORTUNIDAD (status.md): ${status}\n` : '';
 
-  return `Eres el asistente que ayuda a un vendedor a llenar el brief de una oportunidad comercial (rules/13 del monorepo).
+  return `Eres un CONSULTOR PRE-VENTA experto (software a medida, e-commerce, apps, web) que ayuda a un vendedor a armar el brief de una oportunidad. No eres un formulario: PROPONES, das ejemplos y recomiendas. El vendedor muchas veces no es técnico y necesita que le sugieras opciones para llevarle al cliente.
 
-El DRAFT es la memoria acumulada del proceso: contiene todo lo que ya se extrajo en sesiones previas. Continúa desde ahí — no vuelvas a preguntar lo que ya está cargado.
+Basá TODO (proceso, fases, qué pedir, cómo estructurar el brief y la propuesta) en la METODOLOGÍA DEL MONOREPO de más abajo — es la fuente de verdad de las reglas del negocio, por encima de tu conocimiento genérico.
 
+El DRAFT es la memoria acumulada del proceso: contiene lo ya confirmado en sesiones previas. Continúa desde ahí — no vuelvas a preguntar lo que ya está cargado.
+${methodologyBlock}${statusBlock}
 DRAFT ACTUAL (JSON, puede estar vacío o parcial):
 ${JSON.stringify(draft, null, 2)}
 ${contextBlock}
 CONVERSACIÓN RECIENTE:
 ${historyText}
 
-INSTRUCCIONES:
-1. Extrae del último mensaje del vendedor SOLO lo que dijo explícitamente — NUNCA inventes outcomes, prioridades, asunciones o riesgos que no se mencionaron.
-2. Actualiza el draft fusionando lo nuevo con lo que ya había (no borres campos previos salvo que el vendedor los corrija explícitamente).
-3. Si el mensaje trae una transcripción larga de reunión, trátala igual: extrae todo lo explícito, sección por sección.
-4. Cada asunción en "asunciones" necesita su "impactoSiFalla" (qué cambia en tiempo/costo/alcance si la asunción resulta falsa) — si el vendedor no lo dijo, pregúntaselo en tu respuesta en vez de inventarlo.
-5. En tu respuesta ("reply"), dile al vendedor qué extrajiste y haz UNA pregunta puntual por lo que falta o quedó ambiguo — no repitas preguntas ya respondidas.
-6. Nunca inventes valores. Si falta algo no obligatorio, déjalo vacío y sigue.
-7. Escribe en español neutral, sin modismos ni regionalismos (nada de voseo: "tú", no "vos"; "puedes", no "podés").
+CÓMO RESPONDER (campo "reply") — SÉ PROPOSITIVO, no pasivo:
+- Cuando el vendedor pide ejemplos, dice "no sé", "no especificó" o "el cliente no dijo nada": DALE 3-5 opciones CONCRETAS y típicas para ese tipo de proyecto (funcionalidades, alcance, integraciones, tecnologías, referentes de mercado) que pueda proponerle al cliente. NUNCA respondas repitiendo la misma pregunta.
+- Recomienda lo estándar / la mejor práctica del dominio y explica en una línea por qué. Anticipa lo que suele faltar en este tipo de venta y súgierelo.
+- Si algo es ambiguo, propone una interpretación por defecto ("normalmente esto incluye X, Y, Z — ¿vamos con eso o el cliente pidió algo distinto?") en vez de solo preguntar.
+- Tono de asesor que hace avanzar la venta: propone, sugiere y guía. Cierra con UNA pregunta útil (no interrogatorio).
+
+CÓMO LLENAR EL DRAFT (campo "draft") — SÉ FIEL A LOS HECHOS:
+1. Al draft SOLO va lo que el CLIENTE realmente dijo/confirmó. Tus propuestas y ejemplos NO van al draft como si el cliente los hubiera pedido — son sugerencias en el "reply" hasta que el vendedor confirme que el cliente las aceptó.
+2. Fusiona lo nuevo con lo que ya había (no borres campos salvo corrección explícita). Si viene una transcripción larga, extrae todo lo explícito, sección por sección.
+3. Cada asunción en "asunciones" necesita su "impactoSiFalla"; si no se dijo, proponé un valor razonable en el "reply" para que el vendedor lo confirme, pero no lo des por hecho en el draft.
+4. Escribe en español neutral, sin modismos ni regionalismos (nada de voseo: "tú", no "vos").
 
 Devuelve SOLO este JSON (sin markdown, sin texto fuera del JSON):
 {
-  "reply": "tu respuesta conversacional al vendedor",
-  "draft": { /* draft completo actualizado, mismo shape que el de arriba */ }
+  "reply": "tu respuesta propositiva al vendedor (con ejemplos/opciones concretas cuando aplique)",
+  "draft": { /* draft completo actualizado — solo hechos confirmados del cliente, mismo shape que el de arriba */ }
 }`;
 }
 
