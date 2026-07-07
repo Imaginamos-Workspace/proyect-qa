@@ -43,7 +43,7 @@ const AUTOSYNC_DEBOUNCE_MS = 10 * 60_000;
 // colgada — el usuario veía "Pensando… (200s)" sin fin. Debe quedar por debajo
 // del maxDuration de Vercel (60s) y del timeout del cliente (55s) para que el
 // backend SIEMPRE devuelva algo antes de que lo maten.
-const LLM_DEADLINE_MS = 38_000;
+const LLM_DEADLINE_MS = 40_000;
 // El RAG es un extra: si su embedding se cuelga, no puede demorar la respuesta.
 const RAG_RETRIEVE_DEADLINE_MS = 6_000;
 // Metodología de ventas (rules/13 del monorepo) inyectada SIEMPRE en el prompt,
@@ -407,7 +407,7 @@ export class SalesService {
           // respaldo. Groq responde en ~1-2s; el Gemini gratis es el que se
           // satura/cuelga. Si Groq falla, cae a flash (con timeout por intento
           // de 12s para no colgarse) y luego DeepSeek.
-          cascade: { preferGroq: true, attemptTimeoutMs: 12_000, primaryAttempts: 1, useProFallback: false },
+          cascade: { preferGroq: true, attemptTimeoutMs: 10_000, primaryAttempts: 1, useProFallback: false },
         }),
         LLM_DEADLINE_MS,
         'El asistente tardó demasiado en responder (el modelo gratuito puede estar saturado). Volvé a intentar en un momento.',
@@ -928,10 +928,13 @@ function distillMethodology(md: string): string {
 }
 
 function withTimeout<T>(p: Promise<T>, ms: number, message = 'La operación tardó demasiado.'): Promise<T> {
-  return Promise.race([
-    p,
-    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
-  ]);
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(message)), ms);
+  });
+  // clearTimeout al resolver/rechazar: sin esto, el setTimeout pendiente mantiene
+  // vivo el event loop de la función serverless y retrasa el envío de la respuesta.
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
 }
 
 // ─── Placeholders — mismo orden/criterio que scripts/sales-new.mjs ─────────

@@ -126,7 +126,10 @@ export class GeminiProvider implements AIProvider {
     const PRIMARY_ATTEMPTS = opts.primaryAttempts ?? 4;
     for (let attempt = 1; attempt <= PRIMARY_ATTEMPTS; attempt++) {
       try {
-        return await raceTimeout(this.model.generateContent(request), opts.attemptTimeoutMs, 'gemini-flash');
+        // timeout del SDK: cancela DE VERDAD la petición (aborta el fetch) al
+        // vencer — así un Gemini colgado no queda corriendo en segundo plano
+        // manteniendo viva la función serverless y retrasando la respuesta.
+        return await this.model.generateContent(request, opts.attemptTimeoutMs ? { timeout: opts.attemptTimeoutMs } : {});
       } catch (err) {
         const status = (err as { status?: number })?.status;
         const message = err instanceof Error ? err.message : String(err);
@@ -152,7 +155,7 @@ export class GeminiProvider implements AIProvider {
       console.warn(`[ai] -flash failed, trying -pro`);
       for (let attempt = 1; attempt <= FALLBACK_ATTEMPTS; attempt++) {
         try {
-          return await raceTimeout(this.fallbackModel.generateContent(request), opts.attemptTimeoutMs, 'gemini-pro');
+          return await this.fallbackModel.generateContent(request, opts.attemptTimeoutMs ? { timeout: opts.attemptTimeoutMs } : {});
         } catch (err) {
           const status = (err as { status?: number })?.status;
           const message = err instanceof Error ? err.message : String(err);
@@ -567,7 +570,7 @@ Return a single JSON object (NOT an array) with this exact shape:
     const time = async (provider: string, run: () => Promise<unknown>) => {
       const t0 = Date.now();
       try {
-        await raceTimeout(run(), 8_000, provider);
+        await run();
         return { provider, configured: true, ok: true, ms: Date.now() - t0 };
       } catch (e) {
         return { provider, configured: true, ok: false, ms: Date.now() - t0, error: (e as Error).message.slice(0, 160) };
@@ -582,9 +585,11 @@ Return a single JSON object (NOT an array) with this exact shape:
         if (!r.ok) throw new Error(r.error?.message ?? 'sin respuesta');
       });
 
+    // timeout del SDK (8s) para los pings de Gemini — aborta de verdad, sin dejar
+    // la petición colgada. Groq/DeepSeek ya abortan solos en callOpenAICompatible.
     return Promise.all([
-      time('gemini-flash', () => this.model.generateContent(req)),
-      time('gemini-pro', () => this.fallbackModel.generateContent(req)),
+      time('gemini-flash', () => this.model.generateContent(req, { timeout: 8_000 })),
+      time('gemini-pro', () => this.fallbackModel.generateContent(req, { timeout: 8_000 })),
       groqKey
         ? pingOpenAI('groq', 'https://api.groq.com/openai/v1', groqKey, 'llama-3.3-70b-versatile')
         : Promise.resolve({ provider: 'groq', configured: false, ok: false, ms: null }),
@@ -623,19 +628,6 @@ function ensurePlaywrightImport(code: string): string {
  * retry, configure another key, or just wait.
  */
 type ProviderFailure = { provider: string; status?: number; message: string };
-
-/** Corre una promesa con timeout opcional: si `ms` está definido y no responde
- *  a tiempo, RECHAZA (el modelo se colgó) para que la cascada pase al siguiente
- *  proveedor. Sin `ms`, no cambia el comportamiento (usos que no lo necesitan). */
-function raceTimeout<T>(p: Promise<T>, ms: number | undefined, label: string): Promise<T> {
-  if (!ms) return p;
-  return Promise.race([
-    p,
-    new Promise<T>((_, reject) =>
-      setTimeout(() => reject(new Error(`${label}: sin respuesta en ${ms}ms (timeout)`)), ms),
-    ),
-  ]);
-}
 
 function buildExhaustedError(failures: ProviderFailure[]): Error {
   if (failures.length === 0) {
@@ -746,8 +738,8 @@ async function callOpenAICompatible(
         max_tokens: cfg.maxOutputTokens ?? 4096,
         ...(wantJson ? { response_format: { type: 'json_object' } } : {}),
       }),
-      // Timeout duro: si Groq/DeepSeek se cuelga, no puede bloquear la respuesta.
-      signal: AbortSignal.timeout(20_000),
+      // Timeout duro que aborta el fetch: si Groq/DeepSeek se cuelga, no bloquea.
+      signal: AbortSignal.timeout(12_000),
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
