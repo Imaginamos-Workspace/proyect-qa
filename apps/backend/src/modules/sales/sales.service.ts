@@ -52,11 +52,11 @@ const RAG_RETRIEVE_DEADLINE_MS = 6_000;
 // reindexar. Acotada en chars para no inflar el prompt del LLM gratuito.
 const METHODOLOGY_PATH = 'rules/13-ventas-y-propuestas.md';
 const METHODOLOGY_TTL_MS = 10 * 60_000;
-// Tope del DIGEST de reglas (no del archivo crudo): el digest es solo
-// reglas/encabezados/fases (sin prosa), ~7.5k chars para rules/13 entero. 8500
-// (~2000 tokens) lo cubre COMPLETO con margen — así la IA tiene TODAS las reglas
-// del rol, no un pedazo. Gemini/Groq manejan de sobra ese tamaño de prompt.
-const METHODOLOGY_MAX_CHARS = 8500;
+// Tope del DIGEST de reglas del BRIEF (etapa 1 — lo que necesita el vendedor).
+// El digest enfocado en el brief es ~2.2k chars (~600 tokens); 4000 da margen
+// si el PM agrega reglas al brief. Economía de tokens del LLM gratuito: el
+// workflow del TL (etapa 2) NO se inyecta acá (este chat es del vendedor).
+const METHODOLOGY_MAX_CHARS = 4000;
 
 interface DbOpportunity {
   id: string;
@@ -913,11 +913,15 @@ export class SalesService {
  *  inventar valores" y "los precios se calculan en la propuesta" SIEMPRE lleguen
  *  al prompt. */
 function distillMethodology(md: string): string {
+  // Este chat es la herramienta del VENDEDOR (etapa 1 — brief). Cortamos antes
+  // del workflow del TL (etapa 2 — propuestas/estimación/precios): el vendedor
+  // no lo necesita y ahorra ~70% de tokens del LLM gratuito. La regla dura de
+  // "no inventar precios" ya está fija en el prompt, así que el corte no la pierde.
+  const lines = md.split('\n');
+  const tlIdx = lines.findIndex((l) => /Workflow del TL|etapa 2/i.test(l));
+  const scoped = tlIdx > 0 ? lines.slice(0, tlIdx) : lines;
   const keepRe = /^#{1,4}\s|❌|✅|\bNUNCA\b|\bSIEMPRE\b|precio|costo|presupuesto|tarifa|estimaci|se calcula|^\s*\d+\.\s+\*\*/i;
-  const kept = md
-    .split('\n')
-    .filter((line) => keepRe.test(line))
-    .map((line) => line.trimEnd());
+  const kept = scoped.filter((line) => keepRe.test(line)).map((line) => line.trimEnd());
   const digest = kept.join('\n');
   return digest.length > METHODOLOGY_MAX_CHARS ? digest.slice(0, METHODOLOGY_MAX_CHARS) : digest;
 }
