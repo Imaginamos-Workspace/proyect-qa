@@ -17,6 +17,7 @@ import {
   Lock,
   UserPlus,
   Users,
+  Loader2,
 } from 'lucide-react';
 import {
   useSalesOpportunity,
@@ -293,12 +294,24 @@ export function SalesChatPage() {
                 {sendMessage.isPending && (
                   <div className="flex gap-3">
                     <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-primary/10">
-                      <Sparkles className="h-3.5 w-3.5 animate-pulse text-primary" />
+                      <Loader2 className="h-4 w-4 animate-spin text-primary" />
                     </div>
-                    <p className="text-sm text-muted-foreground">
-                      Pensando{elapsedSec > 0 ? `… (${elapsedSec}s)` : '…'}
-                      {elapsedSec >= 15 && ' — puede tardar hasta ~1 min si el modelo principal está saturado.'}
-                    </p>
+                    <div className="flex flex-col gap-0.5">
+                      <p className="flex items-center gap-2 text-sm font-medium text-foreground">
+                        Pensando
+                        <span className="inline-flex gap-0.5">
+                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary/60 [animation-delay:-0.3s]" />
+                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary/60 [animation-delay:-0.15s]" />
+                          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary/60" />
+                        </span>
+                        {elapsedSec > 0 && <span className="text-xs font-normal text-muted-foreground">({elapsedSec}s)</span>}
+                      </p>
+                      {elapsedSec >= 12 && (
+                        <p className="text-xs text-muted-foreground">
+                          El modelo gratuito puede estar saturado. Si se pasa de ~40s, te aviso para reintentar.
+                        </p>
+                      )}
+                    </div>
                   </div>
                 )}
               </div>
@@ -340,8 +353,9 @@ export function SalesChatPage() {
                       size="icon"
                       className="shrink-0 rounded-full"
                       disabled={sendMessage.isPending || !draftMessage.trim()}
+                      title={sendMessage.isPending ? 'Esperando la respuesta…' : 'Enviar'}
                     >
-                      <Send className="h-4 w-4" />
+                      {sendMessage.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                     </Button>
                   </form>
                   {sendMessage.isError && (

@@ -38,6 +38,14 @@ const REGENERATE_COOLDOWN_MS = 3 * 60_000;
 // por turno (que ensuciaría el historial de main). El botón "Sincronizar" y el
 // handoff siguen forzando la sincronización inmediata sin este límite.
 const AUTOSYNC_DEBOUNCE_MS = 10 * 60_000;
+// Deadline duro de la respuesta del LLM. Si la cascada (flash→pro→Groq→DeepSeek)
+// se pasa de esto, cortamos con un error accionable en vez de dejar la request
+// colgada — el usuario veía "Pensando… (200s)" sin fin. Debe quedar por debajo
+// del maxDuration de Vercel (60s) y del timeout del cliente (55s) para que el
+// backend SIEMPRE devuelva algo antes de que lo maten.
+const LLM_DEADLINE_MS = 38_000;
+// El RAG es un extra: si su embedding se cuelga, no puede demorar la respuesta.
+const RAG_RETRIEVE_DEADLINE_MS = 6_000;
 
 interface DbOpportunity {
   id: string;
@@ -351,57 +359,77 @@ export class SalesService {
     this.assertCanEdit(opp, requesterLogin);
     const now = new Date().toISOString();
 
-    // 1. Persistir el mensaje del vendedor primero — si el LLM falla, no se pierde.
-    await this.supabase.from(MESSAGES_TABLE).insert({
-      opportunity_id: id,
-      role: 'vendor',
-      content,
-      created_at: now,
-    });
+    // 1. Persistir el mensaje del vendedor. Capturamos su id: si el LLM falla o
+    //    se pasa del deadline, lo BORRAMOS (abajo) para no dejar un mensaje
+    //    huérfano sin respuesta — así "Reintentar" no deja duplicados y la vista
+    //    queda consistente con la base (hidratación limpia).
+    const { data: vendorRow } = await this.supabase
+      .from(MESSAGES_TABLE)
+      .insert({ opportunity_id: id, role: 'vendor', content, created_at: now })
+      .select('id')
+      .single();
 
-    // 2. RAG: recuperar SOLO los fragmentos relevantes al mensaje actual
-    //    (memoria del proceso + metodología + casos ganados). Esto es lo que
-    //    permite "continuar donde quedó" sin mandarle toda la conversación al
-    //    LLM gratuito: la memoria vieja se trae solo si es relevante ahora.
-    //    Best-effort — si el RAG falla, el chat sigue con draft + ventana corta.
-    const context = await this.rag.retrieve(content, opp.cliente);
+    try {
+      // 2. RAG: recuperar SOLO los fragmentos relevantes al mensaje actual. Con
+      //    deadline corto — si el embedding del RAG se cuelga, NO puede demorar
+      //    la respuesta (best-effort → sin contexto, sigue con draft + ventana).
+      const context = await withTimeout(this.rag.retrieve(content, opp.cliente), RAG_RETRIEVE_DEADLINE_MS)
+        .catch(() => [] as string[]);
 
-    // 3. Llamar al LLM (cascada Gemini flash→pro→Groq→DeepSeek ya incluida en
-    //    GeminiProvider). El prompt lleva: draft (estado acumulado) + últimos
-    //    HISTORY_WINDOW turnos + el contexto recuperado, todo acotado.
-    const history = [...messages, { role: 'vendor' as const, content, id: '', opportunityId: id, createdAt: now }]
-      .slice(-HISTORY_WINDOW);
-    const prompt = buildBriefPrompt(opp.draft, history, context);
+      // 3. Llamar al LLM CON DEADLINE DURO: si tarda más de LLM_DEADLINE_MS,
+      //    cortamos con un error accionable en vez de dejar la request colgada
+      //    indefinidamente (el usuario veía "Pensando… (200s)" sin fin).
+      const history = [...messages, { role: 'vendor' as const, content, id: '', opportunityId: id, createdAt: now }]
+        .slice(-HISTORY_WINDOW);
+      const prompt = buildBriefPrompt(opp.draft, history, context);
 
-    const raw = await this.gemini.generateRaw({
-      prompt,
-      temperature: 0.3,
-      maxOutputTokens: 4096,
-      responseMimeType: 'application/json',
-    });
+      const raw = await withTimeout(
+        this.gemini.generateRaw({
+          prompt,
+          temperature: 0.3,
+          maxOutputTokens: 4096,
+          responseMimeType: 'application/json',
+        }),
+        LLM_DEADLINE_MS,
+        'El asistente tardó demasiado en responder (el modelo gratuito puede estar saturado). Volvé a intentar en un momento.',
+      );
 
-    const parsed = parseAssistantResponse(raw);
+      const parsed = parseAssistantResponse(raw);
 
-    // 4. Persistir la respuesta + draft actualizado.
-    const nowReply = new Date().toISOString();
-    await this.supabase.from(MESSAGES_TABLE).insert({
-      opportunity_id: id,
-      role: 'assistant',
-      content: parsed.reply,
-      created_at: nowReply,
-    });
-    await this.supabase
-      .from(OPPORTUNITIES_TABLE)
-      .update({ draft: parsed.draft, updated_at: nowReply })
-      .eq('id', id);
+      // 4. Persistir la respuesta + draft actualizado.
+      const nowReply = new Date().toISOString();
+      await this.supabase.from(MESSAGES_TABLE).insert({
+        opportunity_id: id,
+        role: 'assistant',
+        content: parsed.reply,
+        created_at: nowReply,
+      });
+      await this.supabase
+        .from(OPPORTUNITIES_TABLE)
+        .update({ draft: parsed.draft, updated_at: nowReply })
+        .eq('id', id);
 
-    // 5. Post-turno. OJO serverless (Vercel): el trabajo lanzado sin await se
-    //    corta cuando la función retorna → NO usar fire-and-forget. Se AWAITea,
-    //    pero cada sub-tarea es resiliente por dentro: si una falla, la otra
-    //    igual corre y el turno (ya persistido arriba) nunca se pierde.
-    await this.afterTurn(id, opp, content, parsed);
+      // 5. Post-turno (indexar RAG + auto-sync de brief.md) FUERA del camino de
+      //    respuesta: no demora ni un segundo la respuesta al vendedor. Best-
+      //    effort (en serverless puede no completar; el brief igual se sincroniza
+      //    con "Sincronizar"/handoff, y el RAG se reindexa después).
+      void this.afterTurn(id, opp, content, parsed).catch((err) =>
+        this.logger.warn(`Post-turno de ${opp.cliente}/${opp.oportunidad} degradó: ${(err as Error).message}`),
+      );
 
-    return parsed;
+      return parsed;
+    } catch (err) {
+      // El turno no produjo respuesta → limpiamos el mensaje del vendedor para
+      // que la conversación no quede con un mensaje colgado (el contenido no se
+      // pierde: el frontend lo guarda para "Reintentar").
+      if (vendorRow?.id) {
+        await this.supabase.from(MESSAGES_TABLE).delete().eq('id', vendorRow.id).then(
+          () => undefined,
+          () => undefined,
+        );
+      }
+      throw err;
+    }
   }
 
   /** Tareas post-turno: (a) indexar el turno nuevo en la memoria RAG del
@@ -839,6 +867,17 @@ export class SalesService {
       throw new Error(`GitHub contents PUT ${path} → HTTP ${res.status}: ${text.slice(0, 300)}`);
     }
   }
+}
+
+/** Corre una promesa con deadline: si no resuelve en `ms`, rechaza con
+ *  `message`. La promesa perdedora sigue en segundo plano pero se ignora
+ *  (Promise.race maneja ambas → sin unhandledRejection). Clave para que la
+ *  respuesta del chat NUNCA se cuelgue indefinidamente. */
+function withTimeout<T>(p: Promise<T>, ms: number, message = 'La operación tardó demasiado.'): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) => setTimeout(() => reject(new Error(message)), ms)),
+  ]);
 }
 
 // ─── Placeholders — mismo orden/criterio que scripts/sales-new.mjs ─────────
