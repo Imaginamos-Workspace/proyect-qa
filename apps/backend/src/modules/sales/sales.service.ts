@@ -52,7 +52,11 @@ const RAG_RETRIEVE_DEADLINE_MS = 6_000;
 // reindexar. Acotada en chars para no inflar el prompt del LLM gratuito.
 const METHODOLOGY_PATH = 'rules/13-ventas-y-propuestas.md';
 const METHODOLOGY_TTL_MS = 10 * 60_000;
-const METHODOLOGY_MAX_CHARS = 3500;
+// Tope del DIGEST de reglas (no del archivo crudo): el digest es solo
+// reglas/encabezados/fases (sin prosa), ~7.5k chars para rules/13 entero. 8500
+// (~2000 tokens) lo cubre COMPLETO con margen — así la IA tiene TODAS las reglas
+// del rol, no un pedazo. Gemini/Groq manejan de sobra ese tamaño de prompt.
+const METHODOLOGY_MAX_CHARS = 8500;
 
 interface DbOpportunity {
   id: string;
@@ -499,7 +503,7 @@ export class SalesService {
       return this.methodologyCache.text;
     }
     const file = await this.readFileFromRepo(METHODOLOGY_PATH).catch(() => null);
-    const text = file ? file.content.slice(0, METHODOLOGY_MAX_CHARS) : '';
+    const text = file ? distillMethodology(file.content) : '';
     this.methodologyCache = { ts: Date.now(), text };
     return text;
   }
@@ -901,6 +905,23 @@ export class SalesService {
  *  `message`. La promesa perdedora sigue en segundo plano pero se ignora
  *  (Promise.race maneja ambas → sin unhandledRejection). Clave para que la
  *  respuesta del chat NUNCA se cuelgue indefinidamente. */
+/** Extrae un DIGEST de reglas de rules/13: encabezados, fases numeradas y toda
+ *  línea que sea una regla dura (❌/✅/NUNCA/SIEMPRE) o hable de precios/costos —
+ *  sin importar EN QUÉ PARTE del doc estén. Reemplaza al corte posicional viejo
+ *  (que dejaba afuera la parte de precios). Basado en patrones → se adapta si
+ *  el PM reordena/edita rules/13, y garantiza que reglas críticas como "NUNCA
+ *  inventar valores" y "los precios se calculan en la propuesta" SIEMPRE lleguen
+ *  al prompt. */
+function distillMethodology(md: string): string {
+  const keepRe = /^#{1,4}\s|❌|✅|\bNUNCA\b|\bSIEMPRE\b|precio|costo|presupuesto|tarifa|estimaci|se calcula|^\s*\d+\.\s+\*\*/i;
+  const kept = md
+    .split('\n')
+    .filter((line) => keepRe.test(line))
+    .map((line) => line.trimEnd());
+  const digest = kept.join('\n');
+  return digest.length > METHODOLOGY_MAX_CHARS ? digest.slice(0, METHODOLOGY_MAX_CHARS) : digest;
+}
+
 function withTimeout<T>(p: Promise<T>, ms: number, message = 'La operación tardó demasiado.'): Promise<T> {
   return Promise.race([
     p,
