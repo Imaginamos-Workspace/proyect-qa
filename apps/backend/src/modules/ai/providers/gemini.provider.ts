@@ -52,6 +52,27 @@ export class GeminiProvider implements AIProvider {
     return res.embeddings.map((e) => e.values);
   }
 
+  /** Un intento contra Groq (Llama 3.3 70B). Devuelve la respuesta en el shape
+   *  de Gemini, o null si falla (empujando el fallo a la lista). */
+  private async tryGroq(
+    groqKey: string,
+    request: Parameters<typeof this.model.generateContent>[0],
+    failures: { provider: string; status?: number; message: string }[],
+  ): Promise<Awaited<ReturnType<typeof this.model.generateContent>> | null> {
+    const groqResp = await callOpenAICompatible({
+      baseUrl: 'https://api.groq.com/openai/v1',
+      apiKey: groqKey,
+      model: 'llama-3.3-70b-versatile',
+      request: request as OpenAICompatCall['request'],
+    });
+    if (groqResp.ok && groqResp.value) {
+      return groqResp.value as Awaited<ReturnType<typeof this.model.generateContent>>;
+    }
+    failures.push({ provider: 'groq', status: groqResp.error?.status, message: groqResp.error?.message || 'unknown' });
+    console.warn(`[groq] failed: ${groqResp.error?.message}`);
+    return null;
+  }
+
   /**
    * Wraps model.generateContent() with retry on transient errors:
    * - 503 Service Unavailable (Gemini overloaded — common at peak hours)
@@ -64,7 +85,7 @@ export class GeminiProvider implements AIProvider {
    */
   private async generateContentWithRetry(
     request: Parameters<typeof this.model.generateContent>[0],
-    opts: { attemptTimeoutMs?: number; primaryAttempts?: number; useProFallback?: boolean } = {},
+    opts: { attemptTimeoutMs?: number; primaryAttempts?: number; useProFallback?: boolean; preferGroq?: boolean } = {},
   ): Promise<Awaited<ReturnType<typeof this.model.generateContent>>> {
     // Cascade — every configured provider gets a shot before we surface
     // the error. Strategy:
@@ -83,6 +104,19 @@ export class GeminiProvider implements AIProvider {
 
     const isQuotaOrOverload = (s?: number) =>
       s === 503 || s === 429 || s === 502 || s === 500;
+
+    const groqKey = this.configService.get<string>('GROQ_API_KEY');
+    let groqTried = false;
+
+    // ── Step 0: Groq PRIMERO (preferGroq) — para el chat interactivo. Groq
+    // (Llama 3.3 70B) es rápido y estable; el Gemini gratis es el que se
+    // satura/cuelga. Probar Groq primero da respuesta en ~1-2s y evita perder
+    // 12-24s en un Gemini colgado. Si Groq falla, sigue la cascada normal.
+    if (opts.preferGroq && groqKey) {
+      const r = await this.tryGroq(groqKey, request, failures);
+      if (r) return r;
+      groqTried = true;
+    }
 
     // ── Step 1: gemini-2.5-flash ────────────────────────────────────
     // attemptTimeoutMs: si el modelo se CUELGA (no responde), lo tratamos como
@@ -135,27 +169,11 @@ export class GeminiProvider implements AIProvider {
       }
     }
 
-    // ── Step 3: Groq (always tried if configured) ───────────────────
-    const groqKey = this.configService.get<string>('GROQ_API_KEY');
-    if (groqKey) {
+    // ── Step 3: Groq (si no se probó ya en el Step 0) ───────────────
+    if (groqKey && !groqTried) {
       console.warn('[ai] -pro failed, trying Groq');
-      const groqResp = await callOpenAICompatible({
-        baseUrl: 'https://api.groq.com/openai/v1',
-        apiKey: groqKey,
-        model: 'llama-3.3-70b-versatile',
-        request: request as OpenAICompatCall['request'],
-      });
-      if (groqResp.ok && groqResp.value) {
-        return groqResp.value as Awaited<
-          ReturnType<typeof this.model.generateContent>
-        >;
-      }
-      failures.push({
-        provider: 'groq',
-        status: groqResp.error?.status,
-        message: groqResp.error?.message || 'unknown',
-      });
-      console.warn(`[groq] failed: ${groqResp.error?.message}`);
+      const r = await this.tryGroq(groqKey, request, failures);
+      if (r) return r;
     }
 
     // ── Step 4: DeepSeek (always tried if configured) ───────────────
@@ -522,7 +540,7 @@ Return a single JSON object (NOT an array) with this exact shape:
     // Control de la cascada para llamadas interactivas (chat de ventas): timeout
     // por intento para caer rápido al respaldo si Gemini se cuelga, menos
     // reintentos de Gemini, y saltar -pro para ir directo a Groq.
-    cascade?: { attemptTimeoutMs?: number; primaryAttempts?: number; useProFallback?: boolean };
+    cascade?: { attemptTimeoutMs?: number; primaryAttempts?: number; useProFallback?: boolean; preferGroq?: boolean };
   }): Promise<string> {
     const result = await this.generateContentWithRetry({
       contents: [{ role: 'user', parts: [{ text: args.prompt }] }],
