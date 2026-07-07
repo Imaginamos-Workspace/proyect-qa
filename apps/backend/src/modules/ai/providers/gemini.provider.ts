@@ -64,6 +64,7 @@ export class GeminiProvider implements AIProvider {
    */
   private async generateContentWithRetry(
     request: Parameters<typeof this.model.generateContent>[0],
+    opts: { attemptTimeoutMs?: number; primaryAttempts?: number; useProFallback?: boolean } = {},
   ): Promise<Awaited<ReturnType<typeof this.model.generateContent>>> {
     // Cascade — every configured provider gets a shot before we surface
     // the error. Strategy:
@@ -84,10 +85,14 @@ export class GeminiProvider implements AIProvider {
       s === 503 || s === 429 || s === 502 || s === 500;
 
     // ── Step 1: gemini-2.5-flash ────────────────────────────────────
-    const PRIMARY_ATTEMPTS = 4;
+    // attemptTimeoutMs: si el modelo se CUELGA (no responde), lo tratamos como
+    // fallo y pasamos al siguiente proveedor — un cuelgue no lanza error solo,
+    // así que sin esto la cascada nunca llegaba a Groq/DeepSeek (bug real del
+    // chat de ventas: se quedaba "Pensando" sin fin en vez de caer al respaldo).
+    const PRIMARY_ATTEMPTS = opts.primaryAttempts ?? 4;
     for (let attempt = 1; attempt <= PRIMARY_ATTEMPTS; attempt++) {
       try {
-        return await this.model.generateContent(request);
+        return await raceTimeout(this.model.generateContent(request), opts.attemptTimeoutMs, 'gemini-flash');
       } catch (err) {
         const status = (err as { status?: number })?.status;
         const message = err instanceof Error ? err.message : String(err);
@@ -105,23 +110,28 @@ export class GeminiProvider implements AIProvider {
     }
 
     // ── Step 2: gemini-2.5-pro ──────────────────────────────────────
-    const FALLBACK_ATTEMPTS = 2;
-    console.warn(`[ai] -flash failed, trying -pro`);
-    for (let attempt = 1; attempt <= FALLBACK_ATTEMPTS; attempt++) {
-      try {
-        return await this.fallbackModel.generateContent(request);
-      } catch (err) {
-        const status = (err as { status?: number })?.status;
-        const message = err instanceof Error ? err.message : String(err);
-        if (attempt === FALLBACK_ATTEMPTS || !isQuotaOrOverload(status)) {
-          failures.push({ provider: 'gemini-pro', status, message });
-          break;
+    // Se puede saltar (useProFallback:false) — para el chat de ventas conviene
+    // caer directo a Groq (otro proveedor) en vez de reintentar el mismo Gemini
+    // que probablemente también está saturado.
+    if (opts.useProFallback !== false) {
+      const FALLBACK_ATTEMPTS = 2;
+      console.warn(`[ai] -flash failed, trying -pro`);
+      for (let attempt = 1; attempt <= FALLBACK_ATTEMPTS; attempt++) {
+        try {
+          return await raceTimeout(this.fallbackModel.generateContent(request), opts.attemptTimeoutMs, 'gemini-pro');
+        } catch (err) {
+          const status = (err as { status?: number })?.status;
+          const message = err instanceof Error ? err.message : String(err);
+          if (attempt === FALLBACK_ATTEMPTS || !isQuotaOrOverload(status)) {
+            failures.push({ provider: 'gemini-pro', status, message });
+            break;
+          }
+          const delayMs = 2000 * attempt;
+          console.warn(
+            `[gemini-pro] ${status} on attempt ${attempt}/${FALLBACK_ATTEMPTS}, retrying in ${delayMs}ms`,
+          );
+          await new Promise((r) => setTimeout(r, delayMs));
         }
-        const delayMs = 2000 * attempt;
-        console.warn(
-          `[gemini-pro] ${status} on attempt ${attempt}/${FALLBACK_ATTEMPTS}, retrying in ${delayMs}ms`,
-        );
-        await new Promise((r) => setTimeout(r, delayMs));
       }
     }
 
@@ -509,6 +519,10 @@ Return a single JSON object (NOT an array) with this exact shape:
     temperature?: number;
     maxOutputTokens?: number;
     responseMimeType?: 'application/json' | 'text/plain';
+    // Control de la cascada para llamadas interactivas (chat de ventas): timeout
+    // por intento para caer rápido al respaldo si Gemini se cuelga, menos
+    // reintentos de Gemini, y saltar -pro para ir directo a Groq.
+    cascade?: { attemptTimeoutMs?: number; primaryAttempts?: number; useProFallback?: boolean };
   }): Promise<string> {
     const result = await this.generateContentWithRetry({
       contents: [{ role: 'user', parts: [{ text: args.prompt }] }],
@@ -517,7 +531,7 @@ Return a single JSON object (NOT an array) with this exact shape:
         maxOutputTokens: args.maxOutputTokens ?? 4096,
         responseMimeType: args.responseMimeType,
       },
-    });
+    }, args.cascade);
     return result.response.text();
   }
 
@@ -550,6 +564,19 @@ function ensurePlaywrightImport(code: string): string {
  * retry, configure another key, or just wait.
  */
 type ProviderFailure = { provider: string; status?: number; message: string };
+
+/** Corre una promesa con timeout opcional: si `ms` está definido y no responde
+ *  a tiempo, RECHAZA (el modelo se colgó) para que la cascada pase al siguiente
+ *  proveedor. Sin `ms`, no cambia el comportamiento (usos que no lo necesitan). */
+function raceTimeout<T>(p: Promise<T>, ms: number | undefined, label: string): Promise<T> {
+  if (!ms) return p;
+  return Promise.race([
+    p,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error(`${label}: sin respuesta en ${ms}ms (timeout)`)), ms),
+    ),
+  ]);
+}
 
 function buildExhaustedError(failures: ProviderFailure[]): Error {
   if (failures.length === 0) {
@@ -660,6 +687,8 @@ async function callOpenAICompatible(
         max_tokens: cfg.maxOutputTokens ?? 4096,
         ...(wantJson ? { response_format: { type: 'json_object' } } : {}),
       }),
+      // Timeout duro: si Groq/DeepSeek se cuelga, no puede bloquear la respuesta.
+      signal: AbortSignal.timeout(20_000),
     });
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);

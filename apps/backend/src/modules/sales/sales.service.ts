@@ -389,6 +389,10 @@ export class SalesService {
           temperature: 0.3,
           maxOutputTokens: 4096,
           responseMimeType: 'application/json',
+          // Chat interactivo: si Gemini se cuelga/satura, caer RÁPIDO a Groq/
+          // DeepSeek en vez de reintentar el mismo Gemini. Timeout por intento
+          // (12s) + solo 2 intentos de flash + saltar -pro.
+          cascade: { attemptTimeoutMs: 12_000, primaryAttempts: 2, useProFallback: false },
         }),
         LLM_DEADLINE_MS,
         'El asistente tardó demasiado en responder (el modelo gratuito puede estar saturado). Volvé a intentar en un momento.',
