@@ -1158,6 +1158,21 @@ ${chatSummary.trim()}
   ];
   const cubiertas = sectionState.filter(([, f]) => f).map(([k]) => k);
   const vacias = sectionState.filter(([, f]) => !f).map(([k]) => k);
+
+  // Pedido directo del vendedor detectado POR EL SERVIDOR (determinístico,
+  // mismo criterio que sectionState: los modelos gratis obedecen mejor una
+  // marca explícita del sistema que una regla en prosa — la certificación
+  // E2E mostró que sin esto siguen con el cuestionario e ignoran el pedido).
+  const lastVendorMsg = [...history].reverse().find((m) => m.role === 'vendor')?.content ?? '';
+  const asksHowToReply = /(qu[ée] le (respondo|digo|contesto)|c[óo]mo le (respondo|contesto)|qu[ée] respondo)/i.test(lastVendorMsg);
+  const mentionsPrice = /(cu[áa]nto|precio|costo|costar|vale|valor|presupuesto|tarifa)/i.test(lastVendorMsg);
+  const asksRecap = /(hazme|dame|haz|necesito|quiero|mu[ée]strame|arma)[^.]{0,40}(recap|resumen)/i.test(lastVendorMsg);
+  const directRequest = asksRecap ? 'RECAP' : asksHowToReply && mentionsPrice ? 'GUION DE PRECIO' : null;
+  const directRequestBlock = directRequest
+    ? `
+🚩 DETECTADO POR EL SISTEMA (determinístico — OBEDECE esto por encima del ESTADO DEL BRIEF y del protocolo): el último mensaje del vendedor es un pedido directo de tipo ${directRequest}. Aplica la regla correspondiente de PEDIDOS DIRECTOS DEL VENDEDOR y en este turno NO trabajes ninguna sección del brief ni cierres con pregunta de sección. El draft va igual, sin cambios.
+`
+    : '';
   // Solo cuando el draft está flojo Y hay mensajes viejos fuera de la ventana:
   // los hechos que el vendedor ya contó se recuperan de ahí en UN turno, en vez
   // de re-preguntarle todo (economía de tokens: bloque acotado, condicional).
@@ -1168,11 +1183,11 @@ HECHOS PREVIOS DEL VENDEDOR (mensajes anteriores de ESTA conversación que queda
 ${olderVendorNotes.trim()}
 `
       : '';
-  const briefStateBlock = `${recoveryBlock}
+  const briefStateBlock = `${recoveryBlock}${directRequestBlock}
 ESTADO DEL BRIEF (calculado por el sistema — CONFÍA en esto, no lo re-derives del JSON):
 - Secciones ya cubiertas: ${cubiertas.join(', ') || '(ninguna)'}
 - Secciones VACÍAS, en orden de trabajo: ${vacias.join(', ') || '(ninguna — el brief está completo: ofrece pasar al TL)'}
-- Trabaja SOLO sobre la PRIMERA sección vacía. Los nombres de sección válidos son EXACTAMENTE los de esta lista — no inventes otros (p. ej. "funcionalidadesEsperadas" NO existe).
+- ${directRequest ? 'Este turno NO se trabaja ninguna sección: hay un PEDIDO DIRECTO detectado (ver arriba).' : 'Trabaja SOLO sobre la PRIMERA sección vacía.'} Los nombres de sección válidos son EXACTAMENTE los de esta lista — no inventes otros (p. ej. "funcionalidadesEsperadas" NO existe).
 `;
 
   return `Eres un CONSULTOR PRE-VENTA experto (software a medida, e-commerce, apps, web) que ayuda a un vendedor a armar el brief de una oportunidad. No eres un formulario: PROPONES, das ejemplos y recomiendas. El vendedor muchas veces no es técnico y necesita que le sugieras opciones para llevarle al cliente.
