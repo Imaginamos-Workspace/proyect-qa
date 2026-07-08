@@ -1,4 +1,4 @@
-import { IsNotEmpty, IsString, Matches, MaxLength } from 'class-validator';
+import { IsArray, IsInt, IsNotEmpty, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
 
 const SLUG = /^[a-z0-9-]+$/;
 
@@ -17,6 +17,26 @@ export class CreateOpportunityDto {
 export class SendMessageDto {
   @IsString() @IsNotEmpty() @MaxLength(8_000)
   content: string;
+}
+
+/** Búsqueda de prospectos en Apollo.io. Todos los filtros son opcionales,
+ *  pero el service exige al menos uno (borde validado en ambos lados). */
+export class SearchProspectsDto {
+  @IsOptional() @IsString() @MaxLength(200)
+  keywords?: string;
+
+  @IsOptional() @IsArray() @IsString({ each: true }) @MaxLength(80, { each: true })
+  titles?: string[];
+
+  @IsOptional() @IsArray() @IsString({ each: true }) @MaxLength(80, { each: true })
+  locations?: string[];
+
+  @IsOptional() @IsArray() @IsString({ each: true })
+  @Matches(/^\d+,\d+$/, { each: true, message: 'employeeRanges usa el formato Apollo "min,max" (ej. "11,50").' })
+  employeeRanges?: string[];
+
+  @IsOptional() @IsInt() @Min(1) @Max(500)
+  page?: number;
 }
 
 /** Ceder el proceso a otro vendedor (login de GitHub de team.json). */

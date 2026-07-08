@@ -1,8 +1,9 @@
 import { Body, Controller, Delete, ForbiddenException, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { SalesService } from './sales.service';
+import { ProspectsService } from './prospects.service';
 import { RolesService } from '../scrum/roles.service';
 import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard';
-import { CreateOpportunityDto, SendMessageDto, TransferOpportunityDto } from './dto/sales.dto';
+import { CreateOpportunityDto, SearchProspectsDto, SendMessageDto, TransferOpportunityDto } from './dto/sales.dto';
 
 interface RequestWithUser {
   user?: { user_metadata?: Record<string, unknown> };
@@ -23,8 +24,23 @@ function githubLogin(req: RequestWithUser): string | null {
 export class SalesController {
   constructor(
     private readonly sales: SalesService,
+    private readonly prospects: ProspectsService,
     private readonly roles: RolesService,
   ) {}
+
+  /** ¿Está configurada la API key de Apollo? Lectura abierta a autenticados —
+   *  el frontend decide si muestra el buscador o la guía de configuración. */
+  @Get('prospects/status')
+  prospectsStatus() {
+    return this.prospects.status();
+  }
+
+  /** Busca prospectos B2B en Apollo.io. Solo vendedor (consume cuota del plan). */
+  @Post('prospects/search')
+  async searchProspects(@Body() body: SearchProspectsDto, @Req() req: RequestWithUser) {
+    await this.requireSeller(req);
+    return this.prospects.search(body);
+  }
 
   /** Lista de oportunidades — lectura abierta a cualquier autenticado, igual que el board. */
   @Get('opportunities')

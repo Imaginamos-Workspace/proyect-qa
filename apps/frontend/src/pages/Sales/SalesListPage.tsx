@@ -10,7 +10,7 @@ import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { salesStatusMeta } from '@/lib/sales-status';
-import { ProspectsKanban } from './ProspectsKanban';
+import { ProspectsSearch } from './ProspectsSearch';
 import { SalesDashboard } from './SalesDashboard';
 
 function ManagedProjects() {
@@ -166,7 +166,7 @@ export function SalesListPage() {
             <LayoutDashboard className="mr-1.5 h-4 w-4 shrink-0 sm:mr-2" /> Dashboard
           </TabsTrigger>
           <TabsTrigger value="prospectos" className="h-auto whitespace-normal py-2 text-center text-xs leading-tight sm:text-sm">
-            <KanbanSquare className="mr-1.5 h-4 w-4 shrink-0 sm:mr-2" /> Gestión de prospectos
+            <KanbanSquare className="mr-1.5 h-4 w-4 shrink-0 sm:mr-2" /> Búsqueda de prospectos
           </TabsTrigger>
           <TabsTrigger value="proyectos" className="h-auto whitespace-normal py-2 text-center text-xs leading-tight sm:text-sm">
             <Briefcase className="mr-1.5 h-4 w-4 shrink-0 sm:mr-2" /> Proyectos gestionados
@@ -176,7 +176,7 @@ export function SalesListPage() {
           <SalesDashboard />
         </TabsContent>
         <TabsContent value="prospectos">
-          <ProspectsKanban />
+          <ProspectsSearch />
         </TabsContent>
         <TabsContent value="proyectos">
           <ManagedProjects />

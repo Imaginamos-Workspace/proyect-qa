@@ -7,6 +7,9 @@ import type {
   SalesOwnershipResult,
   SalesProposalAccess,
   SalesProposalMetrics,
+  SalesProspectSearchInput,
+  SalesProspectSearchResult,
+  SalesProspectsStatus,
   SalesRegenerateProposalResult,
   SalesSendMessageResult,
   SalesSyncResult,
@@ -92,6 +95,25 @@ export function useReindexKnowledge() {
   return useMutation({
     mutationFn: () =>
       api.post<{ methodology: number; wonDeals: number }>('/sales/rag/reindex', undefined, 60_000),
+  });
+}
+
+/** ¿Está configurada la API key de Apollo en el backend? Decide si el tab de
+ *  prospectos muestra el buscador real o la guía de configuración. */
+export function useProspectsStatus() {
+  return useQuery({
+    queryKey: ['sales', 'prospects', 'status'],
+    queryFn: () => api.get<SalesProspectsStatus>('/sales/prospects/status'),
+    staleTime: 5 * 60_000,
+  });
+}
+
+/** Búsqueda de prospectos en Apollo.io (solo vendedor). Mutation y no query:
+ *  cada búsqueda consume cuota del plan de Apollo — se dispara a mano. */
+export function useSearchProspects() {
+  return useMutation({
+    mutationFn: (input: SalesProspectSearchInput) =>
+      api.post<SalesProspectSearchResult>('/sales/prospects/search', input, 25_000),
   });
 }
 

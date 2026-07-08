@@ -103,6 +103,47 @@ export interface SalesProposalMetrics {
   lastViewedAt: string | null;
 }
 
+// --- Prospección (Apollo.io) ---------------------------------------------
+// Búsqueda de prospectos B2B desde la plataforma. La API key vive SOLO en el
+// backend (APOLLO_API_KEY) — el frontend consulta `configured` para saber si
+// el flujo está activo y mostrar la guía de configuración si falta.
+
+export interface SalesProspectsStatus {
+  configured: boolean;
+}
+
+export interface SalesProspectSearchInput {
+  /** Texto libre (nombre, empresa, industria…). */
+  keywords?: string;
+  /** Cargos a buscar (ej. "CEO", "Gerente de operaciones"). */
+  titles?: string[];
+  /** Ubicaciones de la persona (ej. "Bogotá", "Colombia"). */
+  locations?: string[];
+  /** Rangos de empleados de la empresa en formato Apollo: "1,10", "11,50"… */
+  employeeRanges?: string[];
+  page?: number;
+}
+
+export interface SalesProspect {
+  id: string;
+  name: string;
+  title: string | null;
+  company: string | null;
+  companyWebsite: string | null;
+  industry: string | null;
+  location: string | null;
+  linkedinUrl: string | null;
+  /** Apollo bloquea el email hasta que se enriquece (crédito) — puede venir null. */
+  email: string | null;
+}
+
+export interface SalesProspectSearchResult {
+  prospects: SalesProspect[];
+  page: number;
+  totalPages: number;
+  totalEntries: number;
+}
+
 export interface SalesRegenerateProposalResult {
   dispatched: true;
 }
