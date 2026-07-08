@@ -573,7 +573,12 @@ Return a single JSON object (NOT an array) with this exact shape:
         await run();
         return { provider, configured: true, ok: true, ms: Date.now() - t0 };
       } catch (e) {
-        return { provider, configured: true, ok: false, ms: Date.now() - t0, error: (e as Error).message.slice(0, 160) };
+        const ms = Date.now() - t0;
+        // Nunca dejar el error vacío (antes a veces no mostraba nada). Si tardó
+        // ~15s, casi seguro fue timeout (el modelo tarda, no está roto).
+        const raw = (e instanceof Error ? e.message : String(e)).trim();
+        const msg = raw || (ms >= 14_000 ? 'timeout: no respondió a tiempo (el modelo tarda demasiado)' : 'error desconocido (sin mensaje)');
+        return { provider, configured: true, ok: false, ms, error: msg.slice(0, 200) };
       }
     };
 
@@ -585,11 +590,13 @@ Return a single JSON object (NOT an array) with this exact shape:
         if (!r.ok) throw new Error(r.error?.message ?? 'sin respuesta');
       });
 
-    // timeout del SDK (8s) para los pings de Gemini — aborta de verdad, sin dejar
-    // la petición colgada. Groq/DeepSeek ya abortan solos en callOpenAICompatible.
+    // timeout del SDK (15s) para los pings de Gemini — aborta de verdad, sin dejar
+    // la petición colgada. 15s porque el Gemini gratis a veces tarda >8s aun
+    // funcionando (flash llegó a 7.3s), y con 8s daba falso "falla". Groq/DeepSeek
+    // abortan solos en callOpenAICompatible.
     return Promise.all([
-      time('gemini-flash', () => this.model.generateContent(req, { timeout: 8_000 })),
-      time('gemini-pro', () => this.fallbackModel.generateContent(req, { timeout: 8_000 })),
+      time('gemini-flash', () => this.model.generateContent(req, { timeout: 15_000 })),
+      time('gemini-pro', () => this.fallbackModel.generateContent(req, { timeout: 15_000 })),
       groqKey
         ? pingOpenAI('groq', 'https://api.groq.com/openai/v1', groqKey, 'llama-3.3-70b-versatile')
         : Promise.resolve({ provider: 'groq', configured: false, ok: false, ms: null }),
