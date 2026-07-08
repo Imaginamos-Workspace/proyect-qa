@@ -1,4 +1,4 @@
-import { BadRequestException, ForbiddenException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, HttpException, Inject, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../../config/supabase.module';
@@ -463,7 +463,14 @@ export class SalesService {
           () => undefined,
         );
       }
-      throw err;
+      if (err instanceof HttpException) throw err;
+      // Un Error genérico (timeout del LLM, respuesta con shape inválido, red)
+      // se volvía un 500 "Internal server error" opaco — el vendedor nunca veía
+      // el mensaje útil. 503 con el detalle real + acción clara.
+      this.logger.error(`sendMessage(${id}) falló: ${(err as Error).message}`);
+      throw new ServiceUnavailableException(
+        `El asistente no pudo responder en este intento (${(err as Error).message.slice(0, 140)}). Vuelve a intentar — tu mensaje no se perdió.`,
+      );
     }
   }
 
@@ -1016,6 +1023,8 @@ ESTADO DEL BRIEF (calculado por el sistema — CONFÍA en esto, no lo re-derives
 
   return `Eres un CONSULTOR PRE-VENTA experto (software a medida, e-commerce, apps, web) que ayuda a un vendedor a armar el brief de una oportunidad. No eres un formulario: PROPONES, das ejemplos y recomiendas. El vendedor muchas veces no es técnico y necesita que le sugieras opciones para llevarle al cliente.
 
+CONTEXTO LOCAL: Imaginamos es una agencia en COLOMBIA. La moneda de los clientes es el peso colombiano (COP) salvo que digan otra — cualquier monto que registre el CLIENTE va con su moneda explícita (ej. "COP $80.000.000"). Recuerda: tú NUNCA propones montos ni plazos (eso lo calcula el TL en la propuesta); si en la conversación previa llegaste a sugerir algún monto, corrígelo: los montos solo los da el cliente.
+
 Basá TODO (proceso, fases, qué pedir, cómo estructurar el brief y la propuesta) en la METODOLOGÍA DEL MONOREPO de más abajo — es la fuente de verdad de las reglas del negocio, por encima de tu conocimiento genérico.
 
 El DRAFT es la memoria acumulada del proceso: contiene lo ya confirmado en sesiones previas. Continúa desde ahí — no vuelvas a preguntar lo que ya está cargado.
@@ -1037,6 +1046,7 @@ CÓMO RESPONDER (campo "reply") — SÉ PROPOSITIVO Y HAZ AVANZAR:
 - Cuando el vendedor pide ejemplos o dice "no sé"/"no especificó": DA 3-5 opciones CONCRETAS y típicas para ese tipo de proyecto. NUNCA repitas la misma pregunta.
 - Recomienda lo estándar del dominio y explica en una línea por qué. Ante ambigüedad, propone una interpretación por defecto en vez de solo preguntar.
 - PROPONE SOLO CUALITATIVO (funcionalidades, alcance, tecnología, integraciones, referentes). NUNCA inventes NÚMEROS: precios, costos, presupuestos, tarifas ni plazos (rules/13: "NUNCA inventar valores"). Los precios se calculan en la etapa de PROPUESTA (TL + estimate.mjs); en el brief solo se registra el presupuesto SI EL CLIENTE lo mencionó.
+- En la sección "limites": PREGUNTA al vendedor qué presupuesto y plazo mencionó el cliente (en COP salvo que digan otra moneda) y si están abiertos a fases (MVP primero). NO propongas tú un monto ni una cantidad de semanas — ni siquiera "para asumir": si el cliente no lo dijo, se registra "sin definir".
 - Cierra con UNA pregunta útil sobre la sección en la que estás trabajando (no re-preguntes lo ya acordado).
 
 CÓMO LLENAR EL DRAFT (campo "draft") — SÉ FIEL A LOS HECHOS, pero REGISTRÁ EL AVANCE:
