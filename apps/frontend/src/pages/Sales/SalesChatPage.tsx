@@ -53,6 +53,21 @@ const SECTIONS: { key: string; label: string }[] = [
 
 const TAB_TRIGGER_CLASS = 'h-auto whitespace-normal py-2 text-center text-xs leading-tight sm:text-sm';
 
+// Un draft "sucio" (modelos viejos escribieron listas/objetos en campos de
+// texto) crashearía el render de React ("Objects are not valid as a React
+// child"). Convertimos cualquier valor a texto legible.
+function fieldText(v: unknown): string {
+  if (v == null) return '';
+  if (typeof v === 'string') return v;
+  if (Array.isArray(v)) return v.map(fieldText).join('; ');
+  if (typeof v === 'object') {
+    return Object.entries(v as Record<string, unknown>)
+      .map(([k, x]) => `${k}: ${fieldText(x)}`)
+      .join('; ');
+  }
+  return String(v);
+}
+
 export function SalesChatPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -392,7 +407,7 @@ export function SalesChatPage() {
                 <div key={s.key}>
                   <p className="text-xs font-medium text-muted-foreground">{s.label}</p>
                   <p className="text-sm text-foreground">
-                    {(draft as Record<string, string | undefined>)[s.key] || <span className="text-muted-foreground">—</span>}
+                    {fieldText((draft as Record<string, unknown>)[s.key]) || <span className="text-muted-foreground">—</span>}
                   </p>
                 </div>
               ))}
@@ -404,7 +419,7 @@ export function SalesChatPage() {
                   <ul className="space-y-1 text-sm text-foreground">
                     {asunciones.map((a, i) => (
                       <li key={i}>
-                        {a.texto} — <span className="text-muted-foreground">{a.impactoSiFalla}</span>
+                        {fieldText(a?.texto)} — <span className="text-muted-foreground">{fieldText(a?.impactoSiFalla)}</span>
                       </li>
                     ))}
                   </ul>

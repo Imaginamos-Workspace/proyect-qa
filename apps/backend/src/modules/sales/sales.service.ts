@@ -1000,7 +1000,9 @@ function buildBriefPrompt(
   // Estado del brief calculado POR EL SERVIDOR — guía determinística para el
   // modelo (los modelos gratis leen mal el JSON del draft y repetían secciones
   // ya cubiertas o inventaban nombres de sección; caso real). CONFÍA en esto.
-  const isFilled = (v?: string) => (v ?? '').trim().length > 0;
+  // isFilled tolera drafts "sucios" ya guardados (modelos viejos escribieron
+  // objetos/listas en campos de texto → "(v ?? '').trim is not a function").
+  const isFilled = (v?: unknown) => (fieldToText(v) ?? '').trim().length > 0;
   const sectionState: [string, boolean][] = [
     ['cliente', isFilled(draft.cliente)],
     ['problema', isFilled(draft.problema)],
@@ -1063,6 +1065,62 @@ Devuelve SOLO este JSON (sin markdown, sin texto fuera del JSON):
 }`;
 }
 
+/** Convierte CUALQUIER valor que el LLM haya puesto en un campo de texto del
+ *  draft a string legible. Los modelos gratis a veces escriben listas u objetos
+ *  en campos de texto ("usuariosYFuncionalidades": ["admin", "comprador"]) —
+ *  eso rompía isFilled/isDraftEmpty/renderBriefMd ("trim is not a function",
+ *  error real en producción) y ensuciaba el brief.md con [object Object]. */
+function fieldToText(v: unknown): string | undefined {
+  if (v == null) return undefined;
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (Array.isArray(v)) {
+    return v.map((x) => fieldToText(x) ?? JSON.stringify(x)).join('; ');
+  }
+  if (typeof v === 'object') {
+    return Object.entries(v as Record<string, unknown>)
+      .map(([k, val]) => `${k}: ${fieldToText(val) ?? JSON.stringify(val)}`)
+      .join('; ');
+  }
+  return String(v);
+}
+
+const DRAFT_TEXT_KEYS = [
+  'cliente', 'problema', 'outcomes', 'usuariosYFuncionalidades',
+  'limites', 'integraciones', 'riesgos', 'sensacionVendedor',
+] as const;
+
+/** Normaliza el draft que devuelve el LLM al shape EXACTO de SalesBriefDraft:
+ *  todo campo de texto a string, asunciones al shape {texto, impactoSiFalla},
+ *  y descarta claves inventadas (ej. "funcionalidadesEsperadas"). Saneo
+ *  DETERMINÍSTICO en el borde — no dependemos de que el modelo obedezca. */
+function sanitizeDraft(raw: unknown): SalesBriefDraft {
+  if (typeof raw !== 'object' || raw === null) return {};
+  const r = raw as Record<string, unknown>;
+  const out: SalesBriefDraft = {};
+  for (const k of DRAFT_TEXT_KEYS) {
+    const t = fieldToText(r[k]);
+    if (t && t.trim()) out[k] = t;
+  }
+  if (Array.isArray(r.asunciones)) {
+    const asunciones = r.asunciones
+      .map((a) => {
+        if (typeof a === 'string') return { texto: a, impactoSiFalla: '' };
+        if (typeof a === 'object' && a !== null) {
+          const o = a as Record<string, unknown>;
+          return {
+            texto: fieldToText(o.texto) ?? '',
+            impactoSiFalla: fieldToText(o.impactoSiFalla) ?? '',
+          };
+        }
+        return { texto: '', impactoSiFalla: '' };
+      })
+      .filter((a) => a.texto.trim().length > 0);
+    if (asunciones.length) out.asunciones = asunciones;
+  }
+  return out;
+}
+
 /** Parseo ROBUSTO de la respuesta del LLM. Los modelos gratis (Llama/Qwen/
  *  DeepSeek vía Groq/OpenRouter) muchas veces envuelven el JSON en fences
  *  \`\`\`json ... \`\`\` o le agregan texto antes/después aunque se les pida JSON
@@ -1099,7 +1157,10 @@ function parseAssistantResponse(raw: string): SalesSendMessageResult {
     try {
       const parsed = JSON.parse(c);
       if (typeof parsed.reply === 'string' && typeof parsed.draft === 'object' && parsed.draft !== null) {
-        return { reply: parsed.reply, draft: parsed.draft };
+        // Saneo determinístico: el draft SIEMPRE sale con el shape correcto,
+        // devuelva lo que devuelva el modelo (listas/objetos → texto, claves
+        // inventadas → descartadas).
+        return { reply: parsed.reply, draft: sanitizeDraft(parsed.draft) };
       }
     } catch {
       // probar el siguiente candidato
@@ -1112,45 +1173,46 @@ function parseAssistantResponse(raw: string): SalesSendMessageResult {
  *  asunciones). Ver el gate en syncBrief() — esto es lo que evita pisar un
  *  brief.md real con la plantilla vacía. */
 function isDraftEmpty(draft: SalesBriefDraft): boolean {
-  const textFields: (string | undefined)[] = [
-    draft.cliente, draft.problema, draft.outcomes, draft.usuariosYFuncionalidades,
-    draft.limites, draft.integraciones, draft.riesgos, draft.sensacionVendedor,
-  ];
-  const hasText = textFields.some((v) => (v ?? '').trim().length > 0);
-  const hasAsunciones = (draft.asunciones ?? []).length > 0;
+  // fieldToText: tolera drafts "sucios" ya guardados en la base (objetos/listas
+  // en campos de texto, escritos por modelos viejos) sin explotar.
+  const hasText = DRAFT_TEXT_KEYS.some((k) => (fieldToText(draft[k]) ?? '').trim().length > 0);
+  const hasAsunciones = Array.isArray(draft.asunciones) && draft.asunciones.length > 0;
   return !hasText && !hasAsunciones;
 }
 
 // ─── Render de brief.md desde el draft ─────────────────────────────────────
 
 function renderBriefMd(draft: SalesBriefDraft): string {
-  const asunciones = (draft.asunciones ?? [])
-    .map((a) => `- ${a.texto} — **Impacto si falla:** ${a.impactoSiFalla || '_(pendiente)_'}`)
+  // fieldToText en cada campo: los drafts viejos de la base pueden traer
+  // objetos/listas en campos de texto — sin esto salía "[object Object]".
+  const t = (v: unknown) => (fieldToText(v) ?? '').trim() || '_(pendiente)_';
+  const asunciones = (Array.isArray(draft.asunciones) ? draft.asunciones : [])
+    .map((a) => `- ${fieldToText(a?.texto) ?? ''} — **Impacto si falla:** ${(fieldToText(a?.impactoSiFalla) ?? '').trim() || '_(pendiente)_'}`)
     .join('\n') || '_(sin asunciones registradas)_';
 
   return `# Brief — generado desde la plataforma (módulo Ventas)
 
 ## 1-2. Cliente y problema
 
-${draft.cliente || '_(pendiente)_'}
+${t(draft.cliente)}
 
-${draft.problema || '_(pendiente)_'}
+${t(draft.problema)}
 
 ## 3. Outcomes esperados
 
-${draft.outcomes || '_(pendiente)_'}
+${t(draft.outcomes)}
 
 ## 4. Usuarios y funcionalidades
 
-${draft.usuariosYFuncionalidades || '_(pendiente)_'}
+${t(draft.usuariosYFuncionalidades)}
 
 ## 5. Límites del proyecto
 
-${draft.limites || '_(pendiente)_'}
+${t(draft.limites)}
 
 ## 6. Integraciones necesarias
 
-${draft.integraciones || '_(pendiente)_'}
+${t(draft.integraciones)}
 
 ## 7. Asunciones que tomamos para estimar
 
@@ -1158,10 +1220,10 @@ ${asunciones}
 
 ## 8. Riesgos visibles desde la conversación
 
-${draft.riesgos || '_(pendiente)_'}
+${t(draft.riesgos)}
 
 ## 9. Sensación del vendedor (gut)
 
-${draft.sensacionVendedor || '_(pendiente)_'}
+${t(draft.sensacionVendedor)}
 `;
 }
