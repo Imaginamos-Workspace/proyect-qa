@@ -16,6 +16,11 @@ import {
 } from '../prompts/test-generation.prompt';
 import { validateAndFixTestCode } from '../utils/test-validator';
 
+// Modelo GRATIS por defecto de OpenRouter (DeepSeek gratis, bueno para código).
+// Overrideable con OPENROUTER_MODEL. Otros gratis: deepseek/deepseek-r1:free,
+// meta-llama/llama-3.3-70b-instruct:free, qwen/qwen-2.5-72b-instruct:free.
+const OPENROUTER_DEFAULT_MODEL = 'deepseek/deepseek-chat-v3-0324:free';
+
 @Injectable()
 export class GeminiProvider implements AIProvider {
   private readonly model;
@@ -28,10 +33,10 @@ export class GeminiProvider implements AIProvider {
     // Primary: gemini-2.5-flash — full flash model, much better code quality
     // than flash-lite and still on the free tier.
     this.model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-    // Fallback: gemini-2.5-pro — separate quota pool, used when -flash is
-    // overloaded (503 spikes during peak hours). Slower + more expensive but
-    // capacity is independent. Auto-engaged after retries on -flash exhaust.
-    this.fallbackModel = genAI.getGenerativeModel({ model: 'gemini-2.5-pro' });
+    // Fallback: gemini-2.0-flash — GRATIS y con cuota real (a diferencia de
+    // gemini-2.5-pro, que en el tier gratis da 429 "quota exceeded" casi
+    // siempre). Pool de cuota separado del 2.5-flash → sirve de respaldo real.
+    this.fallbackModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
     // Embeddings para el RAG de ventas — 768 dims, capa gratuita. Misma key,
     // sin dependencia nueva.
     this.embedModel = genAI.getGenerativeModel({ model: 'text-embedding-004' });
@@ -160,12 +165,12 @@ export class GeminiProvider implements AIProvider {
           const status = (err as { status?: number })?.status;
           const message = err instanceof Error ? err.message : String(err);
           if (attempt === FALLBACK_ATTEMPTS || !isQuotaOrOverload(status)) {
-            failures.push({ provider: 'gemini-pro', status, message });
+            failures.push({ provider: 'gemini-2.0-flash', status, message });
             break;
           }
           const delayMs = 2000 * attempt;
           console.warn(
-            `[gemini-pro] ${status} on attempt ${attempt}/${FALLBACK_ATTEMPTS}, retrying in ${delayMs}ms`,
+            `[gemini-2.0-flash] ${status} on attempt ${attempt}/${FALLBACK_ATTEMPTS}, retrying in ${delayMs}ms`,
           );
           await new Promise((r) => setTimeout(r, delayMs));
         }
@@ -179,27 +184,25 @@ export class GeminiProvider implements AIProvider {
       if (r) return r;
     }
 
-    // ── Step 4: DeepSeek (always tried if configured) ───────────────
-    const dsKey = this.configService.get<string>('DEEPSEEK_API_KEY');
-    if (dsKey) {
-      console.warn('[ai] groq failed/missing, trying DeepSeek');
-      const dsResp = await callOpenAICompatible({
-        baseUrl: 'https://api.deepseek.com',
-        apiKey: dsKey,
-        model: 'deepseek-chat',
+    // ── Step 4: OpenRouter (GRATIS) — DeepSeek free + muchos otros modelos
+    // gratis con UNA sola key. Reemplaza a la API directa de DeepSeek, que es
+    // PAGA (daba 402 Insufficient Balance). Requiere OPENROUTER_API_KEY (gratis
+    // en openrouter.ai). Modelo configurable con OPENROUTER_MODEL.
+    const orKey = this.configService.get<string>('OPENROUTER_API_KEY');
+    if (orKey) {
+      const orModel = this.configService.get<string>('OPENROUTER_MODEL') || OPENROUTER_DEFAULT_MODEL;
+      console.warn(`[ai] groq failed/missing, trying OpenRouter (${orModel})`);
+      const orResp = await callOpenAICompatible({
+        baseUrl: 'https://openrouter.ai/api/v1',
+        apiKey: orKey,
+        model: orModel,
         request: request as OpenAICompatCall['request'],
       });
-      if (dsResp.ok && dsResp.value) {
-        return dsResp.value as Awaited<
-          ReturnType<typeof this.model.generateContent>
-        >;
+      if (orResp.ok && orResp.value) {
+        return orResp.value as Awaited<ReturnType<typeof this.model.generateContent>>;
       }
-      failures.push({
-        provider: 'deepseek',
-        status: dsResp.error?.status,
-        message: dsResp.error?.message || 'unknown',
-      });
-      console.warn(`[deepseek] failed: ${dsResp.error?.message}`);
+      failures.push({ provider: 'openrouter', status: orResp.error?.status, message: orResp.error?.message || 'unknown' });
+      console.warn(`[openrouter] failed: ${orResp.error?.message}`);
     }
 
     // ── All providers exhausted — build a helpful error ─────────────
@@ -583,7 +586,8 @@ Return a single JSON object (NOT an array) with this exact shape:
     };
 
     const groqKey = this.configService.get<string>('GROQ_API_KEY');
-    const dsKey = this.configService.get<string>('DEEPSEEK_API_KEY');
+    const orKey = this.configService.get<string>('OPENROUTER_API_KEY');
+    const orModel = this.configService.get<string>('OPENROUTER_MODEL') || OPENROUTER_DEFAULT_MODEL;
     const pingOpenAI = (provider: string, baseUrl: string, apiKey: string, model: string) =>
       time(provider, async () => {
         const r = await callOpenAICompatible({ baseUrl, apiKey, model, request: req as OpenAICompatCall['request'] });
@@ -592,17 +596,17 @@ Return a single JSON object (NOT an array) with this exact shape:
 
     // timeout del SDK (15s) para los pings de Gemini — aborta de verdad, sin dejar
     // la petición colgada. 15s porque el Gemini gratis a veces tarda >8s aun
-    // funcionando (flash llegó a 7.3s), y con 8s daba falso "falla". Groq/DeepSeek
-    // abortan solos en callOpenAICompatible.
+    // funcionando. Groq/OpenRouter abortan solos en callOpenAICompatible.
+    // Todos GRATIS: gemini-2.5-flash, gemini-2.0-flash, groq, openrouter.
     return Promise.all([
       time('gemini-flash', () => this.model.generateContent(req, { timeout: 15_000 })),
-      time('gemini-pro', () => this.fallbackModel.generateContent(req, { timeout: 15_000 })),
+      time('gemini-2.0-flash', () => this.fallbackModel.generateContent(req, { timeout: 15_000 })),
       groqKey
         ? pingOpenAI('groq', 'https://api.groq.com/openai/v1', groqKey, 'llama-3.3-70b-versatile')
         : Promise.resolve({ provider: 'groq', configured: false, ok: false, ms: null }),
-      dsKey
-        ? pingOpenAI('deepseek', 'https://api.deepseek.com', dsKey, 'deepseek-chat')
-        : Promise.resolve({ provider: 'deepseek', configured: false, ok: false, ms: null }),
+      orKey
+        ? pingOpenAI(`openrouter (${orModel})`, 'https://openrouter.ai/api/v1', orKey, orModel)
+        : Promise.resolve({ provider: 'openrouter', configured: false, ok: false, ms: null }),
     ]);
   }
 

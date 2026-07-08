@@ -156,11 +156,10 @@ export function SalesDashboard() {
         </Card>
       )}
 
-      {/* Diagnóstico de los proveedores de IA — para ver si Gemini está saturado
-          y si Groq/DeepSeek responden como respaldo. */}
-      {isVendedor && (
-        <Card>
-          <CardContent className="space-y-3 p-4">
+      {/* Diagnóstico de los proveedores de IA — visible para cualquier usuario
+          logueado (es solo un chequeo de estado, no una acción de vendedor). */}
+      <Card>
+        <CardContent className="space-y-3 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-start gap-3">
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
@@ -212,7 +211,6 @@ export function SalesDashboard() {
             )}
           </CardContent>
         </Card>
-      )}
     </div>
   );
 }

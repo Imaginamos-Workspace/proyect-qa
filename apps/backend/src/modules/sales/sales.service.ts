@@ -417,11 +417,10 @@ export class SalesService {
           temperature: 0.3,
           maxOutputTokens: 4096,
           responseMimeType: 'application/json',
-          // Chat interactivo: Groq PRIMERO (rápido y estable), Gemini de
-          // respaldo. Groq responde en ~1-2s; el Gemini gratis es el que se
-          // satura/cuelga. Si Groq falla, cae a flash (con timeout por intento
-          // de 12s para no colgarse) y luego DeepSeek.
-          cascade: { preferGroq: true, attemptTimeoutMs: 10_000, primaryAttempts: 1, useProFallback: false },
+          // Chat interactivo, TODO gratis: Groq PRIMERO (rápido/estable), y de
+          // respaldo gemini-2.5-flash → gemini-2.0-flash → OpenRouter. Timeout
+          // por intento de 10s para no colgarse. Groq responde en ~100-400ms.
+          cascade: { preferGroq: true, attemptTimeoutMs: 10_000, primaryAttempts: 1, useProFallback: true },
         }),
         LLM_DEADLINE_MS,
         'El asistente tardó demasiado en responder (el modelo gratuito puede estar saturado). Volvé a intentar en un momento.',
