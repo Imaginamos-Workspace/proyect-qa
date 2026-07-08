@@ -414,7 +414,10 @@ export class SalesService {
       const raw = await withTimeout(
         this.gemini.generateRaw({
           prompt,
-          temperature: 0.3,
+          // 0.45 (no 0.3): con temperatura muy baja los modelos gratis calcaban
+          // la MISMA frase plantilla turno tras turno (caso real). Sigue siendo
+          // conservador para la extracción del draft.
+          temperature: 0.45,
           maxOutputTokens: 4096,
           responseMimeType: 'application/json',
           // Chat interactivo, TODO gratis: Groq PRIMERO (rápido/estable), y de
@@ -987,25 +990,54 @@ function buildBriefPrompt(
     : '';
   const statusBlock = status ? `\nFASE ACTUAL DE ESTA OPORTUNIDAD (status.md): ${status}\n` : '';
 
+  // Estado del brief calculado POR EL SERVIDOR — guía determinística para el
+  // modelo (los modelos gratis leen mal el JSON del draft y repetían secciones
+  // ya cubiertas o inventaban nombres de sección; caso real). CONFÍA en esto.
+  const isFilled = (v?: string) => (v ?? '').trim().length > 0;
+  const sectionState: [string, boolean][] = [
+    ['cliente', isFilled(draft.cliente)],
+    ['problema', isFilled(draft.problema)],
+    ['outcomes', isFilled(draft.outcomes)],
+    ['usuariosYFuncionalidades', isFilled(draft.usuariosYFuncionalidades)],
+    ['limites', isFilled(draft.limites)],
+    ['integraciones', isFilled(draft.integraciones)],
+    ['asunciones', (draft.asunciones ?? []).length > 0],
+    ['riesgos', isFilled(draft.riesgos)],
+    ['sensacionVendedor', isFilled(draft.sensacionVendedor)],
+  ];
+  const cubiertas = sectionState.filter(([, f]) => f).map(([k]) => k);
+  const vacias = sectionState.filter(([, f]) => !f).map(([k]) => k);
+  const briefStateBlock = `
+ESTADO DEL BRIEF (calculado por el sistema — CONFÍA en esto, no lo re-derives del JSON):
+- Secciones ya cubiertas: ${cubiertas.join(', ') || '(ninguna)'}
+- Secciones VACÍAS, en orden de trabajo: ${vacias.join(', ') || '(ninguna — el brief está completo: ofrece pasar al TL)'}
+- Trabaja SOLO sobre la PRIMERA sección vacía. Los nombres de sección válidos son EXACTAMENTE los de esta lista — no inventes otros (p. ej. "funcionalidadesEsperadas" NO existe).
+`;
+
   return `Eres un CONSULTOR PRE-VENTA experto (software a medida, e-commerce, apps, web) que ayuda a un vendedor a armar el brief de una oportunidad. No eres un formulario: PROPONES, das ejemplos y recomiendas. El vendedor muchas veces no es técnico y necesita que le sugieras opciones para llevarle al cliente.
 
 Basá TODO (proceso, fases, qué pedir, cómo estructurar el brief y la propuesta) en la METODOLOGÍA DEL MONOREPO de más abajo — es la fuente de verdad de las reglas del negocio, por encima de tu conocimiento genérico.
 
 El DRAFT es la memoria acumulada del proceso: contiene lo ya confirmado en sesiones previas. Continúa desde ahí — no vuelvas a preguntar lo que ya está cargado.
-${methodologyBlock}${statusBlock}
+${methodologyBlock}${statusBlock}${briefStateBlock}
 DRAFT ACTUAL (JSON, puede estar vacío o parcial):
 ${JSON.stringify(draft, null, 2)}
 ${contextBlock}
 CONVERSACIÓN RECIENTE:
 ${historyText}
 
-CÓMO RESPONDER (campo "reply") — SÉ PROPOSITIVO Y HACÉ AVANZAR, nunca en bucle:
-- Cuando el vendedor pide ejemplos, dice "no sé", "no especificó" o "el cliente no dijo nada": DALE 3-5 opciones CONCRETAS y típicas para ese tipo de proyecto (funcionalidades, alcance, integraciones, tecnologías, referentes de mercado). NUNCA respondas repitiendo la misma pregunta.
-- REGLA ANTI-BUCLE (CRÍTICA): NUNCA repitas una propuesta o pregunta que YA hiciste en la conversación reciente. Si el vendedor aceptó ("sí", "me parece", "dale", "ok", "adelante"): NO vuelvas a proponer lo mismo. Registrá lo aceptado en el draft (si depende de la elección final del cliente, anotalo como pendiente, ej. "opciones a presentar al cliente: Shopify / WooCommerce / a medida") y AVANZÁ de inmediato a la SIGUIENTE sección del brief que esté vacía.
-- HACÉ AVANZAR EL BRIEF: mirá qué secciones del draft están vacías o incompletas y enfocá tu respuesta en la SIGUIENTE que falte (cliente → problema → outcomes → usuarios y funcionalidades → límites → integraciones → asunciones → riesgos). No te quedes en un solo tema una vez que hay acuerdo. Cuando estén todas cubiertas, decilo y ofrecé pasar al TL para la propuesta.
-- Recomienda lo estándar / la mejor práctica del dominio y explica en una línea por qué. Si algo es ambiguo, propone una interpretación por defecto en vez de solo preguntar.
-- PROPONÉ SOLO CUALITATIVO (funcionalidades, alcance, tecnología, integraciones, referentes). NUNCA inventes NÚMEROS: precios, costos, presupuestos, tarifas ni plazos. rules/13 lo prohíbe explícitamente ("NUNCA inventar valores"). Los precios/costos NO se definen en el brief: se calculan en la etapa de PROPUESTA (el TL con estimate.mjs a partir de la estimación de equipo/tiempo/infra). Si el vendedor o el tema deriva a "¿cuánto cuesta / qué presupuesto?", NO tires un rango: aclará que eso se calcula en la propuesta, y en el brief solo registramos el presupuesto SI EL CLIENTE lo mencionó.
-- Tono de asesor que hace avanzar la venta. Cierra con UNA pregunta útil sobre lo SIGUIENTE (no re-preguntes lo ya acordado).
+PROTOCOLO DE CONFIRMACIÓN (CRÍTICO — aplícalo ANTES que todo lo demás):
+Si el último mensaje del vendedor es una aceptación ("sí", "continúa", "dale", "me parece", "adelante", "ok"):
+1. TOMA tu propuesta del turno ANTERIOR y ESCRÍBELA en el draft, en la sección que corresponda, con el prefijo "A validar con el cliente: …". Esto es OBLIGATORIO — una aceptación que no queda escrita en el draft es un turno perdido.
+2. En el "reply": UNA sola línea confirmando qué quedó registrado (no repitas la propuesta completa).
+3. Sigue con la PRIMERA sección vacía del ESTADO DEL BRIEF de arriba, con una propuesta NUEVA y ESPECÍFICA de ese tema.
+
+CÓMO RESPONDER (campo "reply") — SÉ PROPOSITIVO Y HAZ AVANZAR:
+- PROHIBIDO responder con plantillas: NO reutilices la estructura ni las frases de tus mensajes anteriores (p. ej. NO repitas "Considerando que…" ni "¿Te parece adecuado presentar estas opciones al cliente y evaluar cuál se adapta mejor?"). Cada respuesta debe estar redactada distinto — mira tus turnos anteriores en la conversación y evita parecerte a ellos.
+- Cuando el vendedor pide ejemplos o dice "no sé"/"no especificó": DA 3-5 opciones CONCRETAS y típicas para ese tipo de proyecto. NUNCA repitas la misma pregunta.
+- Recomienda lo estándar del dominio y explica en una línea por qué. Ante ambigüedad, propone una interpretación por defecto en vez de solo preguntar.
+- PROPONE SOLO CUALITATIVO (funcionalidades, alcance, tecnología, integraciones, referentes). NUNCA inventes NÚMEROS: precios, costos, presupuestos, tarifas ni plazos (rules/13: "NUNCA inventar valores"). Los precios se calculan en la etapa de PROPUESTA (TL + estimate.mjs); en el brief solo se registra el presupuesto SI EL CLIENTE lo mencionó.
+- Cierra con UNA pregunta útil sobre la sección en la que estás trabajando (no re-preguntes lo ya acordado).
 
 CÓMO LLENAR EL DRAFT (campo "draft") — SÉ FIEL A LOS HECHOS, pero REGISTRÁ EL AVANCE:
 1. Los HECHOS del cliente van tal cual. Tus propuestas sueltas (que nadie aceptó todavía) NO van al draft. PERO si el VENDEDOR acepta una dirección ("sí, me parece"), registrala en la sección que corresponda MARCADA como pendiente de confirmación del cliente (ej. en integraciones: "A validar con el cliente: Shopify / WooCommerce / desarrollo a medida con integración al ERP"). Eso hace que la sección quede cubierta y NO la vuelvas a proponer — clave para no repetirte.

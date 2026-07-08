@@ -31,7 +31,10 @@ const OPENROUTER_FREE_PREFERRED = [
 // Máximo de modelos de OpenRouter a intentar por llamada (acota la latencia).
 const OPENROUTER_MAX_TRIES = 3;
 // Modelos de Groq en orden (también los retiran de a poco — lista, no slug fijo).
-const GROQ_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
+// gpt-oss-120b primero: MUCHO mejor siguiendo instrucciones largas/JSON que
+// llama-3.3 (caso real: el chat de ventas con llama caía en respuestas
+// plantilla repetidas y no registraba el draft), misma velocidad de Groq.
+const GROQ_MODELS = ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
 
 @Injectable()
 export class GeminiProvider implements AIProvider {
