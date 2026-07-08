@@ -50,6 +50,12 @@ const AUTOSYNC_DEBOUNCE_MS = 10 * 60_000;
 const LLM_DEADLINE_MS = 40_000;
 // El RAG es un extra: si su embedding se cuelga, no puede demorar la respuesta.
 const RAG_RETRIEVE_DEADLINE_MS = 6_000;
+// Auto-compact del chat (tipo Claude Code): lo que queda fuera de la ventana de
+// HISTORY_WINDOW turnos se resume en un bloque compacto que viaja en cada
+// prompt. Se recompacta en lote (cada SUMMARY_BATCH mensajes nuevos fuera de la
+// ventana), en el post-turno (no bloquea la respuesta), con el modelo rápido.
+const CHAT_SUMMARY_BATCH = 6;
+const CHAT_SUMMARY_MAX_CHARS = 1500;
 // Metodología de ventas (rules/13 del monorepo) inyectada SIEMPRE en el prompt,
 // para que la IA se base en las reglas/fases reales (no genérico). Cacheada:
 // los cambios que haga el PM en rules/13 se reflejan solos en ≤10 min, sin
@@ -235,7 +241,9 @@ export class SalesService {
    *  ya validaron permiso aparte (sendMessage, syncBrief, etc.). NUNCA se
    *  expone al controller directamente: la vista pública pasa por
    *  getOpportunityDetail, que aplica el candado por propiedad. */
-  private async loadOpportunity(id: string): Promise<{ opp: SalesOpportunity; messages: SalesMessage[] }> {
+  private async loadOpportunity(
+    id: string,
+  ): Promise<{ opp: SalesOpportunity; messages: SalesMessage[]; chatSummary: string }> {
     const { data: oppRow, error: oppErr } = await this.supabase
       .from(OPPORTUNITIES_TABLE)
       .select('*')
@@ -259,7 +267,13 @@ export class SalesService {
       createdAt: m.created_at,
     }));
 
-    return { opp: toOpportunity(oppRow as DbOpportunity), messages };
+    // chat_summary llega vía select('*') solo si la migración 024 ya corrió —
+    // antes de eso queda '' y el sistema degrada al fallback de hechos crudos.
+    const chatSummary = typeof (oppRow as Record<string, unknown>).chat_summary === 'string'
+      ? ((oppRow as Record<string, unknown>).chat_summary as string)
+      : '';
+
+    return { opp: toOpportunity(oppRow as DbOpportunity), messages, chatSummary };
   }
 
   /** ¿Quién es el dueño y qué puede hacer el que consulta? (rules/13: solo el
@@ -381,7 +395,7 @@ export class SalesService {
   }
 
   async sendMessage(id: string, content: string, requesterLogin: string | null): Promise<SalesSendMessageResult> {
-    const { opp, messages } = await this.loadOpportunity(id);
+    const { opp, messages, chatSummary } = await this.loadOpportunity(id);
     this.assertCanEdit(opp, requesterLogin);
     const now = new Date().toISOString();
 
@@ -409,19 +423,22 @@ export class SalesService {
       //    indefinidamente (el usuario veía "Pensando… (200s)" sin fin).
       const history = [...messages, { role: 'vendor' as const, content, id: '', opportunityId: id, createdAt: now }]
         .slice(-HISTORY_WINDOW);
-      // Recuperación de hechos viejos: si la conversación es más larga que la
-      // ventana, los datos que el vendedor dio al principio quedan fuera y el
-      // agente "arranca de cero" (caso real: draft vacío tras turnos con bugs
-      // → re-preguntaba lo ya contado). Le pasamos los mensajes VIEJOS del
-      // vendedor (solo los suyos: ahí viven los hechos; acotado) para que
-      // re-extraiga lo que falte sin hacer repetir a nadie.
-      const olderVendorNotes = messages
-        .slice(0, Math.max(0, messages.length - (HISTORY_WINDOW - 1)))
-        .filter((m) => m.role === 'vendor')
-        .map((m) => m.content)
-        .join('\n---\n')
-        .slice(0, 2500);
-      const prompt = buildBriefPrompt(opp.draft, history, context, methodology, opp.status, olderVendorNotes);
+      // Contexto viejo (fuera de la ventana de HISTORY_WINDOW):
+      // 1. Si ya hay RESUMEN COMPACTADO (auto-compact tipo Claude Code, se
+      //    genera en el post-turno), va ese — cubre toda la conversación vieja
+      //    en ~1500 chars.
+      // 2. Fallback (sin resumen todavía, o migración 024 sin correr): los
+      //    mensajes VIEJOS del vendedor crudos (ahí viven los hechos; acotado)
+      //    para que re-extraiga sin hacer repetir a nadie.
+      const olderVendorNotes = chatSummary.trim()
+        ? ''
+        : messages
+            .slice(0, Math.max(0, messages.length - (HISTORY_WINDOW - 1)))
+            .filter((m) => m.role === 'vendor')
+            .map((m) => m.content)
+            .join('\n---\n')
+            .slice(0, 2500);
+      const prompt = buildBriefPrompt(opp.draft, history, context, methodology, opp.status, olderVendorNotes, chatSummary);
 
       const raw = await withTimeout(
         this.gemini.generateRaw({
@@ -500,6 +517,11 @@ export class SalesService {
       .indexTurn({ ...opp, draft: parsed.draft }, vendorContent, parsed.reply)
       .catch((err) => this.logger.warn(`RAG indexTurn de ${opp.cliente}/${opp.oportunidad} degradó: ${(err as Error).message}`));
 
+    // Auto-compact del chat (tipo Claude Code) — fuera del camino de respuesta.
+    await this.maybeCompactChat(id).catch((err) =>
+      this.logger.warn(`Auto-compact del chat de ${opp.cliente}/${opp.oportunidad} degradó: ${(err as Error).message}`),
+    );
+
     // Auto-sync del monorepo por CHECKPOINT: brief.md se mantiene al día, pero
     // sin un commit por turno. Solo sincroniza si nunca se sincronizó o si pasó
     // el debounce desde la última vez (una ráfaga de mensajes colapsa en ~1
@@ -528,6 +550,55 @@ export class SalesService {
   private autoSyncDue(syncedAt: string | null): boolean {
     if (!syncedAt) return true;
     return Date.now() - new Date(syncedAt).getTime() >= AUTOSYNC_DEBOUNCE_MS;
+  }
+
+  /** Auto-compact del chat (tipo Claude Code): fusiona los mensajes que ya
+   *  quedaron fuera de la ventana de HISTORY_WINDOW con el resumen anterior en
+   *  UN bloque compacto (hechos del cliente, decisiones, pendientes) que viaja
+   *  en cada prompt. Incremental (chat_summary_upto marca hasta dónde se
+   *  compactó) y en lote (recompacta cada CHAT_SUMMARY_BATCH mensajes nuevos
+   *  fuera de ventana) — 1 llamada barata al modelo rápido cada ~6 mensajes.
+   *  Best-effort: si la migración 024 no corrió o el LLM falla, no pasa nada. */
+  private async maybeCompactChat(id: string): Promise<void> {
+    const { data: row, error: rowErr } = await this.supabase
+      .from(OPPORTUNITIES_TABLE)
+      .select('chat_summary, chat_summary_upto')
+      .eq('id', id)
+      .maybeSingle();
+    if (rowErr || !row) return; // columna ausente (sin migración 024) → feature apagada
+
+    const { data: msgs } = await this.supabase
+      .from(MESSAGES_TABLE)
+      .select('role, content')
+      .eq('opportunity_id', id)
+      .order('created_at', { ascending: true });
+    const total = msgs?.length ?? 0;
+    const cutoff = total - HISTORY_WINDOW; // mensajes que YA no ve el modelo
+    const upto = (row.chat_summary_upto as number | null) ?? 0;
+    if (cutoff - upto < CHAT_SUMMARY_BATCH) return; // aún no toca recompactar
+
+    const chunk = (msgs ?? [])
+      .slice(upto, cutoff)
+      .filter((m) => m.role !== 'system')
+      .map((m) => `${m.role === 'vendor' ? 'VENDEDOR' : 'ASISTENTE'}: ${m.content}`)
+      .join('\n')
+      .slice(0, 6000);
+    if (!chunk.trim()) return;
+
+    const raw = await this.gemini.generateRaw({
+      prompt: buildCompactPrompt((row.chat_summary as string | null) ?? '', chunk),
+      temperature: 0.2,
+      maxOutputTokens: 700,
+      cascade: { preferGroq: true, attemptTimeoutMs: 10_000, primaryAttempts: 1, useProFallback: false },
+    });
+    const summary = raw.trim().slice(0, CHAT_SUMMARY_MAX_CHARS);
+    if (!summary) return;
+
+    await this.supabase
+      .from(OPPORTUNITIES_TABLE)
+      .update({ chat_summary: summary, chat_summary_upto: cutoff })
+      .eq('id', id);
+    this.logger.log(`Chat de ${id} compactado hasta el mensaje ${cutoff}/${total}.`);
   }
 
   /** Metodología de ventas (rules/13) del monorepo, acotada y cacheada. Se
@@ -988,6 +1059,23 @@ function substitutePlaceholders(
 
 // ─── Prompt del LLM ─────────────────────────────────────────────────────────
 
+/** Prompt del compactador de contexto (auto-compact). Fusiona el resumen
+ *  anterior con los mensajes nuevos fuera de ventana en UN resumen corto. */
+function buildCompactPrompt(previousSummary: string, chunk: string): string {
+  return `Eres el compactador de contexto de un chat de pre-venta (agencia de software en Colombia). Fusiona el RESUMEN ANTERIOR y los MENSAJES NUEVOS en UN solo resumen de MÁXIMO 150 palabras, en viñetas, español neutral.
+
+CONSERVA SIEMPRE (si aparecen): hechos del negocio del cliente, funcionalidades/alcance acordado o a validar, integraciones, presupuesto/plazo SOLO si los dijo el cliente (con su moneda), decisiones aceptadas o rechazadas, correcciones ("eso no", "es irreal"), y pendientes.
+DESCARTA: saludos, repeticiones, frases de cortesía, redacción del asistente.
+
+RESUMEN ANTERIOR (puede estar vacío):
+${previousSummary || '(ninguno)'}
+
+MENSAJES NUEVOS A INCORPORAR:
+${chunk}
+
+Devuelve SOLO el texto del resumen (sin títulos, sin markdown extra, sin comentarios).`;
+}
+
 function buildBriefPrompt(
   draft: SalesBriefDraft,
   history: Array<{ role: string; content: string }>,
@@ -995,7 +1083,16 @@ function buildBriefPrompt(
   methodology = '',
   status = '',
   olderVendorNotes = '',
+  chatSummary = '',
 ): string {
+  // Resumen compactado de la conversación vieja (auto-compact) — reemplaza a
+  // los mensajes crudos fuera de la ventana. ~1500 chars fijos por prompt.
+  const summaryBlock = chatSummary.trim()
+    ? `
+RESUMEN COMPACTADO DE LA CONVERSACIÓN ANTERIOR (generado por el sistema — hechos y decisiones previos a los últimos mensajes; cuenta como contexto verídico, no lo re-preguntes):
+${chatSummary.trim()}
+`
+    : '';
   const historyText = history.map((m) => `${m.role === 'vendor' ? 'VENDEDOR' : 'ASISTENTE'}: ${m.content}`).join('\n\n');
   // Bloque de contexto recuperado (RAG). Solo entra si hay algo relevante — así
   // el prompt no crece cuando no aporta (economía de cuota del LLM gratuito).
@@ -1053,7 +1150,7 @@ CONTEXTO LOCAL: Imaginamos es una agencia en COLOMBIA. La moneda de los clientes
 Basá TODO (proceso, fases, qué pedir, cómo estructurar el brief y la propuesta) en la METODOLOGÍA DEL MONOREPO de más abajo — es la fuente de verdad de las reglas del negocio, por encima de tu conocimiento genérico.
 
 El DRAFT es la memoria acumulada del proceso: contiene lo ya confirmado en sesiones previas. Continúa desde ahí — no vuelvas a preguntar lo que ya está cargado.
-${methodologyBlock}${statusBlock}${briefStateBlock}
+${methodologyBlock}${statusBlock}${summaryBlock}${briefStateBlock}
 DRAFT ACTUAL (JSON, puede estar vacío o parcial):
 ${JSON.stringify(draft, null, 2)}
 ${contextBlock}
