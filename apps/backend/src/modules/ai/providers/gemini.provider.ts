@@ -655,11 +655,27 @@ Return a single JSON object (NOT an array) with this exact shape:
         if (!r.ok) throw new Error(r.error?.message ?? 'sin respuesta');
       });
 
-    // El ping de OpenRouter usa el PRIMER candidato de la lista dinámica (la
-    // misma que usa la cascada real) — así el diagnóstico refleja lo que el
-    // chat usaría de verdad, y no un slug fijo que puede haber rotado.
+    // El ping de OpenRouter hace LO MISMO que la cascada real: prueba los
+    // candidatos en orden hasta que uno responda, y reporta CUÁL respondió.
+    // Antes pingueaba solo el primero y daba falso "falla" cuando ese estaba
+    // rate-limited temporalmente (caso real: qwen3-coder:free con 429 upstream
+    // mientras gpt-oss-120b:free respondía perfecto).
     const orCandidates = orKey ? await this.getOpenRouterCandidates() : [];
-    const orModel = orCandidates[0];
+    const pingOpenRouter = async () => {
+      const t0 = Date.now();
+      let lastErr = 'sin candidatos';
+      for (const model of orCandidates) {
+        const r = await callOpenAICompatible({
+          baseUrl: 'https://openrouter.ai/api/v1',
+          apiKey: orKey!,
+          model,
+          request: req as OpenAICompatCall['request'],
+        });
+        if (r.ok) return { provider: `openrouter (${model})`, configured: true, ok: true, ms: Date.now() - t0 };
+        lastErr = `${model}: ${r.error?.message ?? 'sin respuesta'}`;
+      }
+      return { provider: 'openrouter', configured: true, ok: false, ms: Date.now() - t0, error: lastErr.slice(0, 200) };
+    };
 
     // timeout del SDK (15s) para los pings de Gemini — aborta de verdad, sin dejar
     // la petición colgada. 15s porque el Gemini gratis a veces tarda >8s aun
@@ -671,8 +687,8 @@ Return a single JSON object (NOT an array) with this exact shape:
       groqKey
         ? pingOpenAI(`groq (${GROQ_MODELS[0]})`, 'https://api.groq.com/openai/v1', groqKey, GROQ_MODELS[0])
         : Promise.resolve({ provider: 'groq', configured: false, ok: false, ms: null }),
-      orKey && orModel
-        ? pingOpenAI(`openrouter (${orModel})`, 'https://openrouter.ai/api/v1', orKey, orModel)
+      orKey && orCandidates.length
+        ? pingOpenRouter()
         : Promise.resolve({ provider: 'openrouter', configured: false, ok: false, ms: null }),
     ]);
   }
