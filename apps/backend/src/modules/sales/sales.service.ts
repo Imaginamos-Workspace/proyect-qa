@@ -56,6 +56,11 @@ const RAG_RETRIEVE_DEADLINE_MS = 6_000;
 // ventana), en el post-turno (no bloquea la respuesta), con el modelo rápido.
 const CHAT_SUMMARY_BATCH = 6;
 const CHAT_SUMMARY_MAX_CHARS = 1500;
+// Presupuesto de caracteres del lote a compactar. `chat_summary_upto` solo
+// avanza hasta el último mensaje que ENTRÓ al presupuesto — nunca se marca
+// como compactado algo que no viajó al modelo (antes un slice descartaba el
+// excedente pero igual avanzaba el puntero: pérdida permanente de contexto).
+const CHAT_CHUNK_MAX_CHARS = 6000;
 // Metodología de ventas (rules/13 del monorepo) inyectada SIEMPRE en el prompt,
 // para que la IA se base en las reglas/fases reales (no genérico). Cacheada:
 // los cambios que haga el PM en rules/13 se reflejan solos en ≤10 min, sin
@@ -577,13 +582,31 @@ export class SalesService {
     const upto = (row.chat_summary_upto as number | null) ?? 0;
     if (cutoff - upto < CHAT_SUMMARY_BATCH) return; // aún no toca recompactar
 
-    const chunk = (msgs ?? [])
-      .slice(upto, cutoff)
-      .filter((m) => m.role !== 'system')
-      .map((m) => `${m.role === 'vendor' ? 'VENDEDOR' : 'ASISTENTE'}: ${m.content}`)
-      .join('\n')
-      .slice(0, 6000);
-    if (!chunk.trim()) return;
+    // Lote acotado por caracteres SIN descartar mensajes: si el presupuesto se
+    // llena, el resto queda para la próxima compactación (upto avanza solo
+    // hasta `consumed`). Un mensaje individual más largo que el presupuesto se
+    // recorta (entra truncado, pero entra) para que el puntero nunca se trabe.
+    const lines: string[] = [];
+    let consumed = upto;
+    let chars = 0;
+    for (const m of (msgs ?? []).slice(upto, cutoff)) {
+      const line = m.role === 'system' ? '' : `${m.role === 'vendor' ? 'VENDEDOR' : 'ASISTENTE'}: ${m.content}`;
+      if (line && chars + line.length > CHAT_CHUNK_MAX_CHARS && chars > 0) break;
+      if (line) {
+        lines.push(line.slice(0, CHAT_CHUNK_MAX_CHARS));
+        chars += line.length;
+      }
+      consumed++;
+    }
+    const chunk = lines.join('\n');
+    if (!chunk.trim()) {
+      // Tramo de puros mensajes `system` (cesiones/reclamos): no hay nada que
+      // resumir, pero el puntero avanza igual — si no, quedaría trabado acá.
+      if (consumed > upto) {
+        await this.supabase.from(OPPORTUNITIES_TABLE).update({ chat_summary_upto: consumed }).eq('id', id);
+      }
+      return;
+    }
 
     const raw = await this.gemini.generateRaw({
       prompt: buildCompactPrompt((row.chat_summary as string | null) ?? '', chunk),
@@ -591,14 +614,21 @@ export class SalesService {
       maxOutputTokens: 700,
       cascade: { preferGroq: true, attemptTimeoutMs: 10_000, primaryAttempts: 1, useProFallback: false },
     });
-    const summary = raw.trim().slice(0, CHAT_SUMMARY_MAX_CHARS);
+    // Si el modelo se pasó del tope, cortar en el último salto de línea (el
+    // resumen es en viñetas) — un corte a mitad de frase deja un hecho roto.
+    const trimmed = raw.trim();
+    const lastBreak = trimmed.lastIndexOf('\n', CHAT_SUMMARY_MAX_CHARS);
+    const summary =
+      trimmed.length <= CHAT_SUMMARY_MAX_CHARS
+        ? trimmed
+        : trimmed.slice(0, lastBreak > 0 ? lastBreak : CHAT_SUMMARY_MAX_CHARS);
     if (!summary) return;
 
     await this.supabase
       .from(OPPORTUNITIES_TABLE)
-      .update({ chat_summary: summary, chat_summary_upto: cutoff })
+      .update({ chat_summary: summary, chat_summary_upto: consumed })
       .eq('id', id);
-    this.logger.log(`Chat de ${id} compactado hasta el mensaje ${cutoff}/${total}.`);
+    this.logger.log(`Chat de ${id} compactado hasta el mensaje ${consumed}/${total}.`);
   }
 
   /** Metodología de ventas (rules/13) del monorepo, acotada y cacheada. Se
@@ -880,11 +910,13 @@ export class SalesService {
     const basePath = `sales/${opp.cliente}/${opp.oportunidad}`;
 
     const files = await this.listRepoDir(basePath, true);
-    await Promise.all(
-      files.map(({ path, sha }) =>
-        this.deleteFileFromRepo(path, sha, `sales(${opp.cliente}): elimina ${opp.oportunidad} del pipeline`),
-      ),
-    );
+    // SECUENCIAL a propósito: cada DELETE de la Contents API es un commit que
+    // mueve el head de la rama — en paralelo (Promise.all) chocan los SHAs y
+    // GitHub devuelve 409/422 intermitente cuando la carpeta tiene varios
+    // archivos (caso real: la limpieza fallaba con 500 y dejaba restos).
+    for (const { path, sha } of files) {
+      await this.deleteFileFromRepo(path, sha, `sales(${opp.cliente}): elimina ${opp.oportunidad} del pipeline`);
+    }
 
     const { error } = await this.supabase.from(OPPORTUNITIES_TABLE).delete().eq('id', id);
     if (error) throw new Error(`Se borraron los archivos del monorepo pero no la fila de Supabase: ${error.message}`);
@@ -1157,7 +1189,12 @@ ${contextBlock}
 CONVERSACIÓN RECIENTE:
 ${historyText}
 
-PROTOCOLO DE CONFIRMACIÓN (CRÍTICO — aplícalo ANTES que todo lo demás):
+PEDIDOS DIRECTOS DEL VENDEDOR (van PRIMERO — por encima del protocolo y del cuestionario del brief):
+- Si el vendedor pide un RECAP/resumen de lo que se sabe: dáselo COMPLETO en el "reply", armado desde el DRAFT + el RESUMEN COMPACTADO (el draft va igual, sin cambios). En ese turno NO sigas con el cuestionario ni cierres con pregunta de sección.
+- Si pregunta CÓMO RESPONDER algo que le preguntó el cliente: contéstale ESO con una respuesta lista para usar. Si es sobre precio/costo: dile que NO adelante cifras — los valores se calculan en la etapa de PROPUESTA (los arma el TL); si el cliente ya dijo su presupuesto, ese sí se puede reconocer.
+- Solo si el mensaje NO es un pedido directo, aplica el protocolo normal de abajo.
+
+PROTOCOLO DE CONFIRMACIÓN (CRÍTICO — aplícalo antes que el cuestionario, después de los PEDIDOS DIRECTOS):
 Si el último mensaje del vendedor es una aceptación ("sí", "continúa", "dale", "me parece", "adelante", "ok"):
 1. TOMA tu propuesta del turno ANTERIOR y ESCRÍBELA en el draft, en la sección que corresponda, con el prefijo "A validar con el cliente: …". Esto es OBLIGATORIO — una aceptación que no queda escrita en el draft es un turno perdido.
 2. En el "reply": UNA sola línea confirmando qué quedó registrado (no repitas la propuesta completa).
