@@ -1021,14 +1021,47 @@ Devuelve SOLO este JSON (sin markdown, sin texto fuera del JSON):
 }`;
 }
 
+/** Parseo ROBUSTO de la respuesta del LLM. Los modelos gratis (Llama/Qwen/
+ *  DeepSeek vía Groq/OpenRouter) muchas veces envuelven el JSON en fences
+ *  \`\`\`json ... \`\`\` o le agregan texto antes/después aunque se les pida JSON
+ *  puro — eso rompía el chat con "shape esperado" (errores reales reportados).
+ *  Estrategia: JSON directo → sin fences → primer bloque {...} balanceado. */
 function parseAssistantResponse(raw: string): SalesSendMessageResult {
-  try {
-    const parsed = JSON.parse(raw);
-    if (typeof parsed.reply === 'string' && typeof parsed.draft === 'object' && parsed.draft !== null) {
-      return { reply: parsed.reply, draft: parsed.draft };
+  const candidates: string[] = [raw.trim()];
+
+  // Sin fences markdown (```json ... ``` o ``` ... ```).
+  const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  if (fenced?.[1]) candidates.push(fenced[1].trim());
+
+  // Primer objeto {...} balanceado (por si hay texto alrededor).
+  const start = raw.indexOf('{');
+  if (start >= 0) {
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
+    for (let i = start; i < raw.length; i++) {
+      const ch = raw[i];
+      if (esc) { esc = false; continue; }
+      if (ch === '\\') { esc = true; continue; }
+      if (ch === '"') inStr = !inStr;
+      if (inStr) continue;
+      if (ch === '{') depth++;
+      else if (ch === '}') {
+        depth--;
+        if (depth === 0) { candidates.push(raw.slice(start, i + 1)); break; }
+      }
     }
-  } catch {
-    // cae al fallback de abajo
+  }
+
+  for (const c of candidates) {
+    try {
+      const parsed = JSON.parse(c);
+      if (typeof parsed.reply === 'string' && typeof parsed.draft === 'object' && parsed.draft !== null) {
+        return { reply: parsed.reply, draft: parsed.draft };
+      }
+    } catch {
+      // probar el siguiente candidato
+    }
   }
   throw new Error(`Respuesta del LLM no tiene el shape esperado: ${raw.slice(0, 200)}`);
 }

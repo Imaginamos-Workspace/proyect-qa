@@ -16,10 +16,22 @@ import {
 } from '../prompts/test-generation.prompt';
 import { validateAndFixTestCode } from '../utils/test-validator';
 
-// Modelo GRATIS por defecto de OpenRouter (DeepSeek gratis, bueno para código).
-// Overrideable con OPENROUTER_MODEL. Otros gratis: deepseek/deepseek-r1:free,
-// meta-llama/llama-3.3-70b-instruct:free, qwen/qwen-2.5-72b-instruct:free.
-const OPENROUTER_DEFAULT_MODEL = 'deepseek/deepseek-chat-v3-0324:free';
+// Candidatos GRATIS de OpenRouter, EN ORDEN de preferencia. Los modelos :free
+// ROTAN (caso real: deepseek-chat-v3:free pasó a pago y daba 404) — por eso NO
+// se fija uno: se intenta esta lista, filtrada/completada con la lista EN VIVO
+// de modelos gratis de OpenRouter (endpoint público, cacheado 1h). Es el mismo
+// enfoque de herramientas tipo OpenCode: nunca dependen de un solo slug.
+// OPENROUTER_MODEL (env) se antepone como primera preferencia si está definido.
+const OPENROUTER_FREE_PREFERRED = [
+  'qwen/qwen3-coder:free',
+  'openai/gpt-oss-120b:free',
+  'meta-llama/llama-3.3-70b-instruct:free',
+  'qwen/qwen3-next-80b-a3b-instruct:free',
+];
+// Máximo de modelos de OpenRouter a intentar por llamada (acota la latencia).
+const OPENROUTER_MAX_TRIES = 3;
+// Modelos de Groq en orden (también los retiran de a poco — lista, no slug fijo).
+const GROQ_MODELS = ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
 
 @Injectable()
 export class GeminiProvider implements AIProvider {
@@ -33,10 +45,11 @@ export class GeminiProvider implements AIProvider {
     // Primary: gemini-2.5-flash — full flash model, much better code quality
     // than flash-lite and still on the free tier.
     this.model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-    // Fallback: gemini-2.0-flash — GRATIS y con cuota real (a diferencia de
-    // gemini-2.5-pro, que en el tier gratis da 429 "quota exceeded" casi
-    // siempre). Pool de cuota separado del 2.5-flash → sirve de respaldo real.
-    this.fallbackModel = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    // Fallback: gemini-2.5-flash-lite — el modelo GRATIS con MÁS cuota del tier
+    // free de Gemini (más RPM/día que flash). Pool separado del 2.5-flash →
+    // respaldo real. (2.5-pro daba 429 siempre en free; 2.0-flash también quedó
+    // con cuota recortada — casos reales del diagnóstico.)
+    this.fallbackModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
     // Embeddings para el RAG de ventas — 768 dims, capa gratuita. Misma key,
     // sin dependencia nueva.
     this.embedModel = genAI.getGenerativeModel({ model: 'text-embedding-004' });
@@ -57,24 +70,84 @@ export class GeminiProvider implements AIProvider {
     return res.embeddings.map((e) => e.values);
   }
 
-  /** Un intento contra Groq (Llama 3.3 70B). Devuelve la respuesta en el shape
-   *  de Gemini, o null si falla (empujando el fallo a la lista). */
+  // Lista EN VIVO de modelos :free de OpenRouter (endpoint público, sin key),
+  // cacheada 1h. Si el fetch falla, se usa la lista preferida tal cual.
+  private orFreeCache: { ts: number; ids: Set<string> } | null = null;
+
+  private async getOpenRouterCandidates(): Promise<string[]> {
+    const envModel = this.configService.get<string>('OPENROUTER_MODEL');
+    const preferred = [...(envModel ? [envModel] : []), ...OPENROUTER_FREE_PREFERRED];
+
+    if (!this.orFreeCache || Date.now() - this.orFreeCache.ts > 60 * 60_000) {
+      try {
+        const res = await fetch('https://openrouter.ai/api/v1/models', { signal: AbortSignal.timeout(6_000) });
+        if (res.ok) {
+          const json = (await res.json()) as { data?: { id: string }[] };
+          this.orFreeCache = {
+            ts: Date.now(),
+            ids: new Set((json.data ?? []).map((m) => m.id).filter((id) => id.endsWith(':free'))),
+          };
+        }
+      } catch {
+        // sin red / lento → seguimos con la lista estática
+      }
+    }
+
+    const live = this.orFreeCache?.ids;
+    if (!live?.size) return preferred.slice(0, OPENROUTER_MAX_TRIES);
+    // Preferidos que SIGUEN gratis hoy + completar con otros gratis en vivo.
+    const stillFree = preferred.filter((m) => live.has(m) || !m.endsWith(':free')); // un env model pago se respeta
+    const extras = [...live].filter((m) => !stillFree.includes(m));
+    return [...stillFree, ...extras].slice(0, OPENROUTER_MAX_TRIES);
+  }
+
+  /** Intenta OpenRouter con la lista de modelos gratis (en orden) hasta que uno
+   *  responda. Los :free rotan — un solo slug fijo es frágil (caso real: 404
+   *  "This model is unavailable for free"). */
+  private async tryOpenRouter(
+    orKey: string,
+    request: Parameters<typeof this.model.generateContent>[0],
+    failures: { provider: string; status?: number; message: string }[],
+  ): Promise<Awaited<ReturnType<typeof this.model.generateContent>> | null> {
+    const candidates = await this.getOpenRouterCandidates();
+    for (const model of candidates) {
+      const resp = await callOpenAICompatible({
+        baseUrl: 'https://openrouter.ai/api/v1',
+        apiKey: orKey,
+        model,
+        request: request as OpenAICompatCall['request'],
+      });
+      if (resp.ok && resp.value) {
+        return resp.value as Awaited<ReturnType<typeof this.model.generateContent>>;
+      }
+      failures.push({ provider: `openrouter:${model}`, status: resp.error?.status, message: resp.error?.message || 'unknown' });
+      console.warn(`[openrouter:${model}] failed: ${resp.error?.message}`);
+    }
+    return null;
+  }
+
+  /** Intenta Groq con su lista de modelos (en orden) hasta que uno responda.
+   *  Groq también retira modelos — misma estrategia de lista. */
   private async tryGroq(
     groqKey: string,
     request: Parameters<typeof this.model.generateContent>[0],
     failures: { provider: string; status?: number; message: string }[],
   ): Promise<Awaited<ReturnType<typeof this.model.generateContent>> | null> {
-    const groqResp = await callOpenAICompatible({
-      baseUrl: 'https://api.groq.com/openai/v1',
-      apiKey: groqKey,
-      model: 'llama-3.3-70b-versatile',
-      request: request as OpenAICompatCall['request'],
-    });
-    if (groqResp.ok && groqResp.value) {
-      return groqResp.value as Awaited<ReturnType<typeof this.model.generateContent>>;
+    const envModel = this.configService.get<string>('GROQ_MODEL');
+    const models = [...new Set([...(envModel ? [envModel] : []), ...GROQ_MODELS])];
+    for (const model of models) {
+      const resp = await callOpenAICompatible({
+        baseUrl: 'https://api.groq.com/openai/v1',
+        apiKey: groqKey,
+        model,
+        request: request as OpenAICompatCall['request'],
+      });
+      if (resp.ok && resp.value) {
+        return resp.value as Awaited<ReturnType<typeof this.model.generateContent>>;
+      }
+      failures.push({ provider: `groq:${model}`, status: resp.error?.status, message: resp.error?.message || 'unknown' });
+      console.warn(`[groq:${model}] failed: ${resp.error?.message}`);
     }
-    failures.push({ provider: 'groq', status: groqResp.error?.status, message: groqResp.error?.message || 'unknown' });
-    console.warn(`[groq] failed: ${groqResp.error?.message}`);
     return null;
   }
 
@@ -165,12 +238,12 @@ export class GeminiProvider implements AIProvider {
           const status = (err as { status?: number })?.status;
           const message = err instanceof Error ? err.message : String(err);
           if (attempt === FALLBACK_ATTEMPTS || !isQuotaOrOverload(status)) {
-            failures.push({ provider: 'gemini-2.0-flash', status, message });
+            failures.push({ provider: 'gemini-flash-lite', status, message });
             break;
           }
           const delayMs = 2000 * attempt;
           console.warn(
-            `[gemini-2.0-flash] ${status} on attempt ${attempt}/${FALLBACK_ATTEMPTS}, retrying in ${delayMs}ms`,
+            `[gemini-flash-lite] ${status} on attempt ${attempt}/${FALLBACK_ATTEMPTS}, retrying in ${delayMs}ms`,
           );
           await new Promise((r) => setTimeout(r, delayMs));
         }
@@ -184,25 +257,14 @@ export class GeminiProvider implements AIProvider {
       if (r) return r;
     }
 
-    // ── Step 4: OpenRouter (GRATIS) — DeepSeek free + muchos otros modelos
-    // gratis con UNA sola key. Reemplaza a la API directa de DeepSeek, que es
-    // PAGA (daba 402 Insufficient Balance). Requiere OPENROUTER_API_KEY (gratis
-    // en openrouter.ai). Modelo configurable con OPENROUTER_MODEL.
+    // ── Step 4: OpenRouter (GRATIS) — lista dinámica de modelos :free con
+    // fallback entre ellos (los :free rotan; ver tryOpenRouter). Requiere
+    // OPENROUTER_API_KEY (gratis en openrouter.ai).
     const orKey = this.configService.get<string>('OPENROUTER_API_KEY');
     if (orKey) {
-      const orModel = this.configService.get<string>('OPENROUTER_MODEL') || OPENROUTER_DEFAULT_MODEL;
-      console.warn(`[ai] groq failed/missing, trying OpenRouter (${orModel})`);
-      const orResp = await callOpenAICompatible({
-        baseUrl: 'https://openrouter.ai/api/v1',
-        apiKey: orKey,
-        model: orModel,
-        request: request as OpenAICompatCall['request'],
-      });
-      if (orResp.ok && orResp.value) {
-        return orResp.value as Awaited<ReturnType<typeof this.model.generateContent>>;
-      }
-      failures.push({ provider: 'openrouter', status: orResp.error?.status, message: orResp.error?.message || 'unknown' });
-      console.warn(`[openrouter] failed: ${orResp.error?.message}`);
+      console.warn('[ai] groq failed/missing, trying OpenRouter (lista de modelos gratis)');
+      const r = await this.tryOpenRouter(orKey, request, failures);
+      if (r) return r;
     }
 
     // ── All providers exhausted — build a helpful error ─────────────
@@ -587,24 +649,29 @@ Return a single JSON object (NOT an array) with this exact shape:
 
     const groqKey = this.configService.get<string>('GROQ_API_KEY');
     const orKey = this.configService.get<string>('OPENROUTER_API_KEY');
-    const orModel = this.configService.get<string>('OPENROUTER_MODEL') || OPENROUTER_DEFAULT_MODEL;
     const pingOpenAI = (provider: string, baseUrl: string, apiKey: string, model: string) =>
       time(provider, async () => {
         const r = await callOpenAICompatible({ baseUrl, apiKey, model, request: req as OpenAICompatCall['request'] });
         if (!r.ok) throw new Error(r.error?.message ?? 'sin respuesta');
       });
 
+    // El ping de OpenRouter usa el PRIMER candidato de la lista dinámica (la
+    // misma que usa la cascada real) — así el diagnóstico refleja lo que el
+    // chat usaría de verdad, y no un slug fijo que puede haber rotado.
+    const orCandidates = orKey ? await this.getOpenRouterCandidates() : [];
+    const orModel = orCandidates[0];
+
     // timeout del SDK (15s) para los pings de Gemini — aborta de verdad, sin dejar
     // la petición colgada. 15s porque el Gemini gratis a veces tarda >8s aun
     // funcionando. Groq/OpenRouter abortan solos en callOpenAICompatible.
-    // Todos GRATIS: gemini-2.5-flash, gemini-2.0-flash, groq, openrouter.
+    // Todos GRATIS: gemini-2.5-flash, gemini-2.5-flash-lite, groq, openrouter.
     return Promise.all([
       time('gemini-flash', () => this.model.generateContent(req, { timeout: 15_000 })),
-      time('gemini-2.0-flash', () => this.fallbackModel.generateContent(req, { timeout: 15_000 })),
+      time('gemini-flash-lite', () => this.fallbackModel.generateContent(req, { timeout: 15_000 })),
       groqKey
-        ? pingOpenAI('groq', 'https://api.groq.com/openai/v1', groqKey, 'llama-3.3-70b-versatile')
+        ? pingOpenAI(`groq (${GROQ_MODELS[0]})`, 'https://api.groq.com/openai/v1', groqKey, GROQ_MODELS[0])
         : Promise.resolve({ provider: 'groq', configured: false, ok: false, ms: null }),
-      orKey
+      orKey && orModel
         ? pingOpenAI(`openrouter (${orModel})`, 'https://openrouter.ai/api/v1', orKey, orModel)
         : Promise.resolve({ provider: 'openrouter', configured: false, ok: false, ms: null }),
     ]);
@@ -726,13 +793,15 @@ interface OpenAICompatResult {
 
 async function callOpenAICompatible(
   call: OpenAICompatCall,
+  // interno: reintento sin response_format (varios modelos gratis no lo soportan)
+  skipJsonFormat = false,
 ): Promise<OpenAICompatResult> {
   const { baseUrl, apiKey, model, request } = call;
   const prompt = request.contents
     .map((c) => c.parts.map((p) => p.text).join(''))
     .join('\n');
   const cfg = request.generationConfig || {};
-  const wantJson = cfg.responseMimeType === 'application/json';
+  const wantJson = cfg.responseMimeType === 'application/json' && !skipJsonFormat;
 
   let resp: Response;
   try {
@@ -759,6 +828,12 @@ async function callOpenAICompatible(
 
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');
+    // Varios modelos gratis (sobre todo en OpenRouter) rechazan response_format
+    // con 400 — reintentamos UNA vez sin él; el parseo robusto del caller extrae
+    // el JSON igual aunque venga con texto/fences alrededor.
+    if (resp.status === 400 && wantJson && /response_format|json_object/i.test(text)) {
+      return callOpenAICompatible(call, true);
+    }
     return {
       ok: false,
       error: { message: `HTTP ${resp.status}: ${text.slice(0, 200)}`, status: resp.status },
