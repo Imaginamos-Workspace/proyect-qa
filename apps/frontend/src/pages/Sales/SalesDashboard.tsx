@@ -184,20 +184,25 @@ export function SalesDashboard() {
               </Button>
             </div>
             {aiHealth.data && (
-              <ul className="grid gap-1.5 sm:grid-cols-2">
+              <ul className="space-y-1.5">
                 {aiHealth.data.map((p) => (
-                  <li key={p.provider} className="flex items-center gap-2 rounded-md bg-muted/50 px-2.5 py-1.5 text-xs">
-                    {!p.configured ? (
-                      <XCircle className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    ) : p.ok ? (
-                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" />
-                    ) : (
-                      <XCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />
+                  <li key={p.provider} className="rounded-md bg-muted/50 px-2.5 py-1.5 text-xs">
+                    <div className="flex items-center gap-2">
+                      {!p.configured ? (
+                        <XCircle className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      ) : p.ok ? (
+                        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-success" />
+                      ) : (
+                        <XCircle className="h-3.5 w-3.5 shrink-0 text-destructive" />
+                      )}
+                      <span className="font-medium text-foreground">{p.provider}</span>
+                      <span className="ml-auto text-muted-foreground">
+                        {!p.configured ? 'sin key' : p.ok ? `ok · ${p.ms}ms` : 'falla'}
+                      </span>
+                    </div>
+                    {!p.ok && p.error && (
+                      <p className="mt-1 break-words pl-5 text-[11px] text-destructive/80">{p.error}</p>
                     )}
-                    <span className="font-medium text-foreground">{p.provider}</span>
-                    <span className="ml-auto text-muted-foreground">
-                      {!p.configured ? 'sin key' : p.ok ? `ok · ${p.ms}ms` : 'falla'}
-                    </span>
                   </li>
                 ))}
               </ul>
