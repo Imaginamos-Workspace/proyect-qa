@@ -29,6 +29,10 @@ const NON_OPPORTUNITY_DIRS = new Set(['templates', '_stock']);
 // Throttle del descubrimiento — evita listar todo `sales/` en cada carga de la
 // lista (mismo criterio que los TTL de caché de scrum.service.ts).
 const DISCOVERY_TTL_MS = 60_000;
+// Tope duro: el descubrimiento no puede bloquear la carga de la lista más que
+// esto. Si GitHub está lento, la lista devuelve lo que hay en la base y el
+// descubrimiento se completa en otra carga.
+const DISCOVERY_DEADLINE_MS = 6_000;
 // Ventana en la que se rechaza un segundo dispatch de "regenerar contraseña"
 // para la misma oportunidad — un poco más que el timeout de polling del
 // frontend (2 min), para cubrir el caso de un CI lento.
@@ -101,7 +105,13 @@ export class SalesService {
   }
 
   async listOpportunities(): Promise<SalesOpportunity[]> {
-    await this.discoverOpportunitiesFromMonorepo();
+    // El descubrimiento del monorepo (varias llamadas a GitHub) es best-effort y
+    // ACOTADO: NUNCA debe bloquear la carga de la lista más de unos segundos. Si
+    // GitHub está lento, la lista igual carga con lo que ya hay en la base — antes
+    // esto colgaba el dashboard en skeletons (y React Query reintentaba). El
+    // throttle es por instancia (memoria), así que en serverless puede correr en
+    // cada arranque en frío; el tope lo mantiene inofensivo.
+    await withTimeout(this.discoverOpportunitiesFromMonorepo(), DISCOVERY_DEADLINE_MS).catch(() => undefined);
 
     const { data, error } = await this.supabase
       .from(OPPORTUNITIES_TABLE)
@@ -123,38 +133,42 @@ export class SalesService {
     this.lastDiscoveryAt = Date.now();
 
     try {
-      const clientes = await this.listRepoSubdirs('sales');
-      const found: { cliente: string; oportunidad: string }[] = [];
-      for (const cliente of clientes) {
-        if (NON_OPPORTUNITY_DIRS.has(cliente) || cliente.startsWith('_')) continue;
-        const oportunidades = await this.listRepoSubdirs(`sales/${cliente}`);
-        for (const oportunidad of oportunidades) found.push({ cliente, oportunidad });
-      }
+      // Listado PARALELO (antes era en serie → lento y bloqueaba la lista): una
+      // sola ola para las subcarpetas de cada cliente.
+      const clientes = (await this.listRepoSubdirs('sales')).filter(
+        (c) => !NON_OPPORTUNITY_DIRS.has(c) && !c.startsWith('_'),
+      );
+      const perCliente = await Promise.all(
+        clientes.map(async (cliente) => ({ cliente, ops: await this.listRepoSubdirs(`sales/${cliente}`) })),
+      );
+      const found = perCliente.flatMap(({ cliente, ops }) => ops.map((oportunidad) => ({ cliente, oportunidad })));
       if (!found.length) return;
 
       const { data: existing } = await this.supabase.from(OPPORTUNITIES_TABLE).select('cliente, oportunidad');
       const existingSet = new Set((existing ?? []).map((r) => `${r.cliente}/${r.oportunidad}`));
       const missing = found.filter((f) => !existingSet.has(`${f.cliente}/${f.oportunidad}`));
+      if (!missing.length) return;
 
-      for (const m of missing) {
-        const statusFile = await this
-          .readFileFromRepo(`sales/${m.cliente}/${m.oportunidad}/status.md`)
-          .catch(() => null);
-        if (!statusFile) continue; // sin status.md → no es una oportunidad real generada por sales:new
-
-        const status = statusFile.content.match(/\*\*Etapa actual:\*\*\s*(\S+)/)?.[1] ?? 'brief';
-        const vendedorLogin = statusFile.content.match(/\*\*Owner vendedor:\*\*\s*@?([\w-]+)/)?.[1] ?? 'desconocido';
-        const now = new Date().toISOString();
-        await this.supabase.from(OPPORTUNITIES_TABLE).insert({
-          cliente: m.cliente,
-          oportunidad: m.oportunidad,
-          vendedor_login: vendedorLogin,
-          status,
-          draft: {},
-          created_at: now,
-          updated_at: now,
-        });
-      }
+      // Lectura PARALELA de los status.md faltantes + inserción de los que existan.
+      const now = new Date().toISOString();
+      const rows = (
+        await Promise.all(
+          missing.map(async (m) => {
+            const statusFile = await this.readFileFromRepo(`sales/${m.cliente}/${m.oportunidad}/status.md`).catch(() => null);
+            if (!statusFile) return null; // sin status.md → no es una oportunidad real
+            return {
+              cliente: m.cliente,
+              oportunidad: m.oportunidad,
+              vendedor_login: statusFile.content.match(/\*\*Owner vendedor:\*\*\s*@?([\w-]+)/)?.[1] ?? 'desconocido',
+              status: statusFile.content.match(/\*\*Etapa actual:\*\*\s*(\S+)/)?.[1] ?? 'brief',
+              draft: {},
+              created_at: now,
+              updated_at: now,
+            };
+          }),
+        )
+      ).filter(Boolean);
+      if (rows.length) await this.supabase.from(OPPORTUNITIES_TABLE).insert(rows);
     } catch (err) {
       this.logger.error(`Descubrimiento de oportunidades del monorepo falló: ${(err as Error).message}`);
     }
