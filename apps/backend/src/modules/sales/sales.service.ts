@@ -409,7 +409,19 @@ export class SalesService {
       //    indefinidamente (el usuario veía "Pensando… (200s)" sin fin).
       const history = [...messages, { role: 'vendor' as const, content, id: '', opportunityId: id, createdAt: now }]
         .slice(-HISTORY_WINDOW);
-      const prompt = buildBriefPrompt(opp.draft, history, context, methodology, opp.status);
+      // Recuperación de hechos viejos: si la conversación es más larga que la
+      // ventana, los datos que el vendedor dio al principio quedan fuera y el
+      // agente "arranca de cero" (caso real: draft vacío tras turnos con bugs
+      // → re-preguntaba lo ya contado). Le pasamos los mensajes VIEJOS del
+      // vendedor (solo los suyos: ahí viven los hechos; acotado) para que
+      // re-extraiga lo que falte sin hacer repetir a nadie.
+      const olderVendorNotes = messages
+        .slice(0, Math.max(0, messages.length - (HISTORY_WINDOW - 1)))
+        .filter((m) => m.role === 'vendor')
+        .map((m) => m.content)
+        .join('\n---\n')
+        .slice(0, 2500);
+      const prompt = buildBriefPrompt(opp.draft, history, context, methodology, opp.status, olderVendorNotes);
 
       const raw = await withTimeout(
         this.gemini.generateRaw({
@@ -982,6 +994,7 @@ function buildBriefPrompt(
   context: string[] = [],
   methodology = '',
   status = '',
+  olderVendorNotes = '',
 ): string {
   const historyText = history.map((m) => `${m.role === 'vendor' ? 'VENDEDOR' : 'ASISTENTE'}: ${m.content}`).join('\n\n');
   // Bloque de contexto recuperado (RAG). Solo entra si hay algo relevante — así
@@ -1016,7 +1029,17 @@ function buildBriefPrompt(
   ];
   const cubiertas = sectionState.filter(([, f]) => f).map(([k]) => k);
   const vacias = sectionState.filter(([, f]) => !f).map(([k]) => k);
-  const briefStateBlock = `
+  // Solo cuando el draft está flojo Y hay mensajes viejos fuera de la ventana:
+  // los hechos que el vendedor ya contó se recuperan de ahí en UN turno, en vez
+  // de re-preguntarle todo (economía de tokens: bloque acotado, condicional).
+  const recoveryBlock =
+    vacias.length >= 5 && olderVendorNotes.trim()
+      ? `
+HECHOS PREVIOS DEL VENDEDOR (mensajes anteriores de ESTA conversación que quedaron fuera de la ventana — RECUPERA de aquí todo hecho del cliente que falte y ESCRÍBELO en el draft EN ESTA MISMA respuesta; no le vuelvas a preguntar al vendedor lo que ya está acá):
+${olderVendorNotes.trim()}
+`
+      : '';
+  const briefStateBlock = `${recoveryBlock}
 ESTADO DEL BRIEF (calculado por el sistema — CONFÍA en esto, no lo re-derives del JSON):
 - Secciones ya cubiertas: ${cubiertas.join(', ') || '(ninguna)'}
 - Secciones VACÍAS, en orden de trabajo: ${vacias.join(', ') || '(ninguna — el brief está completo: ofrece pasar al TL)'}
