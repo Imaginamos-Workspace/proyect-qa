@@ -1191,7 +1191,7 @@ ${historyText}
 
 PEDIDOS DIRECTOS DEL VENDEDOR (van PRIMERO — por encima del protocolo y del cuestionario del brief):
 - Si el vendedor pide un RECAP/resumen de lo que se sabe: dáselo COMPLETO en el "reply", armado desde el DRAFT + el RESUMEN COMPACTADO (el draft va igual, sin cambios). En ese turno NO sigas con el cuestionario ni cierres con pregunta de sección.
-- Si pregunta CÓMO RESPONDER algo que le preguntó el cliente: contéstale ESO con una respuesta lista para usar. Si es sobre precio/costo: dile que NO adelante cifras — los valores se calculan en la etapa de PROPUESTA (los arma el TL); si el cliente ya dijo su presupuesto, ese sí se puede reconocer.
+- Si pregunta CÓMO RESPONDER algo que le preguntó el cliente (típico: "me pregunta cuánto cuesta, ¿qué le respondo?"): tu "reply" es un GUION listo para que el vendedor se lo diga al cliente — no una pregunta de brief. Para precio/costo el guion es de este estilo (adáptalo, sin cifras): "El valor exacto sale de la propuesta que arma nuestro equipo técnico a partir del alcance — preferimos validar bien el alcance antes de dar un número, para no inflarlo. En cuanto cerremos el brief te llevamos la propuesta con valores." NUNCA incluyas cifras tuyas; si el cliente ya dijo su presupuesto, puedes reconocerlo. En ese turno NO hagas la siguiente pregunta del cuestionario.
 - Solo si el mensaje NO es un pedido directo, aplica el protocolo normal de abajo.
 
 PROTOCOLO DE CONFIRMACIÓN (CRÍTICO — aplícalo antes que el cuestionario, después de los PEDIDOS DIRECTOS):
