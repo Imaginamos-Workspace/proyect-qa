@@ -90,7 +90,10 @@ export class ProspectsService {
     }
 
     if (res.status === 401 || res.status === 403) {
-      throw new BadRequestException('Apollo rechazó la API key (401/403). Verifica APOLLO_API_KEY o los permisos del plan.');
+      // El cuerpo trae el motivo REAL (key inválida vs plan sin acceso a la
+      // API vs endpoint que exige master key) — sin esto solo se puede adivinar.
+      const detail = (await res.text().catch(() => '')).slice(0, 250);
+      throw new BadRequestException(`Apollo rechazó la petición (${res.status}). Motivo de Apollo: ${detail || '(sin detalle)'}`);
     }
     if (res.status === 429) {
       throw new ServiceUnavailableException('Apollo devolvió rate limit (429). Espera un momento antes de buscar de nuevo.');
