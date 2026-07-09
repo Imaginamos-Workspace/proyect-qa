@@ -11,6 +11,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { salesStatusMeta } from '@/lib/sales-status';
 import { ProspectsSearch } from './ProspectsSearch';
+import { NotificationsBell } from './NotificationsBell';
 import { SalesDashboard } from './SalesDashboard';
 
 function ManagedProjects() {
@@ -148,16 +149,19 @@ function ManagedProjects() {
 export function SalesListPage() {
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-3">
-        <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10">
-          <Handshake className="h-5 w-5 text-primary" />
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10">
+            <Handshake className="h-5 w-5 text-primary" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold">Ventas</h1>
+            <p className="text-sm text-muted-foreground">
+              Prospección y oportunidades comerciales, sin salir de la plataforma.
+            </p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-2xl font-semibold">Ventas</h1>
-          <p className="text-sm text-muted-foreground">
-            Prospección y oportunidades comerciales, sin salir de la plataforma.
-          </p>
-        </div>
+        <NotificationsBell />
       </div>
 
       <Tabs defaultValue="dashboard">

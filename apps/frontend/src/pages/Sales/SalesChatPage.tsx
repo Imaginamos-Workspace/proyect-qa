@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { useParams, useNavigate, Link } from 'react-router';
+import { useParams, useNavigate, useSearchParams, Link } from 'react-router';
 import {
   ArrowDown,
   ArrowLeft,
@@ -71,6 +71,7 @@ function fieldText(v: unknown): string {
 
 export function SalesChatPage() {
   const { id } = useParams<{ id: string }>();
+  const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { data: me } = useScrumMe();
   const isVendedor = !!me?.roles.includes('vendedor');
@@ -202,6 +203,10 @@ export function SalesChatPage() {
 
   const draft = opp.draft ?? {};
   const asunciones = draft.asunciones ?? [];
+  // Deep-link de las notificaciones: /ventas/:id?tab=propuesta abre directo
+  // la pestaña de la acción a continuar (chat | resumen | propuesta).
+  const tabParam = searchParams.get('tab');
+  const initialTab = tabParam && ['chat', 'resumen', 'propuesta'].includes(tabParam) ? tabParam : 'chat';
   // Avance del brief, determinístico desde el draft y en el MISMO orden de
   // trabajo que usa el backend en el prompt (asunciones va entre integraciones
   // y riesgos). El vendedor ve cuánto va y qué sigue sin preguntárselo al agente.
@@ -279,7 +284,7 @@ export function SalesChatPage() {
         <p className="px-1 text-sm text-destructive">{(claim.error as Error).message}</p>
       )}
 
-      <Tabs defaultValue="chat">
+      <Tabs defaultValue={initialTab}>
         <TabsList className="grid h-auto w-full grid-cols-3 gap-1 py-1">
           <TabsTrigger value="chat" className={TAB_TRIGGER_CLASS}>
             <MessageSquare className="mr-1.5 h-4 w-4 shrink-0" /> Chat

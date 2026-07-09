@@ -7,6 +7,7 @@ import { SalesRagService } from './sales-rag.service';
 import type {
   SalesBriefDraft,
   SalesMessage,
+  SalesNotificationsResult,
   SalesOpportunity,
   SalesOpportunityDetail,
   SalesOwnershipResult,
@@ -21,6 +22,7 @@ const OWNER = 'imaginamos';
 const REPO = 'qa-automation-monorepo';
 const OPPORTUNITIES_TABLE = 'sales_opportunities';
 const MESSAGES_TABLE = 'sales_messages';
+const NOTIFICATIONS_TABLE = 'sales_notifications';
 // Últimos N turnos que entran al prompt — suficiente contexto conversacional
 // sin inflar tokens en cada mensaje (una sesión de brief son ~10-20 turnos).
 const HISTORY_WINDOW = 12;
@@ -155,10 +157,11 @@ export class SalesService {
       const found = perCliente.flatMap(({ cliente, ops }) => ops.map((oportunidad) => ({ cliente, oportunidad })));
       if (!found.length) return;
 
-      const { data: existing } = await this.supabase.from(OPPORTUNITIES_TABLE).select('cliente, oportunidad');
+      const { data: existing } = await this.supabase
+        .from(OPPORTUNITIES_TABLE)
+        .select('id, cliente, oportunidad, vendedor_login, status');
       const existingSet = new Set((existing ?? []).map((r) => `${r.cliente}/${r.oportunidad}`));
       const missing = found.filter((f) => !existingSet.has(`${f.cliente}/${f.oportunidad}`));
-      if (!missing.length) return;
 
       // Lectura PARALELA de los status.md faltantes + inserción de los que existan.
       const now = new Date().toISOString();
@@ -180,9 +183,135 @@ export class SalesService {
         )
       ).filter(Boolean);
       if (rows.length) await this.supabase.from(OPPORTUNITIES_TABLE).insert(rows);
+
+      // Re-SYNC de status de las filas que YA existen: el TL/PM mueve
+      // status.md en el monorepo (propuesta lista, negociación, ganada,
+      // congelada, diseño/desarrollo…) y la fila de Supabase quedaba con el
+      // estado viejo — el vendedor no se enteraba de que le tocaba continuar.
+      // Cada transición detectada actualiza la fila Y crea una notificación
+      // con CTA para el vendedor dueño (best-effort si falta la migración 025).
+      await Promise.all(
+        (existing ?? []).map(async (row) => {
+          const statusFile = await this.readFileFromRepo(`sales/${row.cliente}/${row.oportunidad}/status.md`).catch(() => null);
+          const fresh = statusFile?.content.match(/\*\*Etapa actual:\*\*\s*(\S+)/)?.[1];
+          if (!fresh || fresh === row.status) return;
+          await this.supabase
+            .from(OPPORTUNITIES_TABLE)
+            .update({ status: fresh, updated_at: new Date().toISOString() })
+            .eq('id', row.id);
+          await this.notifyStatusChange(row, fresh);
+        }),
+      );
     } catch (err) {
       this.logger.error(`Descubrimiento de oportunidades del monorepo falló: ${(err as Error).message}`);
     }
+  }
+
+  /** Crea la notificación de una transición de etapa, con el CTA que lleva al
+   *  vendedor DIRECTO a la acción que sigue. Las etapas del pipeline las define
+   *  el monorepo (strings abiertos a propósito) — lo no mapeado cae al mensaje
+   *  genérico, así etapas nuevas (diseño, desarrollo…) también notifican. */
+  private async notifyStatusChange(
+    opp: { id: string; cliente: string; oportunidad: string; vendedor_login: string },
+    newStatus: string,
+  ): Promise<void> {
+    const base = `/ventas/${opp.id}`;
+    const name = `${opp.cliente}/${opp.oportunidad}`;
+    const map: Record<string, { title: string; body: string; ctaLabel: string; ctaPath: string }> = {
+      'propuesta-en-armado': {
+        title: `El TL está armando la propuesta de ${name}`,
+        body: 'Cuando la publique te avisamos por acá.',
+        ctaLabel: 'Ver proceso',
+        ctaPath: base,
+      },
+      'propuesta-enviada': {
+        title: `El TL terminó la propuesta de ${name}`,
+        body: 'Revisa el link y la contraseña, y envíasela al cliente.',
+        ctaLabel: 'Abrir propuesta',
+        ctaPath: `${base}?tab=propuesta`,
+      },
+      negociacion: {
+        title: `${name} entró en negociación`,
+        body: 'Continúa el seguimiento con el cliente desde el chat.',
+        ctaLabel: 'Continuar en el chat',
+        ctaPath: `${base}?tab=chat`,
+      },
+      ganada: {
+        title: `¡${name} GANADA! 🎉`,
+        body: 'Venta cerrada — se dispara el traspaso a QA y Diseño (rules/13).',
+        ctaLabel: 'Ver resumen',
+        ctaPath: `${base}?tab=resumen`,
+      },
+      perdida: {
+        title: `${name} quedó marcada como perdida`,
+        body: 'El histórico queda disponible para el post-mortem.',
+        ctaLabel: 'Ver proceso',
+        ctaPath: base,
+      },
+      congelada: {
+        title: `${name} se congeló por tiempo`,
+        body: 'Decide si retomar el contacto con el cliente o cerrarla.',
+        ctaLabel: 'Retomar en el chat',
+        ctaPath: `${base}?tab=chat`,
+      },
+    };
+    const n = map[newStatus] ?? {
+      title: `${name} pasó a "${newStatus}"`,
+      body: 'El proceso avanzó de etapa — continúa desde el detalle.',
+      ctaLabel: 'Ver proceso',
+      ctaPath: base,
+    };
+    const { error } = await this.supabase.from(NOTIFICATIONS_TABLE).insert({
+      opportunity_id: opp.id,
+      vendedor_login: opp.vendedor_login,
+      type: `status:${newStatus}`,
+      title: n.title,
+      body: n.body,
+      cta_label: n.ctaLabel,
+      cta_path: n.ctaPath,
+    });
+    // Tabla ausente (migración 025 sin correr) → feature apagada, el re-sync
+    // del status igual ya quedó hecho.
+    if (error) this.logger.warn(`No se pudo crear la notificación de ${name}: ${error.message}`);
+  }
+
+  /** Notificaciones del que consulta (las últimas 30). Fail-soft: sin la
+   *  migración 025 devuelve vacío y la campana simplemente no muestra nada. */
+  async listNotifications(login: string | null): Promise<SalesNotificationsResult> {
+    if (!login) return { notifications: [], unseenCount: 0 };
+    const { data, error } = await this.supabase
+      .from(NOTIFICATIONS_TABLE)
+      .select('*')
+      .eq('vendedor_login', login)
+      .order('created_at', { ascending: false })
+      .limit(30);
+    if (error) return { notifications: [], unseenCount: 0 };
+    const notifications = (data ?? []).map((r) => ({
+      id: r.id as string,
+      opportunityId: r.opportunity_id as string,
+      type: r.type as string,
+      title: r.title as string,
+      body: (r.body as string | null) ?? null,
+      ctaLabel: (r.cta_label as string | null) ?? null,
+      ctaPath: (r.cta_path as string | null) ?? null,
+      seen: !!r.seen,
+      createdAt: r.created_at as string,
+    }));
+    return { notifications, unseenCount: notifications.filter((n) => !n.seen).length };
+  }
+
+  /** Marca como vistas las notificaciones del que consulta (todas, o solo ids). */
+  async markNotificationsSeen(login: string | null, ids?: string[]): Promise<{ ok: true }> {
+    if (!login) return { ok: true };
+    let query = this.supabase
+      .from(NOTIFICATIONS_TABLE)
+      .update({ seen: true })
+      .eq('vendedor_login', login)
+      .eq('seen', false);
+    if (ids?.length) query = query.in('id', ids);
+    const { error } = await query;
+    if (error) this.logger.warn(`No se pudieron marcar notificaciones vistas: ${error.message}`);
+    return { ok: true };
   }
 
   private async listRepoSubdirs(path: string): Promise<string[]> {

@@ -39,6 +39,12 @@ export class SearchProspectsDto {
   page?: number;
 }
 
+/** Marcar notificaciones como vistas — sin ids marca TODAS las del que consulta. */
+export class MarkNotificationsSeenDto {
+  @IsOptional() @IsArray() @IsString({ each: true }) @MaxLength(64, { each: true })
+  ids?: string[];
+}
+
 /** Ceder el proceso a otro vendedor (login de GitHub de team.json). */
 export class TransferOpportunityDto {
   @IsString() @IsNotEmpty() @MaxLength(80)

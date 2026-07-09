@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import type {
   SalesMessage,
+  SalesNotificationsResult,
   SalesOpportunity,
   SalesOpportunityDetail,
   SalesOwnershipResult,
@@ -95,6 +96,27 @@ export function useReindexKnowledge() {
   return useMutation({
     mutationFn: () =>
       api.post<{ methodology: number; wonDeals: number }>('/sales/rag/reindex', undefined, 60_000),
+  });
+}
+
+/** Notificaciones del pipeline (el TL publicó la propuesta, negociación,
+ *  ganada, congelada…). Se refrescan solas cada 60s — misma frecuencia con la
+ *  que el discovery puede detectar transiciones nuevas. */
+export function useSalesNotifications() {
+  return useQuery({
+    queryKey: ['sales', 'notifications'],
+    queryFn: () => api.get<SalesNotificationsResult>('/sales/notifications'),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+  });
+}
+
+/** Marca notificaciones como vistas (sin ids = todas las mías). */
+export function useMarkNotificationsSeen() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (ids?: string[]) => api.post<{ ok: true }>('/sales/notifications/seen', ids?.length ? { ids } : {}),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['sales', 'notifications'] }),
   });
 }
 

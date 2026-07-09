@@ -103,6 +103,30 @@ export interface SalesProposalMetrics {
   lastViewedAt: string | null;
 }
 
+// --- Notificaciones del pipeline (migración 025) ---------------------------
+// El discovery detecta transiciones de status.md (el TL publicó la propuesta,
+// negociación, ganada, congelada por tiempo, diseño/desarrollo…) y crea una
+// notificación para el vendedor dueño, con CTA directo a la acción que sigue.
+
+export interface SalesNotification {
+  id: string;
+  opportunityId: string;
+  /** "status:<etapa>" — extensible a otros orígenes de evento. */
+  type: string;
+  title: string;
+  body: string | null;
+  ctaLabel: string | null;
+  /** Ruta interna de la plataforma (ej. "/ventas/<id>?tab=propuesta"). */
+  ctaPath: string | null;
+  seen: boolean;
+  createdAt: string;
+}
+
+export interface SalesNotificationsResult {
+  notifications: SalesNotification[];
+  unseenCount: number;
+}
+
 // --- Prospección (Apollo.io) ---------------------------------------------
 // Búsqueda de prospectos B2B desde la plataforma. La API key vive SOLO en el
 // backend (APOLLO_API_KEY) — el frontend consulta `configured` para saber si

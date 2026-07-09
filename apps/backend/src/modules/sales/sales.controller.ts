@@ -3,7 +3,7 @@ import { SalesService } from './sales.service';
 import { ProspectsService } from './prospects.service';
 import { RolesService } from '../scrum/roles.service';
 import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard';
-import { CreateOpportunityDto, SearchProspectsDto, SendMessageDto, TransferOpportunityDto } from './dto/sales.dto';
+import { CreateOpportunityDto, MarkNotificationsSeenDto, SearchProspectsDto, SendMessageDto, TransferOpportunityDto } from './dto/sales.dto';
 
 interface RequestWithUser {
   user?: { user_metadata?: Record<string, unknown> };
@@ -27,6 +27,19 @@ export class SalesController {
     private readonly prospects: ProspectsService,
     private readonly roles: RolesService,
   ) {}
+
+  /** Notificaciones del pipeline del que consulta (el TL publicó la propuesta,
+   *  negociación, ganada, congelada…), con CTA a la acción que sigue. */
+  @Get('notifications')
+  notifications(@Req() req: RequestWithUser) {
+    return this.sales.listNotifications(githubLogin(req));
+  }
+
+  /** Marca notificaciones como vistas (todas las propias, o solo `ids`). */
+  @Post('notifications/seen')
+  markNotificationsSeen(@Body() body: MarkNotificationsSeenDto, @Req() req: RequestWithUser) {
+    return this.sales.markNotificationsSeen(githubLogin(req), body.ids);
+  }
 
   /** ¿Está configurada la API key de Apollo? Lectura abierta a autenticados —
    *  el frontend decide si muestra el buscador o la guía de configuración. */
