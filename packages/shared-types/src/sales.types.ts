@@ -211,7 +211,8 @@ export type ProspectInteractionResultado =
   | 'contacto-logrado'
   | 'reunion-agendada'
   | 'referido'
-  | 'rechazado';
+  | 'rechazado'
+  | 'ya-no-trabaja';
 
 export interface ProspectInteraction {
   id: string;

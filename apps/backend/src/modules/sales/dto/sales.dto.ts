@@ -79,7 +79,7 @@ export class AddInteractionDto {
   @IsIn(['llamada', 'correo', 'whatsapp', 'linkedin', 'otro'])
   tipo: string;
 
-  @IsIn(['sin-respuesta', 'contacto-logrado', 'reunion-agendada', 'referido', 'rechazado'])
+  @IsIn(['sin-respuesta', 'contacto-logrado', 'reunion-agendada', 'referido', 'rechazado', 'ya-no-trabaja'])
   resultado: string;
 
   @IsOptional() @IsString() @MaxLength(2000)

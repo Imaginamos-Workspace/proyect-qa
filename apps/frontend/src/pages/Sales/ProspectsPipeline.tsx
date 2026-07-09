@@ -50,6 +50,7 @@ const RESULTADOS = [
   { value: 'reunion-agendada', label: 'Reunión agendada' },
   { value: 'referido', label: 'Me refirió a otra persona' },
   { value: 'rechazado', label: 'No le interesa' },
+  { value: 'ya-no-trabaja', label: 'Ya no trabaja ahí' },
 ];
 
 function fmtDate(iso: string | null): string {
@@ -219,6 +220,12 @@ function ProspectDetail({ prospect, onClose }: { prospect: SavedProspect; onClos
         </Button>
         {resultado === 'referido' && (
           <p className="text-xs text-muted-foreground">El referido se crea como prospecto nuevo en "Por contactar".</p>
+        )}
+        {resultado === 'ya-no-trabaja' && (
+          <p className="text-xs text-muted-foreground">
+            Se descarta con su bitácora. Si te dio otro nombre, usa mejor "Me refirió a otra persona"; si no,
+            busca {prospect.company ? `"${prospect.company}"` : 'la empresa'} en "Buscar en Apollo" y guarda otro contacto.
+          </p>
         )}
       </div>
 

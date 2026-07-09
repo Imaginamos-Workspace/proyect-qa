@@ -27,6 +27,9 @@ const RESULT_TO_ESTADO: Record<ProspectInteractionResultado, SavedProspectEstado
   'reunion-agendada': 'reunion-agendada',
   referido: 'referido',
   rechazado: 'descartado',
+  // La persona ya no está en la empresa: se descarta CON bitácora (queda el
+  // porqué). Si dio referido, usar 'referido' — ese sí crea el contacto nuevo.
+  'ya-no-trabaja': 'descartado',
 };
 
 // Búsqueda de personas de Apollo.io. La key va en el header X-Api-Key y se
