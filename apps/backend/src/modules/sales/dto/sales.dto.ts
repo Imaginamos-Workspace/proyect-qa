@@ -1,4 +1,4 @@
-import { IsArray, IsInt, IsNotEmpty, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
+import { IsArray, IsIn, IsInt, IsISO8601, IsNotEmpty, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
 
 const SLUG = /^[a-z0-9-]+$/;
 
@@ -43,6 +43,68 @@ export class SearchProspectsDto {
 export class EnrichProspectDto {
   @IsString() @IsNotEmpty() @MaxLength(64)
   id: string;
+}
+
+/** Guardar un prospecto de la búsqueda en el pipeline (enriquece + upsert). */
+export class SaveProspectDto {
+  @IsString() @IsNotEmpty() @MaxLength(64)
+  apolloId: string;
+}
+
+const PROSPECT_ESTADOS = ['por-contactar', 'en-seguimiento', 'contactado', 'reunion-agendada', 'referido', 'descartado', 'convertido'];
+
+/** Nutrir un prospecto guardado (teléfono, email, notas, reintento, estado). */
+export class UpdateProspectDto {
+  @IsOptional() @IsIn(PROSPECT_ESTADOS)
+  estado?: string;
+
+  @IsOptional() @IsString() @MaxLength(2000)
+  notes?: string;
+
+  @IsOptional() @IsString() @MaxLength(40)
+  phone?: string;
+
+  @IsOptional() @IsString() @MaxLength(120)
+  email?: string;
+
+  @IsOptional() @IsISO8601()
+  nextAttemptAt?: string;
+
+  @IsOptional() @IsString() @MaxLength(64)
+  opportunityId?: string;
+}
+
+/** Registrar un intento de contacto (el estado transiciona solo). */
+export class AddInteractionDto {
+  @IsIn(['llamada', 'correo', 'whatsapp', 'linkedin', 'otro'])
+  tipo: string;
+
+  @IsIn(['sin-respuesta', 'contacto-logrado', 'reunion-agendada', 'referido', 'rechazado'])
+  resultado: string;
+
+  @IsOptional() @IsString() @MaxLength(2000)
+  notas?: string;
+
+  @IsOptional() @IsString() @MaxLength(120)
+  referidoNombre?: string;
+
+  @IsOptional() @IsString() @MaxLength(160)
+  referidoContacto?: string;
+
+  @IsOptional() @IsISO8601()
+  reintentarAt?: string;
+}
+
+/** Guardar una búsqueda para la corrida semanal. */
+export class CreateSavedSearchDto {
+  @IsOptional() @IsString() @MaxLength(200)
+  keywords?: string;
+
+  @IsOptional() @IsArray() @IsString({ each: true }) @MaxLength(80, { each: true })
+  titles?: string[];
+
+  @IsOptional() @IsArray() @IsString({ each: true }) @MaxLength(80, { each: true })
+  locations?: string[];
 }
 
 /** Handoff al TL — el vendedor asigna el Owner TL (rules/13 §Cerrar el brief). */

@@ -3,7 +3,24 @@ import { SalesService } from './sales.service';
 import { ProspectsService } from './prospects.service';
 import { RolesService } from '../scrum/roles.service';
 import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard';
-import { CreateOpportunityDto, EnrichProspectDto, HandoffDto, MarkNotificationsSeenDto, SearchProspectsDto, SendMessageDto, TransferOpportunityDto } from './dto/sales.dto';
+import {
+  AddInteractionDto,
+  CreateOpportunityDto,
+  CreateSavedSearchDto,
+  EnrichProspectDto,
+  HandoffDto,
+  MarkNotificationsSeenDto,
+  SaveProspectDto,
+  SearchProspectsDto,
+  SendMessageDto,
+  TransferOpportunityDto,
+  UpdateProspectDto,
+} from './dto/sales.dto';
+import type {
+  ProspectInteractionResultado,
+  ProspectInteractionTipo,
+  SavedProspectEstado,
+} from '../../shared-types/sales.types';
 
 interface RequestWithUser {
   user?: { user_metadata?: Record<string, unknown> };
@@ -51,8 +68,75 @@ export class SalesController {
   /** Busca prospectos B2B en Apollo.io. Solo vendedor (consume cuota del plan). */
   @Post('prospects/search')
   async searchProspects(@Body() body: SearchProspectsDto, @Req() req: RequestWithUser) {
+    const login = await this.requireSeller(req);
+    return this.prospects.search(body, login);
+  }
+
+  /** Guarda un prospecto en el pipeline (enriquece + upsert idempotente). */
+  @Post('prospects/save')
+  async saveProspect(@Body() body: SaveProspectDto, @Req() req: RequestWithUser) {
+    const login = await this.requireSeller(req);
+    if (!login) throw new ForbiddenException('No se pudo identificar tu usuario.');
+    return this.prospects.saveProspect(body.apolloId, login);
+  }
+
+  /** Pipeline de prospección del que consulta. */
+  @Get('prospects/saved')
+  async savedProspects(@Req() req: RequestWithUser) {
     await this.requireSeller(req);
-    return this.prospects.search(body);
+    return this.prospects.listSaved(githubLogin(req));
+  }
+
+  /** Nutrir datos / cambiar estado de un prospecto guardado. */
+  @Post('prospects/saved/:id')
+  async updateProspect(@Param('id') id: string, @Body() body: UpdateProspectDto, @Req() req: RequestWithUser) {
+    const login = await this.requireSeller(req);
+    if (!login) throw new ForbiddenException('No se pudo identificar tu usuario.');
+    return this.prospects.updateProspect(id, login, {
+      ...body,
+      estado: body.estado as SavedProspectEstado | undefined,
+    });
+  }
+
+  /** Registra un intento de contacto (llamada/correo/WhatsApp/LinkedIn). */
+  @Post('prospects/saved/:id/interactions')
+  async addInteraction(@Param('id') id: string, @Body() body: AddInteractionDto, @Req() req: RequestWithUser) {
+    const login = await this.requireSeller(req);
+    if (!login) throw new ForbiddenException('No se pudo identificar tu usuario.');
+    return this.prospects.addInteraction(id, login, {
+      ...body,
+      tipo: body.tipo as ProspectInteractionTipo,
+      resultado: body.resultado as ProspectInteractionResultado,
+    });
+  }
+
+  /** Bitácora de intentos de un prospecto. */
+  @Get('prospects/saved/:id/interactions')
+  async listInteractions(@Param('id') id: string, @Req() req: RequestWithUser) {
+    const login = await this.requireSeller(req);
+    if (!login) throw new ForbiddenException('No se pudo identificar tu usuario.');
+    return this.prospects.listInteractions(id, login);
+  }
+
+  /** Búsquedas guardadas (la corrida semanal las ejecuta). */
+  @Get('prospects/searches')
+  async savedSearches(@Req() req: RequestWithUser) {
+    await this.requireSeller(req);
+    return this.prospects.listSavedSearches(githubLogin(req));
+  }
+
+  @Post('prospects/searches')
+  async createSavedSearch(@Body() body: CreateSavedSearchDto, @Req() req: RequestWithUser) {
+    const login = await this.requireSeller(req);
+    if (!login) throw new ForbiddenException('No se pudo identificar tu usuario.');
+    return this.prospects.createSavedSearch(login, body);
+  }
+
+  @Delete('prospects/searches/:id')
+  async deleteSavedSearch(@Param('id') id: string, @Req() req: RequestWithUser) {
+    const login = await this.requireSeller(req);
+    if (!login) throw new ForbiddenException('No se pudo identificar tu usuario.');
+    return this.prospects.deleteSavedSearch(id, login);
   }
 
   /** Desbloquea el dato completo del prospecto (people/match — 1 crédito).

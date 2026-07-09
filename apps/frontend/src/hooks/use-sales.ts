@@ -8,10 +8,13 @@ import type {
   SalesOwnershipResult,
   SalesProposalAccess,
   SalesProposalMetrics,
+  ProspectInteraction,
   SalesProspect,
   SalesProspectSearchInput,
   SalesProspectSearchResult,
   SalesProspectsStatus,
+  SavedProspect,
+  SavedProspectSearch,
   SalesRegenerateProposalResult,
   SalesSendMessageResult,
   SalesSyncResult,
@@ -148,6 +151,82 @@ export function useSearchProspects() {
 export function useEnrichProspect() {
   return useMutation({
     mutationFn: (id: string) => api.post<SalesProspect>('/sales/prospects/enrich', { id }, 25_000),
+  });
+}
+
+// ── Pipeline de prospección (etapa intermedia búsqueda → oportunidad) ──────
+
+export function useSavedProspects() {
+  return useQuery({
+    queryKey: ['sales', 'prospects', 'saved'],
+    queryFn: () => api.get<SavedProspect[]>('/sales/prospects/saved'),
+    staleTime: 30_000,
+  });
+}
+
+/** Guarda un prospecto en el pipeline (enriquece 1 crédito + upsert idempotente). */
+export function useSaveProspect() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (apolloId: string) => api.post<SavedProspect>('/sales/prospects/save', { apolloId }, 25_000),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['sales', 'prospects', 'saved'] }),
+  });
+}
+
+/** Nutrir datos / cambiar estado de un prospecto guardado. */
+export function useUpdateProspect() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...patch }: { id: string } & Partial<Pick<SavedProspect, 'estado' | 'notes' | 'phone' | 'email' | 'nextAttemptAt' | 'opportunityId'>>) =>
+      api.post<SavedProspect>(`/sales/prospects/saved/${id}`, patch),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['sales', 'prospects', 'saved'] }),
+  });
+}
+
+export function useProspectInteractions(id: string | null) {
+  return useQuery({
+    queryKey: ['sales', 'prospects', 'interactions', id],
+    queryFn: () => api.get<ProspectInteraction[]>(`/sales/prospects/saved/${id}/interactions`),
+    enabled: !!id,
+  });
+}
+
+/** Registra un intento de contacto — el estado del prospecto transiciona solo. */
+export function useAddInteraction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...input }: { id: string; tipo: string; resultado: string; notas?: string; referidoNombre?: string; referidoContacto?: string; reintentarAt?: string }) =>
+      api.post<{ interaction: ProspectInteraction; prospect: SavedProspect; referral: SavedProspect | null }>(`/sales/prospects/saved/${id}/interactions`, input),
+    onSuccess: (_r, vars) => {
+      qc.invalidateQueries({ queryKey: ['sales', 'prospects', 'saved'] });
+      qc.invalidateQueries({ queryKey: ['sales', 'prospects', 'interactions', vars.id] });
+    },
+  });
+}
+
+export function useSavedSearches() {
+  return useQuery({
+    queryKey: ['sales', 'prospects', 'searches'],
+    queryFn: () => api.get<SavedProspectSearch[]>('/sales/prospects/searches'),
+    staleTime: 60_000,
+  });
+}
+
+/** Guarda la búsqueda actual para la corrida semanal (cron de Vercel, lunes). */
+export function useCreateSavedSearch() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { keywords?: string; titles?: string[]; locations?: string[] }) =>
+      api.post<SavedProspectSearch>('/sales/prospects/searches', input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['sales', 'prospects', 'searches'] }),
+  });
+}
+
+export function useDeleteSavedSearch() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.delete<{ deleted: true }>(`/sales/prospects/searches/${id}`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['sales', 'prospects', 'searches'] }),
   });
 }
 

@@ -166,6 +166,73 @@ export interface SalesProspectSearchResult {
   page: number;
   totalPages: number;
   totalEntries: number;
+  /** apollo_ids que YA están guardados en el pipeline del que busca —
+   *  para pintar "Guardado ✓" y no re-guardar (idempotencia visible). */
+  savedApolloIds: string[];
+}
+
+// --- Pipeline de prospección (migración 026) -------------------------------
+// Etapa intermedia entre la búsqueda y la oportunidad: guardar → contactar →
+// registrar intentos/referidos/reintentos → convertir en oportunidad.
+
+export type SavedProspectEstado =
+  | 'por-contactar'
+  | 'en-seguimiento'
+  | 'contactado'
+  | 'reunion-agendada'
+  | 'referido'
+  | 'descartado'
+  | 'convertido';
+
+export interface SavedProspect {
+  id: string;
+  apolloId: string;
+  estado: SavedProspectEstado;
+  origen: 'manual' | 'semanal' | 'referido';
+  name: string;
+  title: string | null;
+  company: string | null;
+  companyWebsite: string | null;
+  industry: string | null;
+  location: string | null;
+  linkedinUrl: string | null;
+  email: string | null;
+  phone: string | null;
+  notes: string | null;
+  nextAttemptAt: string | null;
+  opportunityId: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ProspectInteractionTipo = 'llamada' | 'correo' | 'whatsapp' | 'linkedin' | 'otro';
+export type ProspectInteractionResultado =
+  | 'sin-respuesta'
+  | 'contacto-logrado'
+  | 'reunion-agendada'
+  | 'referido'
+  | 'rechazado';
+
+export interface ProspectInteraction {
+  id: string;
+  prospectId: string;
+  tipo: ProspectInteractionTipo;
+  resultado: ProspectInteractionResultado;
+  notas: string | null;
+  referidoNombre: string | null;
+  referidoContacto: string | null;
+  reintentarAt: string | null;
+  createdAt: string;
+}
+
+export interface SavedProspectSearch {
+  id: string;
+  keywords: string | null;
+  titles: string[];
+  locations: string[];
+  active: boolean;
+  lastRunAt: string | null;
+  createdAt: string;
 }
 
 export interface SalesRegenerateProposalResult {

@@ -1,10 +1,33 @@
-import { BadRequestException, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Inject, Injectable, Logger, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
+import { SupabaseClient } from '@supabase/supabase-js';
+import { randomUUID } from 'crypto';
+import { SUPABASE_CLIENT } from '../../config/supabase.module';
 import type {
+  ProspectInteraction,
+  ProspectInteractionResultado,
+  ProspectInteractionTipo,
   SalesProspect,
   SalesProspectSearchInput,
   SalesProspectSearchResult,
   SalesProspectsStatus,
+  SavedProspect,
+  SavedProspectEstado,
+  SavedProspectSearch,
 } from '../../shared-types/sales.types';
+
+const PROSPECTS_TABLE = 'sales_prospects';
+const INTERACTIONS_TABLE = 'sales_prospect_interactions';
+const SEARCHES_TABLE = 'sales_prospect_searches';
+
+// Transición automática de estado según el resultado del intento — el
+// vendedor registra QUÉ pasó y el pipeline se mueve solo (menos clics).
+const RESULT_TO_ESTADO: Record<ProspectInteractionResultado, SavedProspectEstado> = {
+  'sin-respuesta': 'en-seguimiento',
+  'contacto-logrado': 'contactado',
+  'reunion-agendada': 'reunion-agendada',
+  referido: 'referido',
+  rechazado: 'descartado',
+};
 
 // Búsqueda de personas de Apollo.io. La key va en el header X-Api-Key y se
 // configura SOLO como variable de entorno del backend (APOLLO_API_KEY) —
@@ -49,6 +72,8 @@ interface ApolloSearchResponse {
 export class ProspectsService {
   private readonly logger = new Logger(ProspectsService.name);
 
+  constructor(@Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient) {}
+
   private get apiKey(): string | null {
     // Vercel guarda comillas/saltos de línea si la key se pega entrecomillada
     // (caso real con VITE_API_URL) — los quitamos antes de usarla.
@@ -61,7 +86,7 @@ export class ProspectsService {
     return { configured: !!this.apiKey };
   }
 
-  async search(input: SalesProspectSearchInput): Promise<SalesProspectSearchResult> {
+  async search(input: SalesProspectSearchInput, requesterLogin: string | null = null): Promise<SalesProspectSearchResult> {
     const key = this.apiKey;
     if (!key) {
       throw new BadRequestException(
@@ -119,12 +144,26 @@ export class ProspectsService {
     const data = (await res.json().catch(() => ({}))) as ApolloSearchResponse;
     const people = [...(data.people ?? []), ...(data.contacts ?? [])];
     const totalEntries = data.total_entries ?? data.pagination?.total_entries ?? people.length;
+    const prospects = people.map((p) => this.toProspect(p)).filter((p): p is SalesProspect => !!p);
+
+    // Idempotencia visible: qué resultados YA están guardados en el pipeline
+    // del que busca (fail-soft si la migración 026 no corrió → []).
+    let savedApolloIds: string[] = [];
+    if (requesterLogin && prospects.length) {
+      const { data: saved } = await this.supabase
+        .from(PROSPECTS_TABLE)
+        .select('apollo_id')
+        .eq('vendedor_login', requesterLogin)
+        .in('apollo_id', prospects.map((p) => p.id));
+      savedApolloIds = (saved ?? []).map((r) => r.apollo_id as string);
+    }
 
     return {
-      prospects: people.map((p) => this.toProspect(p)).filter((p): p is SalesProspect => !!p),
+      prospects,
       page: data.pagination?.page ?? Number(body.page),
       totalPages: data.pagination?.total_pages ?? Math.max(1, Math.ceil(totalEntries / PER_PAGE)),
       totalEntries,
+      savedApolloIds,
     };
   }
 
@@ -156,6 +195,293 @@ export class ProspectsService {
     const prospect = data.person ? this.toProspect(data.person) : null;
     if (!prospect) throw new BadRequestException('Apollo no devolvió datos para ese prospecto.');
     return prospect;
+  }
+
+  // ── Pipeline de prospección (migración 026) ────────────────────────────
+
+  /** Guarda un prospecto en el pipeline: enriquece (people/match, 1 crédito)
+   *  y hace UPSERT por apollo_id — guardar dos veces (o que la corrida
+   *  semanal lo vuelva a traer) NO duplica ni pisa el estado/notas. */
+  async saveProspect(apolloId: string, vendedorLogin: string): Promise<SavedProspect> {
+    const { data: existing } = await this.supabase
+      .from(PROSPECTS_TABLE)
+      .select('*')
+      .eq('apollo_id', apolloId)
+      .maybeSingle();
+    if (existing) return this.toSaved(existing as Record<string, unknown>);
+
+    const full = await this.enrich(apolloId).catch(() => null);
+    const { data, error } = await this.supabase
+      .from(PROSPECTS_TABLE)
+      .insert({
+        apollo_id: apolloId,
+        vendedor_login: vendedorLogin,
+        origen: 'manual',
+        name: full?.name ?? '(por confirmar)',
+        title: full?.title ?? null,
+        company: full?.company ?? null,
+        company_website: full?.companyWebsite ?? null,
+        industry: full?.industry ?? null,
+        location: full?.location ?? null,
+        linkedin_url: full?.linkedinUrl ?? null,
+        email: full?.email ?? null,
+      })
+      .select('*')
+      .single();
+    if (error) {
+      // Carrera entre dos guardados simultáneos: el unique de apollo_id ganó.
+      if (error.code === '23505') {
+        const { data: raced } = await this.supabase.from(PROSPECTS_TABLE).select('*').eq('apollo_id', apolloId).single();
+        return this.toSaved(raced as Record<string, unknown>);
+      }
+      throw new BadRequestException(`No se pudo guardar el prospecto (¿migración 026?): ${error.message}`);
+    }
+    return this.toSaved(data as Record<string, unknown>);
+  }
+
+  /** Pipeline del vendedor. Fail-soft sin migración 026 → []. */
+  async listSaved(vendedorLogin: string | null): Promise<SavedProspect[]> {
+    if (!vendedorLogin) return [];
+    const { data, error } = await this.supabase
+      .from(PROSPECTS_TABLE)
+      .select('*')
+      .eq('vendedor_login', vendedorLogin)
+      .order('updated_at', { ascending: false })
+      .limit(200);
+    if (error) return [];
+    return (data ?? []).map((r) => this.toSaved(r as Record<string, unknown>));
+  }
+
+  /** Nutrir datos del prospecto (teléfono, email, notas, reintento, estado). */
+  async updateProspect(
+    id: string,
+    vendedorLogin: string,
+    patch: { estado?: SavedProspectEstado; notes?: string; phone?: string; email?: string; nextAttemptAt?: string | null; opportunityId?: string },
+  ): Promise<SavedProspect> {
+    await this.assertOwner(id, vendedorLogin);
+    const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    if (patch.estado !== undefined) update.estado = patch.estado;
+    if (patch.notes !== undefined) update.notes = patch.notes;
+    if (patch.phone !== undefined) update.phone = patch.phone;
+    if (patch.email !== undefined) update.email = patch.email;
+    if (patch.nextAttemptAt !== undefined) update.next_attempt_at = patch.nextAttemptAt;
+    if (patch.opportunityId !== undefined) update.opportunity_id = patch.opportunityId;
+    const { data, error } = await this.supabase
+      .from(PROSPECTS_TABLE)
+      .update(update)
+      .eq('id', id)
+      .select('*')
+      .single();
+    if (error) throw new BadRequestException(`No se pudo actualizar el prospecto: ${error.message}`);
+    return this.toSaved(data as Record<string, unknown>);
+  }
+
+  /** Registra un intento de contacto. El estado del prospecto transiciona
+   *  solo según el resultado; "referido" además CREA un prospecto nuevo con
+   *  los datos de la persona referida (nutrición del pipeline). */
+  async addInteraction(
+    id: string,
+    vendedorLogin: string,
+    input: {
+      tipo: ProspectInteractionTipo;
+      resultado: ProspectInteractionResultado;
+      notas?: string;
+      referidoNombre?: string;
+      referidoContacto?: string;
+      reintentarAt?: string;
+    },
+  ): Promise<{ interaction: ProspectInteraction; prospect: SavedProspect; referral: SavedProspect | null }> {
+    const owner = await this.assertOwner(id, vendedorLogin);
+    const { data, error } = await this.supabase
+      .from(INTERACTIONS_TABLE)
+      .insert({
+        prospect_id: id,
+        vendedor_login: vendedorLogin,
+        tipo: input.tipo,
+        resultado: input.resultado,
+        notas: input.notas ?? null,
+        referido_nombre: input.referidoNombre ?? null,
+        referido_contacto: input.referidoContacto ?? null,
+        reintentar_at: input.reintentarAt ?? null,
+      })
+      .select('*')
+      .single();
+    if (error) throw new BadRequestException(`No se pudo registrar el intento: ${error.message}`);
+
+    const prospect = await this.updateProspect(id, vendedorLogin, {
+      estado: RESULT_TO_ESTADO[input.resultado],
+      nextAttemptAt: input.reintentarAt ?? null,
+    });
+
+    // Referido → prospecto nuevo en el pipeline, listo para contactar.
+    let referral: SavedProspect | null = null;
+    if (input.resultado === 'referido' && input.referidoNombre?.trim()) {
+      const contacto = (input.referidoContacto ?? '').trim();
+      const { data: ref } = await this.supabase
+        .from(PROSPECTS_TABLE)
+        .insert({
+          apollo_id: `ref-${randomUUID()}`,
+          vendedor_login: vendedorLogin,
+          origen: 'referido',
+          name: input.referidoNombre.trim(),
+          company: owner.company,
+          industry: owner.industry,
+          email: contacto.includes('@') ? contacto : null,
+          phone: contacto && !contacto.includes('@') ? contacto : null,
+          notes: `Referido por ${owner.name}${input.notas ? ` — ${input.notas}` : ''}`,
+        })
+        .select('*')
+        .single();
+      if (ref) referral = this.toSaved(ref as Record<string, unknown>);
+    }
+    return { interaction: this.toInteraction(data as Record<string, unknown>), prospect, referral };
+  }
+
+  async listInteractions(id: string, vendedorLogin: string): Promise<ProspectInteraction[]> {
+    await this.assertOwner(id, vendedorLogin);
+    const { data } = await this.supabase
+      .from(INTERACTIONS_TABLE)
+      .select('*')
+      .eq('prospect_id', id)
+      .order('created_at', { ascending: false });
+    return (data ?? []).map((r) => this.toInteraction(r as Record<string, unknown>));
+  }
+
+  // ── Búsquedas guardadas + corrida semanal ───────────────────────────────
+
+  async createSavedSearch(
+    vendedorLogin: string,
+    input: { keywords?: string; titles?: string[]; locations?: string[] },
+  ): Promise<SavedProspectSearch> {
+    const { data, error } = await this.supabase
+      .from(SEARCHES_TABLE)
+      .insert({
+        vendedor_login: vendedorLogin,
+        keywords: (input.keywords ?? '').trim() || null,
+        titles: input.titles ?? [],
+        locations: input.locations ?? [],
+      })
+      .select('*')
+      .single();
+    if (error) throw new BadRequestException(`No se pudo guardar la búsqueda (¿migración 026?): ${error.message}`);
+    return this.toSearch(data as Record<string, unknown>);
+  }
+
+  async listSavedSearches(vendedorLogin: string | null): Promise<SavedProspectSearch[]> {
+    if (!vendedorLogin) return [];
+    const { data, error } = await this.supabase
+      .from(SEARCHES_TABLE)
+      .select('*')
+      .eq('vendedor_login', vendedorLogin)
+      .order('created_at', { ascending: false });
+    if (error) return [];
+    return (data ?? []).map((r) => this.toSearch(r as Record<string, unknown>));
+  }
+
+  async deleteSavedSearch(id: string, vendedorLogin: string): Promise<{ deleted: true }> {
+    await this.supabase.from(SEARCHES_TABLE).delete().eq('id', id).eq('vendedor_login', vendedorLogin);
+    return { deleted: true };
+  }
+
+  /** Corrida semanal (cron de Vercel): ejecuta cada búsqueda activa y guarda
+   *  los prospectos NUEVOS como 'por-contactar' (origen semanal). Idempotente:
+   *  el unique de apollo_id hace que lo ya guardado se salte sin tocar su
+   *  estado/notas. Los nuevos NO se enriquecen acá (economía de créditos —
+   *  el vendedor enriquece al abrir el que le interese... el guardado manual
+   *  sí enriquece; acá se guarda la vista de búsqueda). */
+  async runWeekly(): Promise<{ searches: number; found: number; inserted: number }> {
+    const { data: searches, error } = await this.supabase
+      .from(SEARCHES_TABLE)
+      .select('*')
+      .eq('active', true);
+    if (error) return { searches: 0, found: 0, inserted: 0 };
+
+    let found = 0;
+    let inserted = 0;
+    for (const s of searches ?? []) {
+      const result = await this.search(
+        { keywords: (s.keywords as string) ?? undefined, titles: (s.titles as string[]) ?? [], locations: (s.locations as string[]) ?? [], page: 1 },
+        null,
+      ).catch(() => null);
+      if (!result) continue;
+      found += result.prospects.length;
+      for (const p of result.prospects) {
+        const { error: insErr } = await this.supabase.from(PROSPECTS_TABLE).insert({
+          apollo_id: p.id,
+          vendedor_login: s.vendedor_login as string,
+          origen: 'semanal',
+          name: p.name,
+          title: p.title,
+          company: p.company,
+          industry: p.industry,
+        });
+        if (!insErr) inserted++; // 23505 (duplicado) = ya estaba → idempotente
+      }
+      await this.supabase
+        .from(SEARCHES_TABLE)
+        .update({ last_run_at: new Date().toISOString() })
+        .eq('id', s.id as string);
+    }
+    this.logger.log(`Corrida semanal de prospección: ${searches?.length ?? 0} búsquedas, ${found} resultados, ${inserted} nuevos.`);
+    return { searches: searches?.length ?? 0, found, inserted };
+  }
+
+  private async assertOwner(id: string, vendedorLogin: string): Promise<SavedProspect> {
+    const { data } = await this.supabase.from(PROSPECTS_TABLE).select('*').eq('id', id).maybeSingle();
+    if (!data) throw new NotFoundException('Ese prospecto no existe.');
+    if ((data.vendedor_login as string).toLowerCase() !== vendedorLogin.toLowerCase()) {
+      throw new ForbiddenException('Ese prospecto es de otro vendedor.');
+    }
+    return this.toSaved(data as Record<string, unknown>);
+  }
+
+  private toSaved(r: Record<string, unknown>): SavedProspect {
+    return {
+      id: r.id as string,
+      apolloId: r.apollo_id as string,
+      estado: r.estado as SavedProspectEstado,
+      origen: r.origen as SavedProspect['origen'],
+      name: r.name as string,
+      title: (r.title as string | null) ?? null,
+      company: (r.company as string | null) ?? null,
+      companyWebsite: (r.company_website as string | null) ?? null,
+      industry: (r.industry as string | null) ?? null,
+      location: (r.location as string | null) ?? null,
+      linkedinUrl: (r.linkedin_url as string | null) ?? null,
+      email: (r.email as string | null) ?? null,
+      phone: (r.phone as string | null) ?? null,
+      notes: (r.notes as string | null) ?? null,
+      nextAttemptAt: (r.next_attempt_at as string | null) ?? null,
+      opportunityId: (r.opportunity_id as string | null) ?? null,
+      createdAt: r.created_at as string,
+      updatedAt: r.updated_at as string,
+    };
+  }
+
+  private toInteraction(r: Record<string, unknown>): ProspectInteraction {
+    return {
+      id: r.id as string,
+      prospectId: r.prospect_id as string,
+      tipo: r.tipo as ProspectInteractionTipo,
+      resultado: r.resultado as ProspectInteractionResultado,
+      notas: (r.notas as string | null) ?? null,
+      referidoNombre: (r.referido_nombre as string | null) ?? null,
+      referidoContacto: (r.referido_contacto as string | null) ?? null,
+      reintentarAt: (r.reintentar_at as string | null) ?? null,
+      createdAt: r.created_at as string,
+    };
+  }
+
+  private toSearch(r: Record<string, unknown>): SavedProspectSearch {
+    return {
+      id: r.id as string,
+      keywords: (r.keywords as string | null) ?? null,
+      titles: (r.titles as string[]) ?? [],
+      locations: (r.locations as string[]) ?? [],
+      active: !!r.active,
+      lastRunAt: (r.last_run_at as string | null) ?? null,
+      createdAt: r.created_at as string,
+    };
   }
 
   private toProspect(p: ApolloPerson): SalesProspect | null {

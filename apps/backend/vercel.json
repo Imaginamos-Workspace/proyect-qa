@@ -4,6 +4,9 @@
   "buildCommand": "pnpm run build",
   "ignoreCommand": "npx turbo-ignore backend",
   "outputDirectory": "dist",
+  "crons": [
+    { "path": "/api/sales/prospects/cron-weekly", "schedule": "0 13 * * 1" }
+  ],
   "functions": {
     "api/index.js": { "includeFiles": "dist/**", "maxDuration": 60 },
     "api/generate-stream.js": { "includeFiles": "dist/**" },

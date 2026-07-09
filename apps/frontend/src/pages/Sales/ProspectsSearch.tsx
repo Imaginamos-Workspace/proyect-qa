@@ -1,24 +1,21 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router';
-import { Building2, ExternalLink, KeyRound, Linkedin, Loader2, Mail, MapPin, Search } from 'lucide-react';
+import { Bookmark, BookmarkCheck, Building2, CalendarClock, ExternalLink, KanbanSquare, KeyRound, Linkedin, Loader2, Mail, MapPin, Search, Trash2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useCreateOpportunity, useEnrichProspect, useProspectsStatus, useSearchProspects } from '@/hooks/use-sales';
+import {
+  useCreateSavedSearch,
+  useDeleteSavedSearch,
+  useProspectsStatus,
+  useSaveProspect,
+  useSavedProspects,
+  useSavedSearches,
+  useSearchProspects,
+} from '@/hooks/use-sales';
 import { useScrumMe } from '@/hooks/use-scrum';
-import { api } from '@/lib/api';
-import type { SalesProspect } from '@qa/shared-types';
-
-// Mismo criterio kebab-case que exige CreateOpportunityDto en el backend.
-function slugify(text: string): string {
-  return text
-    .normalize('NFD').replace(/[̀-ͯ]/g, '') // saca acentos
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
+import { ProspectsPipeline } from './ProspectsPipeline';
 
 // "CEO, Gerente de operaciones" → ['CEO', 'Gerente de operaciones']
 function splitList(text: string): string[] {
@@ -54,22 +51,23 @@ function ApolloSetupCard() {
 }
 
 export function ProspectsSearch() {
-  const navigate = useNavigate();
   const { data: me } = useScrumMe();
   const isVendedor = !!me?.roles.includes('vendedor');
   const { data: status, isLoading: statusLoading } = useProspectsStatus();
   const search = useSearchProspects();
-  const enrichProspect = useEnrichProspect();
-  const createOpportunity = useCreateOpportunity();
+  const saveProspect = useSaveProspect();
+  const { data: saved } = useSavedProspects();
+  const { data: savedSearches } = useSavedSearches();
+  const createSavedSearch = useCreateSavedSearch();
+  const deleteSavedSearch = useDeleteSavedSearch();
 
+  const [view, setView] = useState<'buscar' | 'pipeline'>('pipeline');
   const [keywords, setKeywords] = useState('');
   const [titles, setTitles] = useState('');
   const [locations, setLocations] = useState('');
-  const [loadingKey, setLoadingKey] = useState<string | null>(null);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [savingId, setSavingId] = useState<string | null>(null);
 
   const runSearch = (page = 1) => {
-    setErrorMsg(null);
     search.mutate({
       keywords: keywords.trim() || undefined,
       titles: splitList(titles),
@@ -78,41 +76,12 @@ export function ProspectsSearch() {
     });
   };
 
-  // Convierte un prospecto real de Apollo en una oportunidad y arranca el chat
-  // con lo que ya sabemos — el vendedor no repite a mano lo que Apollo trae.
-  // La búsqueda viene OFUSCADA (plan de Apollo): primero se enriquece con
-  // people/match (1 crédito → nombre real, email, LinkedIn) y con eso se
-  // crea la oportunidad. Reusa el mismo endpoint de mensajes del chat normal.
-  const onProspectClick = async (preview: SalesProspect) => {
-    if (!isVendedor || loadingKey) return;
-    setErrorMsg(null);
-    setLoadingKey(preview.id);
-    try {
-      const p = await enrichProspect.mutateAsync(preview.id).catch(() => preview);
-      const cliente = slugify(p.company ?? p.name);
-      const oportunidad = 'contacto-inicial';
-      const opp = await createOpportunity.mutateAsync({ cliente, oportunidad });
-      const seedMessage =
-        `Prospecto detectado vía Apollo.io — ${p.company ?? 'empresa por confirmar'}` +
-        `${p.industry ? ` (${p.industry})` : ''}. ` +
-        `Contacto: ${p.name}${p.title ? `, ${p.title}` : ''}.` +
-        `${p.location ? ` Ubicación: ${p.location}.` : ''}` +
-        `${p.email ? ` Email: ${p.email}.` : ''}` +
-        `${p.companyWebsite ? ` Sitio: ${p.companyWebsite}.` : ''}` +
-        ` Ayúdame a armar el brief con esto como punto de partida.`;
-      // Timeout largo (55s), igual que el chat normal: este primer mensaje
-      // dispara la cascada del LLM y puede tardar más que el default de 20s.
-      await api.post(`/sales/opportunities/${opp.id}/messages`, { content: seedMessage }, 55_000);
-      navigate(`/ventas/${opp.id}`);
-    } catch (err) {
-      setErrorMsg(
-        err instanceof Error
-          ? `No se pudo iniciar la conversación con ${preview.company ?? preview.name}: ${err.message}`
-          : `No se pudo iniciar la conversación con ${preview.company ?? preview.name}.`,
-      );
-    } finally {
-      setLoadingKey(null);
-    }
+  const guardarBusquedaSemanal = () => {
+    createSavedSearch.mutate({
+      keywords: keywords.trim() || undefined,
+      titles: splitList(titles),
+      locations: splitList(locations),
+    });
   };
 
   if (statusLoading) {
@@ -123,123 +92,166 @@ export function ProspectsSearch() {
   }
 
   const result = search.data;
+  // Idempotencia visible: guardados según el backend (savedApolloIds de la
+  // búsqueda) + los del pipeline ya cargado (cubre lo recién guardado).
+  const savedIds = new Set([...(result?.savedApolloIds ?? []), ...(saved ?? []).map((p) => p.apolloId)]);
+  const pipelineCount = (saved ?? []).filter((p) => p.estado !== 'descartado' && p.estado !== 'convertido').length;
 
   return (
     <div className="space-y-4">
-      <Card>
-        <CardContent className="p-6">
-          <form
-            onSubmit={(e) => { e.preventDefault(); runSearch(1); }}
-            className="flex flex-wrap items-end gap-3"
-          >
-            <div className="min-w-[200px] flex-1">
-              <label className="mb-1 block text-xs font-medium text-muted-foreground">Texto libre</label>
-              <Input value={keywords} onChange={(e) => setKeywords(e.target.value)} placeholder="ecommerce, logística, retail…" />
-            </div>
-            <div className="min-w-[200px] flex-1">
-              <label className="mb-1 block text-xs font-medium text-muted-foreground">Cargos (separados por coma)</label>
-              <Input value={titles} onChange={(e) => setTitles(e.target.value)} placeholder="CEO, Gerente de operaciones" />
-            </div>
-            <div className="min-w-[200px] flex-1">
-              <label className="mb-1 block text-xs font-medium text-muted-foreground">Ubicación (separadas por coma)</label>
-              <Input value={locations} onChange={(e) => setLocations(e.target.value)} placeholder="Bogotá, Colombia" />
-            </div>
-            <Button type="submit" disabled={!isVendedor || search.isPending}>
-              {search.isPending
-                ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Buscando…</>
-                : <><Search className="mr-2 h-4 w-4" /> Buscar</>}
-            </Button>
-          </form>
-          {!isVendedor && (
-            <p className="mt-2 text-xs text-muted-foreground">Solo el rol vendedor puede buscar (consume cuota de Apollo).</p>
-          )}
-          {search.isError && (
-            <p className="mt-2 text-sm text-destructive">{(search.error as Error).message}</p>
-          )}
-          {errorMsg && <p className="mt-2 text-sm text-destructive">{errorMsg}</p>}
-        </CardContent>
-      </Card>
+      <div className="flex gap-2">
+        <Button variant={view === 'pipeline' ? 'default' : 'outline'} size="sm" onClick={() => setView('pipeline')}>
+          <KanbanSquare className="mr-2 h-4 w-4" /> Mi pipeline{pipelineCount ? ` (${pipelineCount})` : ''}
+        </Button>
+        <Button variant={view === 'buscar' ? 'default' : 'outline'} size="sm" onClick={() => setView('buscar')}>
+          <Search className="mr-2 h-4 w-4" /> Buscar en Apollo
+        </Button>
+      </div>
 
-      {search.isPending && (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-36 w-full" />)}
-        </div>
-      )}
-
-      {result && !search.isPending && (
+      {view === 'pipeline' ? (
+        <ProspectsPipeline />
+      ) : (
         <>
-          <p className="text-xs text-muted-foreground">
-            {result.totalEntries.toLocaleString()} prospectos — página {result.page} de {result.totalPages}
-            {isVendedor ? '. Toca uno para crear la oportunidad y arrancar el chat con sus datos precargados.' : '.'}
-          </p>
-          {result.prospects.length === 0 ? (
-            <Card>
-              <CardContent className="p-10 text-center text-sm text-muted-foreground">
-                Sin resultados con esos filtros — prueba con menos criterios.
-              </CardContent>
-            </Card>
-          ) : (
+          <Card>
+            <CardContent className="p-6">
+              <form
+                onSubmit={(e) => { e.preventDefault(); runSearch(1); }}
+                className="flex flex-wrap items-end gap-3"
+              >
+                <div className="min-w-[200px] flex-1">
+                  <label className="mb-1 block text-xs font-medium text-muted-foreground">Texto libre</label>
+                  <Input value={keywords} onChange={(e) => setKeywords(e.target.value)} placeholder="ecommerce, logística, retail…" />
+                </div>
+                <div className="min-w-[200px] flex-1">
+                  <label className="mb-1 block text-xs font-medium text-muted-foreground">Cargos (separados por coma)</label>
+                  <Input value={titles} onChange={(e) => setTitles(e.target.value)} placeholder="CEO, Gerente de operaciones" />
+                </div>
+                <div className="min-w-[200px] flex-1">
+                  <label className="mb-1 block text-xs font-medium text-muted-foreground">Ubicación (separadas por coma)</label>
+                  <Input value={locations} onChange={(e) => setLocations(e.target.value)} placeholder="Bogotá, Colombia" />
+                </div>
+                <Button type="submit" disabled={!isVendedor || search.isPending}>
+                  {search.isPending
+                    ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Buscando…</>
+                    : <><Search className="mr-2 h-4 w-4" /> Buscar</>}
+                </Button>
+                <Button type="button" variant="outline" disabled={!isVendedor || createSavedSearch.isPending} onClick={guardarBusquedaSemanal} title="El cron la ejecuta cada lunes y guarda los prospectos nuevos en tu pipeline (sin duplicar)">
+                  <CalendarClock className="mr-2 h-4 w-4" /> Correr semanalmente
+                </Button>
+              </form>
+              {!isVendedor && (
+                <p className="mt-2 text-xs text-muted-foreground">Solo el rol vendedor puede buscar (consume cuota de Apollo).</p>
+              )}
+              {search.isError && (
+                <p className="mt-2 text-sm text-destructive">{(search.error as Error).message}</p>
+              )}
+              {createSavedSearch.isSuccess && (
+                <p className="mt-2 text-xs text-primary">Búsqueda guardada — corre cada lunes y llena tu pipeline sin duplicar.</p>
+              )}
+              {!!savedSearches?.length && (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {savedSearches.map((s) => (
+                    <Badge key={s.id} variant="secondary" className="gap-1.5">
+                      <CalendarClock className="h-3 w-3" />
+                      {[s.keywords, s.titles.join('/'), s.locations.join('/')].filter(Boolean).join(' · ') || '(sin filtros)'}
+                      {s.lastRunAt ? ` · corrió ${new Date(s.lastRunAt).toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })}` : ' · aún no corre'}
+                      <button type="button" title="Eliminar búsqueda semanal" onClick={() => deleteSavedSearch.mutate(s.id)}>
+                        <Trash2 className="h-3 w-3 text-muted-foreground hover:text-destructive" />
+                      </button>
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
+          {search.isPending && (
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-              {result.prospects.map((p) => {
-                const isLoading = loadingKey === p.id;
-                return (
-                  <Card
-                    key={p.id}
-                    role={isVendedor ? 'button' : undefined}
-                    tabIndex={isVendedor ? 0 : undefined}
-                    onClick={() => onProspectClick(p)}
-                    onKeyDown={(e) => { if (e.key === 'Enter') onProspectClick(p); }}
-                    className={`transition-colors ${
-                      !isVendedor ? '' : loadingKey ? 'cursor-default opacity-70' : 'cursor-pointer hover:border-primary hover:bg-primary/5'
-                    }`}
-                  >
-                    <CardContent className="space-y-2 p-4">
-                      <div className="flex items-center justify-between gap-2 text-muted-foreground">
-                        <span className="flex items-center gap-2 text-xs">
-                          <Building2 className="h-3.5 w-3.5" /> {p.industry ?? 'Sin industria'}
-                        </span>
-                        {isLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />}
-                      </div>
-                      <p className="font-medium text-foreground">{p.company ?? p.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {p.name}{p.title ? ` — ${p.title}` : ''}
-                      </p>
-                      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                        {p.location && (
-                          <span className="flex items-center gap-1"><MapPin className="h-3 w-3" /> {p.location}</span>
-                        )}
-                        {p.email && (
-                          <span className="flex items-center gap-1"><Mail className="h-3 w-3" /> {p.email}</span>
-                        )}
-                      </div>
-                      <div className="flex flex-wrap gap-2" onClick={(e) => e.stopPropagation()}>
-                        {p.linkedinUrl && (
-                          <a href={p.linkedinUrl} target="_blank" rel="noreferrer">
-                            <Badge variant="secondary" className="gap-1"><Linkedin className="h-3 w-3" /> LinkedIn</Badge>
-                          </a>
-                        )}
-                        {p.companyWebsite && (
-                          <a href={p.companyWebsite} target="_blank" rel="noreferrer">
-                            <Badge variant="secondary" className="gap-1"><ExternalLink className="h-3 w-3" /> Sitio</Badge>
-                          </a>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })}
+              {Array.from({ length: 6 }).map((_, i) => <Skeleton key={i} className="h-36 w-full" />)}
             </div>
           )}
-          {result.totalPages > 1 && (
-            <div className="flex items-center justify-center gap-3">
-              <Button variant="outline" size="sm" disabled={result.page <= 1 || search.isPending} onClick={() => runSearch(result.page - 1)}>
-                Anterior
-              </Button>
-              <span className="text-xs text-muted-foreground">{result.page} / {result.totalPages}</span>
-              <Button variant="outline" size="sm" disabled={result.page >= result.totalPages || search.isPending} onClick={() => runSearch(result.page + 1)}>
-                Siguiente
-              </Button>
-            </div>
+
+          {result && !search.isPending && (
+            <>
+              <p className="text-xs text-muted-foreground">
+                {result.totalEntries.toLocaleString()} prospectos — página {result.page} de {result.totalPages}.
+                Guarda los que te interesen: pasan a tu pipeline para contactarlos (guardar desbloquea el dato completo — 1 crédito).
+              </p>
+              {result.prospects.length === 0 ? (
+                <Card>
+                  <CardContent className="p-10 text-center text-sm text-muted-foreground">
+                    Sin resultados con esos filtros — prueba con menos criterios.
+                  </CardContent>
+                </Card>
+              ) : (
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                  {result.prospects.map((p) => {
+                    const isSaved = savedIds.has(p.id);
+                    const isSaving = savingId === p.id && saveProspect.isPending;
+                    return (
+                      <Card key={p.id}>
+                        <CardContent className="space-y-2 p-4">
+                          <div className="flex items-center justify-between gap-2 text-muted-foreground">
+                            <span className="flex items-center gap-2 text-xs">
+                              <Building2 className="h-3.5 w-3.5" /> {p.industry ?? 'Sin industria'}
+                            </span>
+                          </div>
+                          <p className="font-medium text-foreground">{p.company ?? p.name}</p>
+                          <p className="text-xs text-muted-foreground">
+                            {p.name}{p.title ? ` — ${p.title}` : ''}
+                          </p>
+                          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                            {p.location && (
+                              <span className="flex items-center gap-1"><MapPin className="h-3 w-3" /> {p.location}</span>
+                            )}
+                            {p.email && (
+                              <span className="flex items-center gap-1"><Mail className="h-3 w-3" /> {p.email}</span>
+                            )}
+                          </div>
+                          <div className="flex items-center justify-between gap-2">
+                            <div className="flex flex-wrap gap-2">
+                              {p.linkedinUrl && (
+                                <a href={p.linkedinUrl} target="_blank" rel="noreferrer">
+                                  <Badge variant="secondary" className="gap-1"><Linkedin className="h-3 w-3" /> LinkedIn</Badge>
+                                </a>
+                              )}
+                              {p.companyWebsite && (
+                                <a href={p.companyWebsite} target="_blank" rel="noreferrer">
+                                  <Badge variant="secondary" className="gap-1"><ExternalLink className="h-3 w-3" /> Sitio</Badge>
+                                </a>
+                              )}
+                            </div>
+                            <Button
+                              size="sm"
+                              variant={isSaved ? 'secondary' : 'default'}
+                              disabled={!isVendedor || isSaved || isSaving}
+                              onClick={() => { setSavingId(p.id); saveProspect.mutate(p.id); }}
+                            >
+                              {isSaving
+                                ? <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Guardando…</>
+                                : isSaved
+                                  ? <><BookmarkCheck className="mr-1.5 h-3.5 w-3.5" /> Guardado</>
+                                  : <><Bookmark className="mr-1.5 h-3.5 w-3.5" /> Guardar</>}
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })}
+                </div>
+              )}
+              {result.totalPages > 1 && (
+                <div className="flex items-center justify-center gap-3">
+                  <Button variant="outline" size="sm" disabled={result.page <= 1 || search.isPending} onClick={() => runSearch(result.page - 1)}>
+                    Anterior
+                  </Button>
+                  <span className="text-xs text-muted-foreground">{result.page} / {result.totalPages}</span>
+                  <Button variant="outline" size="sm" disabled={result.page >= result.totalPages || search.isPending} onClick={() => runSearch(result.page + 1)}>
+                    Siguiente
+                  </Button>
+                </div>
+              )}
+            </>
           )}
         </>
       )}
