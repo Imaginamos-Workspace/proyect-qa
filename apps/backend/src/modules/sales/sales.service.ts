@@ -1036,15 +1036,40 @@ export class SalesService {
     vendedorLogin: string,
     today: string,
   ): Promise<void> {
+    // status.md NO vive en sales/templates/ — lo genera `sales:new` aparte
+    // (rules/13). La plataforma tenía ese mismo hueco: sus oportunidades
+    // quedaban SIN status.md → handoff lo saltaba en silencio y el discovery/
+    // notificaciones quedaban ciegos a ellas. Se escribe PRIMERO y con el
+    // mismo formato que scripts/sales-new.mjs del monorepo.
+    await this.writeFileToRepo(
+      `sales/${cliente}/${oportunidad}/status.md`,
+      `# Estado — ${cliente} · ${oportunidad}
+
+- **Etapa actual:** brief
+- **Cliente:** ${cliente}
+- **Oportunidad:** ${oportunidad}
+- **Owner vendedor:** @${vendedorLogin}
+- **Owner TL:** _(asignar al pasar a propuesta-en-armado)_
+- **Última actualización:** ${today}
+
+## Bitácora de estados
+
+Append-only. Cada transición se anota con fecha + responsable.
+
+| Fecha | Estado nuevo | Responsable | Notas |
+|---|---|---|---|
+| ${today} | brief | @${vendedorLogin} | Oportunidad creada desde la plataforma QA. |
+`,
+      `sales(${cliente}): status.md inicial de ${oportunidad}`,
+    );
+
     const templateFiles = await this.listRepoDir('sales/templates', true);
     // LECTURAS de templates en paralelo (no commitean — sin carrera), pero
     // ESCRITURAS SECUENCIALES: cada PUT de la Contents API es un commit que
     // mueve el head de la rama — en paralelo chocan los SHAs (409/422) y el
-    // scaffold quedaba PARCIAL (caso real: carpetas con 1 de ~11 archivos y
-    // SIN status.md → la oportunidad era invisible para el discovery). La
-    // función tiene maxDuration=60s (vercel.json) — la secuencia (~10-15s)
-    // entra sobrada. status.md va PRIMERO: es el archivo del que dependen
-    // discovery, re-sync y notificaciones; si algo se corta, que sea lo demás.
+    // scaffold quedaba PARCIAL (caso real: carpetas con 1 de ~11 archivos).
+    // La función tiene maxDuration=60s (vercel.json) — la secuencia (~10-15s)
+    // entra sobrada.
     const prepared = await Promise.all(
       templateFiles.map(async ({ path: file }) => {
         const existing = await this.readFileFromRepoRaw(file);
@@ -1054,9 +1079,6 @@ export class SalesService {
           : null;
         return { destPath, existing, substituted };
       }),
-    );
-    prepared.sort(
-      (a, b) => Number(b.destPath.endsWith('status.md')) - Number(a.destPath.endsWith('status.md')),
     );
     for (const { destPath, existing, substituted } of prepared) {
       try {
