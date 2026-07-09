@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router';
 import {
+  ArrowDown,
   ArrowLeft,
   Send,
   RefreshCw,
@@ -88,6 +89,7 @@ export function SalesChatPage() {
   const [failedMessage, setFailedMessage] = useState<string | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [transferTo, setTransferTo] = useState('');
+  const [showScrollDown, setShowScrollDown] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
 
@@ -143,6 +145,26 @@ export function SalesChatPage() {
     // si el vendedor scrollea para arriba a releer algo mientras espera, no
     // queremos forzarlo de vuelta al fondo cada 1s.
   }, [opp?.messages.length, sendMessage.isPending]);
+
+  // Botón "bajar al final": visible solo cuando el vendedor scrolleó hacia
+  // arriba (releer algo largo, p. ej.) — a menos de 200px del fondo no aporta.
+  // El auto-scroll de arriba dispara el evento scroll igual, así que el botón
+  // se esconde solo cuando un mensaje nuevo baja la vista al fondo.
+  useEffect(() => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    const onScroll = () => setShowScrollDown(el.scrollHeight - el.scrollTop - el.clientHeight > 200);
+    el.addEventListener('scroll', onScroll, { passive: true });
+    onScroll();
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [opp?.messages.length]);
+
+  const scrollToBottom = () => {
+    const el = messagesContainerRef.current;
+    // smooth acá es seguro: es UNA animación disparada por el usuario, no las
+    // ráfagas encadenadas que rompían el auto-scroll (ver nota de arriba).
+    el?.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+  };
 
   const onPickTranscript = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -265,7 +287,8 @@ export function SalesChatPage() {
         <TabsContent value="chat">
           <Card className="flex h-[65vh] flex-col overflow-hidden">
             <CardContent className="flex flex-1 flex-col overflow-hidden p-0">
-              <div ref={messagesContainerRef} className="flex-1 space-y-5 overflow-y-auto px-6 py-6">
+              <div className="relative flex-1 overflow-hidden">
+              <div ref={messagesContainerRef} className="h-full space-y-5 overflow-y-auto px-6 py-6">
                 {opp.messages.length === 0 && (
                   <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
                     <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
@@ -329,6 +352,19 @@ export function SalesChatPage() {
                     </div>
                   </div>
                 )}
+              </div>
+              {showScrollDown && (
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="icon"
+                  onClick={scrollToBottom}
+                  title="Ir al final de la conversación"
+                  className="absolute bottom-3 right-4 h-9 w-9 rounded-full border border-border shadow-md"
+                >
+                  <ArrowDown className="h-4 w-4" />
+                </Button>
+              )}
               </div>
 
               {canEdit && (
