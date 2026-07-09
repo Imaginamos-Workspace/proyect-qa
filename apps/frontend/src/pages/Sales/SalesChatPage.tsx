@@ -202,6 +202,16 @@ export function SalesChatPage() {
 
   const draft = opp.draft ?? {};
   const asunciones = draft.asunciones ?? [];
+  // Avance del brief, determinístico desde el draft y en el MISMO orden de
+  // trabajo que usa el backend en el prompt (asunciones va entre integraciones
+  // y riesgos). El vendedor ve cuánto va y qué sigue sin preguntárselo al agente.
+  const briefOrder: { label: string; filled: boolean }[] = [
+    ...SECTIONS.slice(0, 6).map((s) => ({ label: s.label, filled: fieldText((draft as Record<string, unknown>)[s.key]).trim() !== '' })),
+    { label: 'Asunciones', filled: asunciones.length > 0 },
+    ...SECTIONS.slice(6).map((s) => ({ label: s.label, filled: fieldText((draft as Record<string, unknown>)[s.key]).trim() !== '' })),
+  ];
+  const briefFilled = briefOrder.filter((s) => s.filled).length;
+  const briefNext = briefOrder.find((s) => !s.filled)?.label ?? null;
   const statusMeta = salesStatusMeta(opp.status);
   // Solo el dueño (vendedor) edita: chatear, sincronizar, ceder, borrar. El
   // backend lo re-verifica; esto es solo para no mostrar controles inútiles.
@@ -287,6 +297,22 @@ export function SalesChatPage() {
         <TabsContent value="chat">
           <Card className="flex h-[65vh] flex-col overflow-hidden">
             <CardContent className="flex flex-1 flex-col overflow-hidden p-0">
+              {/* Avance del brief: barra + qué sigue, calculado del draft (sin LLM). */}
+              <div className="flex items-center gap-3 border-b border-border px-6 py-2">
+                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                  <div
+                    className="h-full rounded-full bg-primary transition-all"
+                    style={{ width: `${(briefFilled / briefOrder.length) * 100}%` }}
+                  />
+                </div>
+                <p className="shrink-0 text-xs text-muted-foreground">
+                  {briefNext ? (
+                    <>Brief {briefFilled}/{briefOrder.length} · sigue: <span className="font-medium text-foreground">{briefNext}</span></>
+                  ) : (
+                    <span className="font-medium text-primary">Brief completo — pásalo al TL desde Resumen</span>
+                  )}
+                </p>
+              </div>
               <div className="relative flex-1 overflow-hidden">
               <div ref={messagesContainerRef} className="h-full space-y-5 overflow-y-auto px-6 py-6">
                 {opp.messages.length === 0 && (

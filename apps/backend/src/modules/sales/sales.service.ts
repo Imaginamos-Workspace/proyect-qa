@@ -1195,11 +1195,25 @@ HECHOS PREVIOS DEL VENDEDOR (mensajes anteriores de ESTA conversación que queda
 ${olderVendorNotes.trim()}
 `
       : '';
+  // Guía proactiva del cierre (determinística, mismo patrón que sectionState):
+  // el agente SIEMPRE dice cuánto va y qué sigue — el vendedor nunca debería
+  // tener que preguntar "¿qué falta?" (caso real). Y con el brief completo, la
+  // acción concreta es del vendedor (botón "Pasar a TL" en la pestaña Resumen):
+  // el modelo no puede cerrar nada, así que debe decir exactamente eso.
+  const workLine = directRequest
+    ? 'Este turno NO se trabaja ninguna sección: hay un PEDIDO DIRECTO detectado (ver arriba).'
+    : vacias.length
+      ? 'Trabaja SOLO sobre la PRIMERA sección vacía.'
+      : 'El brief está COMPLETO: NO abras temas nuevos ni hagas más preguntas de sección. Dile claro y directo que revise la pestaña "Resumen" y toque el botón "Pasar a TL" — el cierre lo hace EL VENDEDOR con ese botón, tú no puedes cerrarlo. Si responde "sí, cerremos" o parecido, repítele exactamente esa acción (Resumen → Pasar a TL).';
+  const progressLine =
+    !directRequest && vacias.length
+      ? `\n- GUÍA EL CIERRE: termina cada "reply" con UNA línea de avance redactada natural (distinta cada vez, no plantilla) que diga cuántas secciones van (${cubiertas.length}/${sectionState.length}), cuál sigue y qué necesitas del vendedor para cubrirla.`
+      : '';
   const briefStateBlock = `${recoveryBlock}${directRequestBlock}
 ESTADO DEL BRIEF (calculado por el sistema — CONFÍA en esto, no lo re-derives del JSON):
 - Secciones ya cubiertas: ${cubiertas.join(', ') || '(ninguna)'}
-- Secciones VACÍAS, en orden de trabajo: ${vacias.join(', ') || '(ninguna — el brief está completo: ofrece pasar al TL)'}
-- ${directRequest ? 'Este turno NO se trabaja ninguna sección: hay un PEDIDO DIRECTO detectado (ver arriba).' : 'Trabaja SOLO sobre la PRIMERA sección vacía.'} Los nombres de sección válidos son EXACTAMENTE los de esta lista — no inventes otros (p. ej. "funcionalidadesEsperadas" NO existe).
+- Secciones VACÍAS, en orden de trabajo: ${vacias.join(', ') || '(ninguna — el brief está COMPLETO)'}
+- ${workLine} Los nombres de sección válidos son EXACTAMENTE los de esta lista — no inventes otros (p. ej. "funcionalidadesEsperadas" NO existe).${progressLine}
 `;
 
   return `Eres un CONSULTOR PRE-VENTA experto (software a medida, e-commerce, apps, web) que ayuda a un vendedor a armar el brief de una oportunidad. No eres un formulario: PROPONES, das ejemplos y recomiendas. El vendedor muchas veces no es técnico y necesita que le sugieras opciones para llevarle al cliente.
