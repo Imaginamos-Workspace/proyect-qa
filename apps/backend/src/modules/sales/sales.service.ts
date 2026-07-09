@@ -19,7 +19,7 @@ import type {
   SalesSyncResult,
 } from '../../shared-types';
 
-const OWNER = 'imaginamos';
+const OWNER = 'Imaginamos-Workspace';
 const REPO = 'qa-automation-monorepo';
 const OPPORTUNITIES_TABLE = 'sales_opportunities';
 const MESSAGES_TABLE = 'sales_messages';

@@ -5,7 +5,7 @@ import { SUPABASE_CLIENT } from '../../config/supabase.module';
 import { GeminiProvider } from '../ai/providers/gemini.provider';
 import type { SalesOpportunity } from '../../shared-types';
 
-const OWNER = 'imaginamos';
+const OWNER = 'Imaginamos-Workspace';
 const REPO = 'qa-automation-monorepo';
 const KNOWLEDGE_TABLE = 'sales_knowledge';
 // Corte de fragmentos: ~1200 chars por chunk mantiene cada embedding enfocado

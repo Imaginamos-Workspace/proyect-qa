@@ -90,7 +90,7 @@ export class ScrumService {
     config: ConfigService,
   ) {
     this.token = config.get<string>('GITHUB_TOKEN');
-    this.owner = config.get<string>('GITHUB_PROJECT_OWNER') ?? 'imaginamos';
+    this.owner = config.get<string>('GITHUB_PROJECT_OWNER') ?? 'Imaginamos-Workspace';
   }
 
   /** Clientes disponibles (mismo origen que el dashboard). */
@@ -972,7 +972,7 @@ export class ScrumService {
     issueToSprintTitle: Map<number, string>;
     sprintsRaw: { n: number; goal?: string; start?: string; duration_days?: number }[];
   } | null> {
-    const owner = 'imaginamos';
+    const owner = 'Imaginamos-Workspace';
     const repo = 'qa-automation-monorepo';
     const fetchRaw = async (path: string): Promise<string | null> => {
       const res = await fetch(`https://api.github.com/repos/${owner}/${repo}/contents/${path}`, {

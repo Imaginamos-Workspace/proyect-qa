@@ -36,7 +36,7 @@ export class EvidenceService {
     config: ConfigService,
   ) {
     this.token = process.env.GITHUB_WRITE_TOKEN || config.get<string>('GITHUB_TOKEN');
-    this.owner = config.get<string>('GITHUB_PROJECT_OWNER') ?? 'imaginamos';
+    this.owner = config.get<string>('GITHUB_PROJECT_OWNER') ?? 'Imaginamos-Workspace';
   }
 
   /** Crea el bucket público de evidencias si no existe (idempotente). */
