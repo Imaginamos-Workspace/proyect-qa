@@ -835,6 +835,11 @@ async function callOpenAICompatible(
         messages: [{ role: 'user', content: prompt }],
         temperature: cfg.temperature ?? 0.3,
         max_tokens: cfg.maxOutputTokens ?? 4096,
+        // gpt-oss es un modelo RAZONADOR: sin esto puede gastar todo el
+        // presupuesto de tokens en razonamiento interno y devolver content
+        // vacío — el "empty response" que tumbó a Groq de la cascada (caso
+        // real, toda una noche). Con extracción de brief no hace falta razonar.
+        ...(model.includes('gpt-oss') ? { reasoning_effort: 'low' } : {}),
         ...(wantJson ? { response_format: { type: 'json_object' } } : {}),
       }),
       // Timeout duro que aborta el fetch: si Groq/DeepSeek se cuelga, no bloquea.
