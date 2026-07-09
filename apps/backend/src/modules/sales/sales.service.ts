@@ -593,6 +593,9 @@ export class SalesService {
       );
 
       const parsed = parseAssistantResponse(raw);
+      // Fusión defensiva: lo ya registrado NUNCA se pierde aunque el modelo
+      // devuelva un draft parcial (causa raíz de re-preguntar el presupuesto).
+      const mergedDraft = mergeDrafts(opp.draft, parsed.draft);
 
       // 4. Persistir la respuesta + draft actualizado.
       const nowReply = new Date().toISOString();
@@ -604,18 +607,19 @@ export class SalesService {
       });
       await this.supabase
         .from(OPPORTUNITIES_TABLE)
-        .update({ draft: parsed.draft, updated_at: nowReply })
+        .update({ draft: mergedDraft, updated_at: nowReply })
         .eq('id', id);
 
       // 5. Post-turno (indexar RAG + auto-sync de brief.md) FUERA del camino de
       //    respuesta: no demora ni un segundo la respuesta al vendedor. Best-
       //    effort (en serverless puede no completar; el brief igual se sincroniza
       //    con "Sincronizar"/handoff, y el RAG se reindexa después).
-      void this.afterTurn(id, opp, content, parsed).catch((err) =>
+      const result = { reply: parsed.reply, draft: mergedDraft };
+      void this.afterTurn(id, opp, content, result).catch((err) =>
         this.logger.warn(`Post-turno de ${opp.cliente}/${opp.oportunidad} degradó: ${(err as Error).message}`),
       );
 
-      return parsed;
+      return result;
     } catch (err) {
       // El turno no produjo respuesta → limpiamos el mensaje del vendedor para
       // que la conversación no quede con un mensaje colgado (el contenido no se
@@ -1308,10 +1312,30 @@ ${chatSummary.trim()}
   const asksHowToReply = /(qu[ée] le (respondo|digo|contesto)|c[óo]mo le (respondo|contesto)|qu[ée] respondo)/i.test(lastVendorMsg);
   const mentionsPrice = /(cu[áa]nto|precio|costo|costar|vale|valor|presupuesto|tarifa)/i.test(lastVendorMsg);
   const asksRecap = /(hazme|dame|haz|necesito|quiero|mu[ée]strame|arma)[^.]{0,40}(recap|resumen)/i.test(lastVendorMsg);
-  const directRequest = asksRecap ? 'RECAP' : asksHowToReply && mentionsPrice ? 'GUION DE PRECIO' : null;
+  const asksClose = /(cierra|cerremos|cerrar|finaliza|finalicemos|termina)[^.]{0,30}(brief|proceso)|brief\s+(listo|cerrado)/i.test(lastVendorMsg);
+  const saysAlreadyTold = /(ya (te )?lo (dije|di|mencion[eé]|pas[eé])|ya me (lo )?preguntaste|ya lo registraste|registraste antes|varias veces)/i.test(lastVendorMsg);
+  const directRequest = asksRecap
+    ? 'RECAP'
+    : asksHowToReply && mentionsPrice
+      ? 'GUION DE PRECIO'
+      : asksClose
+        ? 'CIERRE DEL BRIEF'
+        : saysAlreadyTold
+          ? 'DATO YA DICHO'
+          : null;
+  // Instrucción ESPECÍFICA por tipo — la certificación E2E mostró que la regla
+  // en prosa genérica no alcanza con los modelos gratis; la marca del sistema sí.
+  const directInstruction =
+    directRequest === 'CIERRE DEL BRIEF'
+      ? vacias.length
+        ? `El vendedor quiere CERRAR el brief pero faltan secciones: ${vacias.join(', ')}. En el "reply": dilo sin rodeos, y PROPONE en ESTE MISMO turno un valor concreto y razonable para CADA sección faltante (una línea por sección), pidiendo UN solo OK para registrarlas todas juntas. Nada de preguntarlas de a una.`
+        : 'El brief ya está COMPLETO. En el "reply": confírmalo y da la acción exacta — pestaña "Resumen" → botón "Pasar a TL". NO digas "procederemos" ni "avanzamos a la siguiente fase": tú NO puedes avanzar fases, esa acción la hace el vendedor con ese botón.'
+      : directRequest === 'DATO YA DICHO'
+        ? 'El vendedor reclama que ese dato YA lo dio. BÚSCALO en el DRAFT y en el RESUMEN COMPACTADO y CONFÍRMALO citándolo textual ("Tienes razón: quedó registrado X en Y"). PROHIBIDO volver a pedirlo. Solo si de verdad no aparece en ninguno de los dos, discúlpate y pide únicamente lo que falta.'
+        : `Aplica la regla correspondiente de PEDIDOS DIRECTOS DEL VENDEDOR.`;
   const directRequestBlock = directRequest
     ? `
-🚩 DETECTADO POR EL SISTEMA (determinístico — OBEDECE esto por encima del ESTADO DEL BRIEF y del protocolo): el último mensaje del vendedor es un pedido directo de tipo ${directRequest}. Aplica la regla correspondiente de PEDIDOS DIRECTOS DEL VENDEDOR y en este turno NO trabajes ninguna sección del brief ni cierres con pregunta de sección. El draft va igual, sin cambios.
+🚩 DETECTADO POR EL SISTEMA (determinístico — OBEDECE esto por encima del ESTADO DEL BRIEF y del protocolo): el último mensaje del vendedor es un pedido directo de tipo ${directRequest}. ${directInstruction} En este turno NO cierres con pregunta de sección.${directRequest === 'CIERRE DEL BRIEF' && vacias.length ? '' : ' El draft va igual, sin cambios.'}
 `
     : '';
   // Solo cuando el draft está flojo Y hay mensajes viejos fuera de la ventana:
@@ -1342,6 +1366,7 @@ ${olderVendorNotes.trim()}
 ESTADO DEL BRIEF (calculado por el sistema — CONFÍA en esto, no lo re-derives del JSON):
 - Secciones ya cubiertas: ${cubiertas.join(', ') || '(ninguna)'}
 - Secciones VACÍAS, en orden de trabajo: ${vacias.join(', ') || '(ninguna — el brief está COMPLETO)'}
+- PROHIBIDO preguntar por una sección ya cubierta (incluida "asunciones" si ya tiene al menos una) — solo se toca si el vendedor la corrige explícitamente. Antes de pedir un dato, revisa el DRAFT: si ya está, confírmalo en vez de pedirlo.
 - ${workLine} Los nombres de sección válidos son EXACTAMENTE los de esta lista — no inventes otros (p. ej. "funcionalidadesEsperadas" NO existe).${progressLine}
 `;
 
@@ -1446,6 +1471,31 @@ function sanitizeDraft(raw: unknown): SalesBriefDraft {
     if (asunciones.length) out.asunciones = asunciones;
   }
   return out;
+}
+
+/** Fusión DEFENSIVA del draft: el modelo devuelve el draft completo cada turno
+ *  y los modelos gratis a veces devuelven uno PARCIAL — el update lo pisaba
+ *  entero y borraba secciones ya registradas (caso real: el presupuesto se
+ *  volvió a preguntar varias veces porque "limites" se vació en un turno malo).
+ *  Regla: la memoria solo crece o se corrige — un campo lleno solo cambia si
+ *  llega contenido nuevo NO vacío; las asunciones se unen por texto (nunca se
+ *  pierden). ponytail: borrar un campo a propósito no se puede desde el chat —
+ *  si algún día hace falta, va como acción explícita de UI, no vía LLM. */
+function mergeDrafts(prev: SalesBriefDraft, next: SalesBriefDraft): SalesBriefDraft {
+  const merged: SalesBriefDraft = { ...prev };
+  for (const k of DRAFT_TEXT_KEYS) {
+    const val = fieldToText(next[k])?.trim();
+    if (val) merged[k] = val;
+  }
+  const prevAs = Array.isArray(prev.asunciones) ? prev.asunciones : [];
+  const nextAs = Array.isArray(next.asunciones) ? next.asunciones : [];
+  const seen = new Set(prevAs.map((a) => fieldToText(a?.texto)?.trim().toLowerCase()).filter(Boolean));
+  const nuevas = nextAs.filter((a) => {
+    const t = fieldToText(a?.texto)?.trim().toLowerCase();
+    return t && !seen.has(t);
+  });
+  if (prevAs.length || nuevas.length) merged.asunciones = [...prevAs, ...nuevas];
+  return merged;
 }
 
 /** Parseo ROBUSTO de la respuesta del LLM. Los modelos gratis (Llama/Qwen/
