@@ -601,14 +601,32 @@ export class SalesService {
       // Fusión defensiva: lo ya registrado NUNCA se pierde aunque el modelo
       // devuelva un draft parcial (causa raíz de re-preguntar el presupuesto).
       const mergedDraft = mergeDrafts(opp.draft, parsed.draft);
-      // "No hay asunciones" explícito → la sección queda cubierta DE VERDAD,
-      // registrado por el SERVIDOR (la instrucción en prosa no alcanzaba: el
-      // modelo la ignoraba y el brief quedaba en 8/9 para siempre, caso real).
-      if (
-        !(mergedDraft.asunciones ?? []).length &&
-        /(no (hay|tengo|tenemos)( m[áa]s)?|sin|ninguna)\s*(suposici|asunci)/i.test(content)
-      ) {
-        mergedDraft.asunciones = [{ texto: 'Sin asunciones relevantes (confirmado por el vendedor)', impactoSiFalla: 'N/A' }];
+      // ASUNCIONES las escribe el SERVIDOR — es la única sección con shape
+      // anidado ({texto, impactoSiFalla}) y los modelos gratis NO logran
+      // emitirla: decían "Registrado ✓" en el reply pero el draft llegaba sin
+      // ella → el brief quedaba clavado en 8/9 con el vendedor pidiendo
+      // continuar en bucle (caso real, 3 rondas de capturas).
+      if (!(mergedDraft.asunciones ?? []).length) {
+        // Caso 1: "no hay asunciones/suposiciones" explícito.
+        if (/(no (hay|tengo|tenemos)( m[áa]s)?|sin|ninguna)\s*(suposici|asunci)/i.test(content)) {
+          mergedDraft.asunciones = [{ texto: 'Sin asunciones relevantes (confirmado por el vendedor)', impactoSiFalla: 'N/A' }];
+        } else {
+          // Caso 2: asunciones es LO ÚNICO que falta y el vendedor confirma o
+          // pide continuar/cerrar → registrar con sus propias palabras si
+          // traen contenido; si es un "sí, continúa" pelado, el placeholder.
+          const restoLleno = DRAFT_TEXT_KEYS.every((k) => (fieldToText(mergedDraft[k]) ?? '').trim().length > 0);
+          const affirms =
+            /^(s[ií]\b|dale|ok\b|listo|claro|de acuerdo|correcto|confirmo|perfecto)/i.test(content.trim()) ||
+            /(contin[uú]a|cierra|cerrar|avancemos|pasemos|adelante|siguiente (paso|etapa|fase))/i.test(content);
+          if (restoLleno && affirms) {
+            const stripped = content.trim().replace(/^(s[ií][,.\s]*|dale[,.\s]*|ok[,.\s]*|claro[,.\s]*|perfecto[,.\s]*)/i, '').trim();
+            mergedDraft.asunciones = [
+              stripped.length >= 25
+                ? { texto: stripped, impactoSiFalla: 'Por validar con el cliente' }
+                : { texto: 'Sin asunciones adicionales (el vendedor confirmó cerrar el brief)', impactoSiFalla: 'N/A' },
+            ];
+          }
+        }
       }
 
       // 4. Persistir la respuesta + draft actualizado.
