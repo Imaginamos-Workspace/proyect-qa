@@ -323,7 +323,7 @@ export function SalesChatPage() {
                       </p>
                       {elapsedSec >= 12 && (
                         <p className="text-xs text-muted-foreground">
-                          El modelo gratuito puede estar saturado. Si se pasa de ~40s, te aviso para reintentar.
+                          El modelo gratuito puede estar saturado. Si se pasa de ~1 minuto, te aviso para reintentar.
                         </p>
                       )}
                     </div>

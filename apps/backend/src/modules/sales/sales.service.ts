@@ -914,8 +914,20 @@ export class SalesService {
     // mueve el head de la rama — en paralelo (Promise.all) chocan los SHAs y
     // GitHub devuelve 409/422 intermitente cuando la carpeta tiene varios
     // archivos (caso real: la limpieza fallaba con 500 y dejaba restos).
+    // Y con REINTENTO por archivo: el afterTurn (auto-sync de brief.md) puede
+    // estar commiteando EN PARALELO al borrado (es fire-and-forget) — si el
+    // SHA quedó viejo (409/422) se relee y se reintenta; 404 = ya no existe.
+    const message = `sales(${opp.cliente}): elimina ${opp.oportunidad} del pipeline`;
     for (const { path, sha } of files) {
-      await this.deleteFileFromRepo(path, sha, `sales(${opp.cliente}): elimina ${opp.oportunidad} del pipeline`);
+      try {
+        await this.deleteFileFromRepo(path, sha, message);
+      } catch (err) {
+        const msg = (err as Error).message;
+        if (msg.includes('HTTP 404')) continue; // otro proceso ya lo borró
+        const fresh = await this.readFileFromRepo(path).catch(() => null);
+        if (!fresh) continue; // ya no existe → objetivo cumplido
+        await this.deleteFileFromRepo(path, fresh.sha, message);
+      }
     }
 
     const { error } = await this.supabase.from(OPPORTUNITIES_TABLE).delete().eq('id', id);
