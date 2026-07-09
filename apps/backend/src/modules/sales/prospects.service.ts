@@ -40,7 +40,9 @@ export class ProspectsService {
   private readonly logger = new Logger(ProspectsService.name);
 
   private get apiKey(): string | null {
-    return process.env.APOLLO_API_KEY?.trim() || null;
+    // Vercel guarda comillas/saltos de línea si la key se pega entrecomillada
+    // (caso real con VITE_API_URL) — los quitamos antes de usarla.
+    return process.env.APOLLO_API_KEY?.trim().replace(/^["']|["']$/g, '') || null;
   }
 
   /** ¿Está el flujo activo? El frontend usa esto para mostrar la guía de
