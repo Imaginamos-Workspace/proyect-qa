@@ -814,7 +814,7 @@ export class SalesService {
     // asigna el Owner TL en status.md. Validamos contra los TL reales de
     // team.json — no se puede asignar a alguien que no es TL.
     if (tlLogin) {
-      const tls = await this.roles.listTls().catch(() => []);
+      const tls = await this.roles.listTls().catch(() => [] as { login: string; name: string | null }[]);
       if (!tls.some((t) => t.login.toLowerCase() === tlLogin.toLowerCase())) {
         throw new BadRequestException(`@${tlLogin} no es un TL activo de team.json — elige uno de la lista.`);
       }
