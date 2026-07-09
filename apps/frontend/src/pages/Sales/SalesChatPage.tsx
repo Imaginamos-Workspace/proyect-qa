@@ -38,7 +38,7 @@ import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { salesStatusMeta } from '@/lib/sales-status';
-import { SalesPipelineStepper } from './SalesPipelineStepper';
+import { SalesPipelineStepper, SalesPipelineMini } from './SalesPipelineStepper';
 import { ProposalAccessCard } from './ProposalAccessCard';
 
 const SECTIONS: { key: string; label: string }[] = [
@@ -302,21 +302,28 @@ export function SalesChatPage() {
         <TabsContent value="chat">
           <Card className="flex h-[65vh] flex-col overflow-hidden">
             <CardContent className="flex flex-1 flex-col overflow-hidden p-0">
-              {/* Avance del brief: barra + qué sigue, calculado del draft (sin LLM). */}
-              <div className="flex items-center gap-3 border-b border-border px-6 py-2">
-                <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
-                  <div
-                    className="h-full rounded-full bg-primary transition-all"
-                    style={{ width: `${(briefFilled / briefOrder.length) * 100}%` }}
-                  />
-                </div>
-                <p className="shrink-0 text-xs text-muted-foreground">
-                  {briefNext ? (
-                    <>Brief {briefFilled}/{briefOrder.length} · sigue: <span className="font-medium text-foreground">{briefNext}</span></>
-                  ) : (
-                    <span className="font-medium text-primary">Brief completo — pásalo al TL desde Resumen</span>
-                  )}
-                </p>
+              {/* Header del chat: fase actual del pipeline (con loader) + fases
+                  restantes, siempre visible. La barra del brief solo durante la
+                  fase brief — después ya no aporta. */}
+              <div className="space-y-2 border-b border-border px-6 py-2">
+                <SalesPipelineMini status={opp.status} />
+                {opp.status === 'brief' && (
+                  <div className="flex items-center gap-3">
+                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-muted">
+                      <div
+                        className="h-full rounded-full bg-primary transition-all"
+                        style={{ width: `${(briefFilled / briefOrder.length) * 100}%` }}
+                      />
+                    </div>
+                    <p className="shrink-0 text-xs text-muted-foreground">
+                      {briefNext ? (
+                        <>Brief {briefFilled}/{briefOrder.length} · sigue: <span className="font-medium text-foreground">{briefNext}</span></>
+                      ) : (
+                        <span className="font-medium text-primary">Brief completo — pásalo al TL desde Resumen</span>
+                      )}
+                    </p>
+                  </div>
+                )}
               </div>
               <div className="relative flex-1 overflow-hidden">
               <div ref={messagesContainerRef} className="h-full space-y-5 overflow-y-auto px-6 py-6">

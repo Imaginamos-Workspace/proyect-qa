@@ -1,5 +1,5 @@
 import { type ReactNode } from 'react';
-import { Check, ExternalLink, X, Pause, Circle, AlertTriangle } from 'lucide-react';
+import { Check, ExternalLink, X, Pause, Circle, AlertTriangle, Loader2 } from 'lucide-react';
 import { useScrumBoard } from '@/hooks/use-scrum';
 import { useClient } from '@/hooks/use-dashboard';
 import { Card, CardContent } from '@/components/ui/card';
@@ -163,6 +163,50 @@ const SALES_STEP_LABEL: Record<(typeof SALES_PATH)[number], string> = {
   negociacion: 'Negociación',
   ganada: 'Ganada',
 };
+
+/** Versión COMPACTA del pipeline para el header de la conversación: la fase
+ *  actual con loader visible + puntos de las fases hechas/restantes, en una
+ *  sola línea — el vendedor ve cuánto proceso queda sin salir del chat.
+ *  Misma máquina de estados que el stepper grande (una sola fuente). */
+export function SalesPipelineMini({ status }: { status: string }) {
+  const isTerminalAlt = status === 'perdida' || status === 'congelada';
+  const idx = SALES_PATH.indexOf(status as (typeof SALES_PATH)[number]);
+  return (
+    <div className="flex items-center gap-1.5 overflow-x-auto">
+      {SALES_PATH.map((step, i) => {
+        const state: StepStatus =
+          isTerminalAlt || idx < 0 ? 'pending' : i < idx ? 'done' : i === idx ? 'current' : 'pending';
+        return (
+          <div key={step} className="flex items-center gap-1.5">
+            {i > 0 && <div className={cn('h-px w-3 sm:w-5', state === 'pending' ? 'bg-border' : 'bg-primary/60')} />}
+            {state === 'current' ? (
+              <span className="flex items-center gap-1.5 whitespace-nowrap rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+                <Loader2 className="h-3 w-3 animate-spin" /> {SALES_STEP_LABEL[step]}
+              </span>
+            ) : (
+              <span
+                title={SALES_STEP_LABEL[step]}
+                className={cn('h-2 w-2 shrink-0 rounded-full', state === 'done' ? 'bg-primary' : 'bg-muted-foreground/30')}
+              />
+            )}
+          </div>
+        );
+      })}
+      {isTerminalAlt ? (
+        <Badge variant={status === 'perdida' ? 'destructive' : 'secondary'} className="ml-1">
+          {status === 'perdida' ? 'Perdida' : 'Congelada'}
+        </Badge>
+      ) : idx >= 0 ? (
+        <span className="ml-auto whitespace-nowrap pl-2 text-[11px] text-muted-foreground">
+          Fase {idx + 1} de {SALES_PATH.length}
+        </span>
+      ) : (
+        // Etapa nueva del monorepo que no reconocemos — se muestra tal cual.
+        <Badge variant="secondary" className="ml-1">{status}</Badge>
+      )}
+    </div>
+  );
+}
 
 function TimelineItem({ step, isLast }: { step: TimelineStep; isLast: boolean }) {
   return (

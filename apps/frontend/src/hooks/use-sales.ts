@@ -30,6 +30,9 @@ export function useSalesOpportunity(id: string | null) {
     queryFn: () => api.get<SalesOpportunityDetail>(`/sales/opportunities/${id}`),
     enabled: !!id,
     staleTime: 10_000,
+    // El pipeline del header debe moverse SOLO cuando el TL avanza status.md
+    // (el discovery lo re-sincroniza) — sin esto había que recargar la página.
+    refetchInterval: 45_000,
   });
 }
 
