@@ -1370,7 +1370,9 @@ ${chatSummary.trim()}
   const asksHowToReply = /(qu[ée] le (respondo|digo|contesto)|c[óo]mo le (respondo|contesto)|qu[ée] respondo)/i.test(lastVendorMsg);
   const mentionsPrice = /(cu[áa]nto|precio|costo|costar|vale|valor|presupuesto|tarifa)/i.test(lastVendorMsg);
   const asksRecap = /(hazme|dame|haz|necesito|quiero|mu[ée]strame|arma)[^.]{0,40}(recap|resumen)/i.test(lastVendorMsg);
-  const asksClose = /(cierra|cerremos|cerrar|finaliza|finalicemos|termina)[^.]{0,30}(brief|proceso)|brief\s+(listo|cerrado)/i.test(lastVendorMsg);
+  const asksClose =
+    /(cierra|cerremos|cerrar|finaliza|finalicemos|termina)[^.]{0,30}(brief|proceso)|brief\s+(listo|cerrado)|(ci[ée]rralo|cerrarlo|puedes cerrar)/i.test(lastVendorMsg);
+  const asksNext = /(qu[ée] (paso )?sigue|siguiente paso|c[óo]mo (sigo|seguimos|continuamos)|pasemos a la (otra|siguiente)|qu[ée] falta)/i.test(lastVendorMsg);
   const saysAlreadyTold = /(ya (te )?lo (dije|di|mencion[eé]|pas[eé])|ya me (lo )?preguntaste|ya lo registraste|registraste antes|varias veces)/i.test(lastVendorMsg);
   const asksWhichTl = /(a (cu[áa]l|qu[ée]) tl|qu[ée] tl|cu[áa]l tl|qui[ée]n (es|ser[áa]|va a ser) el tl|qui[ée]n (contin[úu]a|sigue) (con|el))/i.test(lastVendorMsg);
   const directRequest = asksRecap
@@ -1379,11 +1381,13 @@ ${chatSummary.trim()}
       ? 'GUION DE PRECIO'
       : asksClose
         ? 'CIERRE DEL BRIEF'
-        : asksWhichTl
-          ? 'QUIÉN ES EL TL'
-          : saysAlreadyTold
-            ? 'DATO YA DICHO'
-            : null;
+        : asksNext
+          ? 'QUÉ SIGUE'
+          : asksWhichTl
+            ? 'QUIÉN ES EL TL'
+            : saysAlreadyTold
+              ? 'DATO YA DICHO'
+              : null;
   // Instrucción ESPECÍFICA por tipo — la certificación E2E mostró que la regla
   // en prosa genérica no alcanza con los modelos gratis; la marca del sistema sí.
   const directInstruction =
@@ -1391,7 +1395,11 @@ ${chatSummary.trim()}
       ? vacias.length
         ? `El vendedor quiere CERRAR el brief pero faltan secciones: ${vacias.join(', ')}. En el "reply": dilo sin rodeos, y PROPONE en ESTE MISMO turno un valor concreto y razonable para CADA sección faltante (una línea por sección), pidiendo UN solo OK para registrarlas todas juntas. Nada de preguntarlas de a una.`
         : 'El brief ya está COMPLETO. En el "reply": confírmalo y da la acción exacta — pestaña "Resumen" → botón "Pasar a TL". NO digas "procederemos" ni "avanzamos a la siguiente fase": tú NO puedes avanzar fases, esa acción la hace el vendedor con ese botón.'
-      : directRequest === 'DATO YA DICHO'
+      : directRequest === 'QUÉ SIGUE'
+        ? vacias.length
+          ? `El vendedor pregunta QUÉ SIGUE. Respuesta EXACTA (no lo adornes con más preguntas): falta(n) ${vacias.join(', ')} (${cubiertas.length}/${sectionState.length} cubiertas). Propón un valor concreto para cada faltante y pide UN OK para registrarlos. PROHIBIDO decir que el brief está completo o cerrado mientras esta lista no esté vacía.`
+          : 'El vendedor pregunta QUÉ SIGUE y el brief está COMPLETO. Respuesta exacta: revisar la pestaña "Resumen" y tocar el botón "Pasar a TL" — el cierre lo hace ÉL con ese botón; tú NO puedes avanzar de fase ni "pasar a la propuesta". No hagas más preguntas.'
+        : directRequest === 'DATO YA DICHO'
         ? 'El vendedor reclama que ese dato YA lo dio. BÚSCALO en el DRAFT y en el RESUMEN COMPACTADO y CONFÍRMALO citándolo textual ("Tienes razón: quedó registrado X en Y"). PROHIBIDO volver a pedirlo. Solo si de verdad no aparece en ninguno de los dos, discúlpate y pide únicamente lo que falta.'
         : directRequest === 'QUIÉN ES EL TL'
           ? `Según la metodología (rules/13 §Cerrar el brief), el TL lo asigna EL VENDEDOR al pasar el brief — en esta plataforma se elige junto al botón "Pasar a TL" en la pestaña "Resumen". TLs disponibles del equipo (datos REALES de team.json): ${tlOptions.map((t) => `@${t.login}${t.name ? ` (${t.name})` : ''}`).join(', ') || '(no se pudo leer team.json en este momento)'}. Responde exactamente eso. PROHIBIDO inventar mecanismos que no existen ("tablero de asignaciones", "coordinador de proyectos", "según disponibilidad").`
@@ -1469,7 +1477,7 @@ CÓMO RESPONDER (campo "reply") — SÉ PROPOSITIVO Y HAZ AVANZAR:
 CÓMO LLENAR EL DRAFT (campo "draft") — SÉ FIEL A LOS HECHOS, pero REGISTRÁ EL AVANCE:
 1. Los HECHOS del cliente van tal cual. Tus propuestas sueltas (que nadie aceptó todavía) NO van al draft. PERO si el VENDEDOR acepta una dirección ("sí, me parece"), registrala en la sección que corresponda MARCADA como pendiente de confirmación del cliente (ej. en integraciones: "A validar con el cliente: Shopify / WooCommerce / desarrollo a medida con integración al ERP"). Eso hace que la sección quede cubierta y NO la vuelvas a proponer — clave para no repetirte.
 2. Fusiona lo nuevo con lo que ya había (no borres campos salvo corrección explícita). Si viene una transcripción larga, extrae todo lo explícito, sección por sección.
-3. Cada asunción en "asunciones" necesita su "impactoSiFalla"; si no se dijo, proponé un valor razonable en el "reply" para que el vendedor lo confirme, pero no lo des por hecho en el draft.
+3. Cada asunción en "asunciones" necesita su "impactoSiFalla"; si no se dijo, proponé un valor razonable en el "reply" para que el vendedor lo confirme, pero no lo des por hecho en el draft. Si el vendedor dice EXPLÍCITAMENTE que no hay asunciones ("no hay suposiciones", "sin asunciones", "ninguna"), registra UNA asunción literal: { "texto": "Sin asunciones relevantes (confirmado por el vendedor)", "impactoSiFalla": "N/A" } — eso deja la sección CUBIERTA y el brief puede cerrar; no insistas pidiendo asunciones.
 4. El draft tiene SOLO estas secciones (no inventes otras — NO hay sección de "costos" ni "precios"): cliente, problema, outcomes, usuariosYFuncionalidades, limites, integraciones, asunciones, riesgos, sensacionVendedor. El presupuesto va dentro de "limites" y SOLO si el cliente lo mencionó (nunca un número inventado por vos).
 5. Escribe en español neutral, sin modismos ni regionalismos (nada de voseo: "tú", no "vos").
 
