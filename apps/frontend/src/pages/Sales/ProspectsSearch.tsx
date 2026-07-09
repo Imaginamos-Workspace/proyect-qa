@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { useCreateOpportunity, useProspectsStatus, useSearchProspects } from '@/hooks/use-sales';
+import { useCreateOpportunity, useEnrichProspect, useProspectsStatus, useSearchProspects } from '@/hooks/use-sales';
 import { useScrumMe } from '@/hooks/use-scrum';
 import { api } from '@/lib/api';
 import type { SalesProspect } from '@qa/shared-types';
@@ -59,6 +59,7 @@ export function ProspectsSearch() {
   const isVendedor = !!me?.roles.includes('vendedor');
   const { data: status, isLoading: statusLoading } = useProspectsStatus();
   const search = useSearchProspects();
+  const enrichProspect = useEnrichProspect();
   const createOpportunity = useCreateOpportunity();
 
   const [keywords, setKeywords] = useState('');
@@ -79,13 +80,15 @@ export function ProspectsSearch() {
 
   // Convierte un prospecto real de Apollo en una oportunidad y arranca el chat
   // con lo que ya sabemos — el vendedor no repite a mano lo que Apollo trae.
-  // Reusa el mismo endpoint de mensajes del chat normal (el LLM extrae esto al
-  // draft igual que cualquier otro texto).
-  const onProspectClick = async (p: SalesProspect) => {
+  // La búsqueda viene OFUSCADA (plan de Apollo): primero se enriquece con
+  // people/match (1 crédito → nombre real, email, LinkedIn) y con eso se
+  // crea la oportunidad. Reusa el mismo endpoint de mensajes del chat normal.
+  const onProspectClick = async (preview: SalesProspect) => {
     if (!isVendedor || loadingKey) return;
     setErrorMsg(null);
-    setLoadingKey(p.id);
+    setLoadingKey(preview.id);
     try {
+      const p = await enrichProspect.mutateAsync(preview.id).catch(() => preview);
       const cliente = slugify(p.company ?? p.name);
       const oportunidad = 'contacto-inicial';
       const opp = await createOpportunity.mutateAsync({ cliente, oportunidad });
@@ -104,8 +107,8 @@ export function ProspectsSearch() {
     } catch (err) {
       setErrorMsg(
         err instanceof Error
-          ? `No se pudo iniciar la conversación con ${p.company ?? p.name}: ${err.message}`
-          : `No se pudo iniciar la conversación con ${p.company ?? p.name}.`,
+          ? `No se pudo iniciar la conversación con ${preview.company ?? preview.name}: ${err.message}`
+          : `No se pudo iniciar la conversación con ${preview.company ?? preview.name}.`,
       );
     } finally {
       setLoadingKey(null);

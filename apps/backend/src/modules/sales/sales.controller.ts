@@ -3,7 +3,7 @@ import { SalesService } from './sales.service';
 import { ProspectsService } from './prospects.service';
 import { RolesService } from '../scrum/roles.service';
 import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard';
-import { CreateOpportunityDto, HandoffDto, MarkNotificationsSeenDto, SearchProspectsDto, SendMessageDto, TransferOpportunityDto } from './dto/sales.dto';
+import { CreateOpportunityDto, EnrichProspectDto, HandoffDto, MarkNotificationsSeenDto, SearchProspectsDto, SendMessageDto, TransferOpportunityDto } from './dto/sales.dto';
 
 interface RequestWithUser {
   user?: { user_metadata?: Record<string, unknown> };
@@ -53,6 +53,14 @@ export class SalesController {
   async searchProspects(@Body() body: SearchProspectsDto, @Req() req: RequestWithUser) {
     await this.requireSeller(req);
     return this.prospects.search(body);
+  }
+
+  /** Desbloquea el dato completo del prospecto (people/match — 1 crédito).
+   *  Solo vendedor; se dispara al elegir un prospecto, no en la búsqueda. */
+  @Post('prospects/enrich')
+  async enrichProspect(@Body() body: EnrichProspectDto, @Req() req: RequestWithUser) {
+    await this.requireSeller(req);
+    return this.prospects.enrich(body.id);
   }
 
   /** Lista de oportunidades — lectura abierta a cualquier autenticado, igual que el board. */

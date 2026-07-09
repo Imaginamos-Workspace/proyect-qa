@@ -8,6 +8,7 @@ import type {
   SalesOwnershipResult,
   SalesProposalAccess,
   SalesProposalMetrics,
+  SalesProspect,
   SalesProspectSearchInput,
   SalesProspectSearchResult,
   SalesProspectsStatus,
@@ -139,6 +140,14 @@ export function useSearchProspects() {
   return useMutation({
     mutationFn: (input: SalesProspectSearchInput) =>
       api.post<SalesProspectSearchResult>('/sales/prospects/search', input, 25_000),
+  });
+}
+
+/** Desbloquea el dato completo de un prospecto (people/match de Apollo —
+ *  consume 1 crédito). Se usa al elegir un prospecto para abrir oportunidad. */
+export function useEnrichProspect() {
+  return useMutation({
+    mutationFn: (id: string) => api.post<SalesProspect>('/sales/prospects/enrich', { id }, 25_000),
   });
 }
 

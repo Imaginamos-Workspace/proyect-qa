@@ -6,10 +6,15 @@ import type {
   SalesProspectsStatus,
 } from '../../shared-types/sales.types';
 
-// Búsqueda de personas de Apollo.io (People Search). La key va en el header
-// X-Api-Key y se configura SOLO como variable de entorno del backend
-// (APOLLO_API_KEY) — nunca viaja al frontend ni se persiste en ningún lado.
-const APOLLO_SEARCH_URL = 'https://api.apollo.io/api/v1/mixed_people/search';
+// Búsqueda de personas de Apollo.io. La key va en el header X-Api-Key y se
+// configura SOLO como variable de entorno del backend (APOLLO_API_KEY) —
+// nunca viaja al frontend ni se persiste en ningún lado.
+// OJO: `mixed_people/search` da 403 API_INACCESSIBLE en varios planes;
+// `api_search` es el habilitado (verificado con la key real 2026-07-09).
+// Devuelve la vista OFUSCADA (last_name_obfuscated, solo flags has_email/
+// has_*) — el dato completo sale de people/match (enrich, consume crédito).
+const APOLLO_SEARCH_URL = 'https://api.apollo.io/api/v1/mixed_people/api_search';
+const APOLLO_MATCH_URL = 'https://api.apollo.io/api/v1/people/match';
 const APOLLO_TIMEOUT_MS = 15_000;
 const PER_PAGE = 24;
 // Tope defensivo por filtro — Apollo acepta listas largas pero acá nadie
@@ -17,9 +22,13 @@ const PER_PAGE = 24;
 const MAX_FILTER_ITEMS = 10;
 
 // Shape mínimo que usamos de la respuesta de Apollo (el real trae mucho más).
+// api_search ofusca: first_name + last_name_obfuscated y flags has_*;
+// people/match (enrich) trae name/email/linkedin/location completos.
 interface ApolloPerson {
   id?: string;
   name?: string;
+  first_name?: string | null;
+  last_name_obfuscated?: string | null;
   title?: string | null;
   email?: string | null;
   city?: string | null;
@@ -32,6 +41,7 @@ interface ApolloPerson {
 interface ApolloSearchResponse {
   people?: ApolloPerson[];
   contacts?: ApolloPerson[];
+  total_entries?: number;
   pagination?: { page?: number; total_pages?: number; total_entries?: number };
 }
 
@@ -108,24 +118,57 @@ export class ProspectsService {
 
     const data = (await res.json().catch(() => ({}))) as ApolloSearchResponse;
     const people = [...(data.people ?? []), ...(data.contacts ?? [])];
+    const totalEntries = data.total_entries ?? data.pagination?.total_entries ?? people.length;
 
     return {
       prospects: people.map((p) => this.toProspect(p)).filter((p): p is SalesProspect => !!p),
       page: data.pagination?.page ?? Number(body.page),
-      totalPages: data.pagination?.total_pages ?? 1,
-      totalEntries: data.pagination?.total_entries ?? people.length,
+      totalPages: data.pagination?.total_pages ?? Math.max(1, Math.ceil(totalEntries / PER_PAGE)),
+      totalEntries,
     };
   }
 
+  /** Desbloquea el dato completo de un prospecto (people/match — consume 1
+   *  crédito del plan): nombre real, email, LinkedIn, ubicación e industria.
+   *  Se llama al elegir un prospecto, no en la búsqueda (economía de créditos). */
+  async enrich(personId: string): Promise<SalesProspect> {
+    const key = this.apiKey;
+    if (!key) throw new BadRequestException('Falta configurar APOLLO_API_KEY en el backend.');
+
+    let res: Response;
+    try {
+      res = await fetch(APOLLO_MATCH_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Api-Key': key },
+        body: JSON.stringify({ id: personId }),
+        signal: AbortSignal.timeout(APOLLO_TIMEOUT_MS),
+      });
+    } catch (err) {
+      this.logger.error(`Apollo match no respondió: ${(err as Error).message}`);
+      throw new ServiceUnavailableException('Apollo.io no respondió al enriquecer el prospecto. Intenta de nuevo.');
+    }
+    if (!res.ok) {
+      const detail = (await res.text().catch(() => '')).slice(0, 250);
+      this.logger.error(`Apollo match ${res.status}: ${detail}`);
+      throw new BadRequestException(`Apollo no pudo enriquecer el prospecto (${res.status}). ${detail}`);
+    }
+    const data = (await res.json().catch(() => ({}))) as { person?: ApolloPerson };
+    const prospect = data.person ? this.toProspect(data.person) : null;
+    if (!prospect) throw new BadRequestException('Apollo no devolvió datos para ese prospecto.');
+    return prospect;
+  }
+
   private toProspect(p: ApolloPerson): SalesProspect | null {
-    if (!p?.id || !p?.name) return null;
+    // api_search ofusca el apellido ("To***n"); match trae `name` completo.
+    const name = p?.name || [p?.first_name, p?.last_name_obfuscated].filter(Boolean).join(' ');
+    if (!p?.id || !name) return null;
     const location = [p.city, p.state, p.country].filter(Boolean).join(', ') || null;
     // Apollo manda placeholders tipo "email_not_unlocked@domain.com" cuando el
     // email requiere crédito de enriquecimiento — eso no es un email real.
     const email = p.email && !p.email.includes('not_unlocked') ? p.email : null;
     return {
       id: p.id,
-      name: p.name,
+      name,
       title: p.title ?? null,
       company: p.organization?.name ?? null,
       companyWebsite: p.organization?.website_url ?? null,

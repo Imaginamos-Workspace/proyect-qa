@@ -39,6 +39,12 @@ export class SearchProspectsDto {
   page?: number;
 }
 
+/** Enriquecer un prospecto de Apollo (people/match — consume 1 crédito). */
+export class EnrichProspectDto {
+  @IsString() @IsNotEmpty() @MaxLength(64)
+  id: string;
+}
+
 /** Handoff al TL — el vendedor asigna el Owner TL (rules/13 §Cerrar el brief). */
 export class HandoffDto {
   @IsOptional() @IsString() @MaxLength(80)
