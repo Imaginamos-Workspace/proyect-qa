@@ -28,6 +28,7 @@ import {
   useDeleteOpportunity,
   useClaimOpportunity,
   useTransferOpportunity,
+  useTls,
   useVendedores,
 } from '@/hooks/use-sales';
 import { useScrumMe } from '@/hooks/use-scrum';
@@ -84,12 +85,14 @@ export function SalesChatPage() {
   const claim = useClaimOpportunity(id ?? '');
   const transfer = useTransferOpportunity(id ?? '');
   const { data: vendedores } = useVendedores();
+  const { data: tls } = useTls();
 
   const [draftMessage, setDraftMessage] = useState('');
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [failedMessage, setFailedMessage] = useState<string | null>(null);
   const [elapsedSec, setElapsedSec] = useState(0);
   const [transferTo, setTransferTo] = useState('');
+  const [handoffTl, setHandoffTl] = useState('');
   const [showScrollDown, setShowScrollDown] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -524,13 +527,36 @@ export function SalesChatPage() {
                     <ExternalLink className="h-3 w-3" /> Ver en GitHub
                   </a>
                 )}
+                {/* rules/13 §Cerrar el brief: el VENDEDOR asigna el Owner TL.
+                    La lista sale de team.json (roles reales, fail-closed). */}
+                {opp.status === 'brief' && (
+                  <select
+                    value={handoffTl}
+                    onChange={(e) => setHandoffTl(e.target.value)}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                  >
+                    <option value="">¿A cuál TL? (elige para asignarlo)</option>
+                    {(tls ?? []).map((t) => (
+                      <option key={t.login} value={t.login}>
+                        {t.name ? `${t.name} (@${t.login})` : `@${t.login}`}
+                      </option>
+                    ))}
+                  </select>
+                )}
                 <Button
                   className="w-full"
-                  onClick={() => handoff.mutate()}
-                  disabled={handoff.isPending || opp.status !== 'brief'}
+                  onClick={() => handoff.mutate(handoffTl || undefined)}
+                  disabled={handoff.isPending || opp.status !== 'brief' || !handoffTl}
+                  title={!handoffTl && opp.status === 'brief' ? 'Elige primero el TL que continúa (rules/13)' : undefined}
                 >
                   <CheckCircle2 className="mr-2 h-4 w-4" />
-                  {opp.status !== 'brief' ? 'Ya está con el TL' : handoff.isPending ? 'Pasando…' : 'Pasar a TL'}
+                  {opp.status !== 'brief'
+                    ? 'Ya está con el TL'
+                    : handoff.isPending
+                      ? 'Pasando…'
+                      : handoffTl
+                        ? `Pasar a TL (@${handoffTl})`
+                        : 'Pasar a TL'}
                 </Button>
                 {(syncBrief.isError || handoff.isError) && (
                   <p className="text-xs text-destructive">

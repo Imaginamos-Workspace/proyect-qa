@@ -245,11 +245,22 @@ export function useSyncBrief(id: string) {
 export function useHandoffToTl(id: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => api.post<SalesSyncResult>(`/sales/opportunities/${id}/handoff`),
+    // El vendedor elige a qué TL pasa el brief (rules/13: él asigna Owner TL).
+    mutationFn: (tlLogin?: string) =>
+      api.post<SalesSyncResult>(`/sales/opportunities/${id}/handoff`, tlLogin ? { tlLogin } : undefined),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['sales', 'opportunities', id] });
       qc.invalidateQueries({ queryKey: ['sales', 'opportunities'] });
     },
+  });
+}
+
+/** Team Leads elegibles para el handoff (team.json). */
+export function useTls() {
+  return useQuery({
+    queryKey: ['sales', 'tls'],
+    queryFn: () => api.get<SalesVendedor[]>('/sales/tls'),
+    staleTime: 5 * 60_000,
   });
 }
 

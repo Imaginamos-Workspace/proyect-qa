@@ -4,6 +4,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../../config/supabase.module';
 import { GeminiProvider } from '../ai/providers/gemini.provider';
 import { SalesRagService } from './sales-rag.service';
+import { RolesService } from '../scrum/roles.service';
 import type {
   SalesBriefDraft,
   SalesMessage,
@@ -112,6 +113,7 @@ export class SalesService {
     @Inject(SUPABASE_CLIENT) private readonly supabase: SupabaseClient,
     private readonly gemini: GeminiProvider,
     private readonly rag: SalesRagService,
+    private readonly roles: RolesService,
     config: ConfigService,
   ) {
     this.writeToken = process.env.GITHUB_WRITE_TOKEN || config.get<string>('GITHUB_TOKEN');
@@ -547,9 +549,12 @@ export class SalesService {
       // 2. RAG: recuperar SOLO los fragmentos relevantes al mensaje actual. Con
       //    deadline corto — si el embedding del RAG se cuelga, NO puede demorar
       //    la respuesta (best-effort → sin contexto, sigue con draft + ventana).
-      const [context, methodology] = await Promise.all([
+      const [context, methodology, tlOptions] = await Promise.all([
         withTimeout(this.rag.retrieve(content, opp.cliente), RAG_RETRIEVE_DEADLINE_MS).catch(() => [] as string[]),
         this.getMethodologyText().catch(() => ''),
+        // TLs reales de team.json (cacheado) — para que "¿a cuál TL?" se
+        // responda con datos reales y no con mecanismos inventados.
+        this.roles.listTls().catch(() => [] as { login: string; name: string | null }[]),
       ]);
 
       // 3. Llamar al LLM CON DEADLINE DURO: si tarda más de LLM_DEADLINE_MS,
@@ -572,7 +577,7 @@ export class SalesService {
             .map((m) => m.content)
             .join('\n---\n')
             .slice(0, 2500);
-      const prompt = buildBriefPrompt(opp.draft, history, context, methodology, opp.status, olderVendorNotes, chatSummary);
+      const prompt = buildBriefPrompt(opp.draft, history, context, methodology, opp.status, olderVendorNotes, chatSummary, tlOptions);
 
       const raw = await withTimeout(
         this.gemini.generateRaw({
@@ -804,21 +809,36 @@ export class SalesService {
     return { url: `https://github.com/${OWNER}/${REPO}/blob/main/${path}`, syncedAt };
   }
 
-  async handoff(id: string, requesterLogin: string | null): Promise<SalesSyncResult> {
+  async handoff(id: string, requesterLogin: string | null, tlLogin?: string): Promise<SalesSyncResult> {
+    // rules/13 §Cerrar el brief: al pasar a propuesta-en-armado, EL VENDEDOR
+    // asigna el Owner TL en status.md. Validamos contra los TL reales de
+    // team.json — no se puede asignar a alguien que no es TL.
+    if (tlLogin) {
+      const tls = await this.roles.listTls().catch(() => []);
+      if (!tls.some((t) => t.login.toLowerCase() === tlLogin.toLowerCase())) {
+        throw new BadRequestException(`@${tlLogin} no es un TL activo de team.json — elige uno de la lista.`);
+      }
+    }
+
     const result = await this.syncBrief(id, requesterLogin); // ya verifica dueño
     const { opp } = await this.loadOpportunity(id);
 
     const statusPath = `sales/${opp.cliente}/${opp.oportunidad}/status.md`;
     const current = await this.readFileFromRepo(statusPath);
     if (current) {
-      const updated = current.content.replace(
+      let updated = current.content.replace(
         /\*\*Etapa actual:\*\*\s*\S+/,
         '**Etapa actual:** propuesta-en-armado',
       );
+      if (tlLogin) {
+        updated = /\*\*Owner TL:\*\*/.test(updated)
+          ? updated.replace(/\*\*Owner TL:\*\*.*/, `**Owner TL:** @${tlLogin}`)
+          : updated.replace(/(\*\*Owner vendedor:\*\*.*)/, `$1\n**Owner TL:** @${tlLogin}`);
+      }
       await this.writeFileToRepo(
         statusPath,
         updated,
-        `sales(${opp.cliente}): ${opp.oportunidad} pasa a propuesta-en-armado`,
+        `sales(${opp.cliente}): ${opp.oportunidad} pasa a propuesta-en-armado${tlLogin ? ` (Owner TL @${tlLogin})` : ''}`,
         current.sha,
       );
     }
@@ -1261,6 +1281,7 @@ function buildBriefPrompt(
   status = '',
   olderVendorNotes = '',
   chatSummary = '',
+  tlOptions: { login: string; name: string | null }[] = [],
 ): string {
   // Resumen compactado de la conversación vieja (auto-compact) — reemplaza a
   // los mensajes crudos fuera de la ventana. ~1500 chars fijos por prompt.
@@ -1314,15 +1335,18 @@ ${chatSummary.trim()}
   const asksRecap = /(hazme|dame|haz|necesito|quiero|mu[ée]strame|arma)[^.]{0,40}(recap|resumen)/i.test(lastVendorMsg);
   const asksClose = /(cierra|cerremos|cerrar|finaliza|finalicemos|termina)[^.]{0,30}(brief|proceso)|brief\s+(listo|cerrado)/i.test(lastVendorMsg);
   const saysAlreadyTold = /(ya (te )?lo (dije|di|mencion[eé]|pas[eé])|ya me (lo )?preguntaste|ya lo registraste|registraste antes|varias veces)/i.test(lastVendorMsg);
+  const asksWhichTl = /(a (cu[áa]l|qu[ée]) tl|qu[ée] tl|cu[áa]l tl|qui[ée]n (es|ser[áa]|va a ser) el tl|qui[ée]n (contin[úu]a|sigue) (con|el))/i.test(lastVendorMsg);
   const directRequest = asksRecap
     ? 'RECAP'
     : asksHowToReply && mentionsPrice
       ? 'GUION DE PRECIO'
       : asksClose
         ? 'CIERRE DEL BRIEF'
-        : saysAlreadyTold
-          ? 'DATO YA DICHO'
-          : null;
+        : asksWhichTl
+          ? 'QUIÉN ES EL TL'
+          : saysAlreadyTold
+            ? 'DATO YA DICHO'
+            : null;
   // Instrucción ESPECÍFICA por tipo — la certificación E2E mostró que la regla
   // en prosa genérica no alcanza con los modelos gratis; la marca del sistema sí.
   const directInstruction =
@@ -1332,7 +1356,9 @@ ${chatSummary.trim()}
         : 'El brief ya está COMPLETO. En el "reply": confírmalo y da la acción exacta — pestaña "Resumen" → botón "Pasar a TL". NO digas "procederemos" ni "avanzamos a la siguiente fase": tú NO puedes avanzar fases, esa acción la hace el vendedor con ese botón.'
       : directRequest === 'DATO YA DICHO'
         ? 'El vendedor reclama que ese dato YA lo dio. BÚSCALO en el DRAFT y en el RESUMEN COMPACTADO y CONFÍRMALO citándolo textual ("Tienes razón: quedó registrado X en Y"). PROHIBIDO volver a pedirlo. Solo si de verdad no aparece en ninguno de los dos, discúlpate y pide únicamente lo que falta.'
-        : `Aplica la regla correspondiente de PEDIDOS DIRECTOS DEL VENDEDOR.`;
+        : directRequest === 'QUIÉN ES EL TL'
+          ? `Según la metodología (rules/13 §Cerrar el brief), el TL lo asigna EL VENDEDOR al pasar el brief — en esta plataforma se elige junto al botón "Pasar a TL" en la pestaña "Resumen". TLs disponibles del equipo (datos REALES de team.json): ${tlOptions.map((t) => `@${t.login}${t.name ? ` (${t.name})` : ''}`).join(', ') || '(no se pudo leer team.json en este momento)'}. Responde exactamente eso. PROHIBIDO inventar mecanismos que no existen ("tablero de asignaciones", "coordinador de proyectos", "según disponibilidad").`
+          : `Aplica la regla correspondiente de PEDIDOS DIRECTOS DEL VENDEDOR.`;
   const directRequestBlock = directRequest
     ? `
 🚩 DETECTADO POR EL SISTEMA (determinístico — OBEDECE esto por encima del ESTADO DEL BRIEF y del protocolo): el último mensaje del vendedor es un pedido directo de tipo ${directRequest}. ${directInstruction} En este turno NO cierres con pregunta de sección.${directRequest === 'CIERRE DEL BRIEF' && vacias.length ? '' : ' El draft va igual, sin cambios.'}

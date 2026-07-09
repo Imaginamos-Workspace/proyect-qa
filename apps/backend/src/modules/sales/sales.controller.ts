@@ -3,7 +3,7 @@ import { SalesService } from './sales.service';
 import { ProspectsService } from './prospects.service';
 import { RolesService } from '../scrum/roles.service';
 import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard';
-import { CreateOpportunityDto, MarkNotificationsSeenDto, SearchProspectsDto, SendMessageDto, TransferOpportunityDto } from './dto/sales.dto';
+import { CreateOpportunityDto, HandoffDto, MarkNotificationsSeenDto, SearchProspectsDto, SendMessageDto, TransferOpportunityDto } from './dto/sales.dto';
 
 interface RequestWithUser {
   user?: { user_metadata?: Record<string, unknown> };
@@ -128,11 +128,18 @@ export class SalesController {
     return this.sales.syncBrief(id, login);
   }
 
-  /** Sincroniza el brief y pasa status.md a "propuesta-en-armado" (handoff al TL). Solo el dueño. */
+  /** Sincroniza el brief, pasa status.md a "propuesta-en-armado" y asigna el
+   *  Owner TL elegido por el vendedor (rules/13 §Cerrar el brief). Solo el dueño. */
   @Post('opportunities/:id/handoff')
-  async handoff(@Param('id') id: string, @Req() req: RequestWithUser) {
+  async handoff(@Param('id') id: string, @Body() body: HandoffDto, @Req() req: RequestWithUser) {
     const login = await this.requireSeller(req);
-    return this.sales.handoff(id, login);
+    return this.sales.handoff(id, login, body.tlLogin);
+  }
+
+  /** Team Leads elegibles para recibir el handoff (team.json). */
+  @Get('tls')
+  tls() {
+    return this.roles.listTls();
   }
 
   /** Reclama un proceso sin dueño ('desconocido'/legacy). Solo vendedor. */

@@ -39,6 +39,13 @@ export class SearchProspectsDto {
   page?: number;
 }
 
+/** Handoff al TL — el vendedor asigna el Owner TL (rules/13 §Cerrar el brief). */
+export class HandoffDto {
+  @IsOptional() @IsString() @MaxLength(80)
+  @Matches(/^[\w-]+$/, { message: 'tlLogin debe ser un login de GitHub válido.' })
+  tlLogin?: string;
+}
+
 /** Marcar notificaciones como vistas — sin ids marca TODAS las del que consulta. */
 export class MarkNotificationsSeenDto {
   @IsOptional() @IsArray() @IsString({ each: true }) @MaxLength(64, { each: true })

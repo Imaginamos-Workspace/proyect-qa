@@ -120,6 +120,18 @@ export class RolesService {
     return out.sort((a, b) => (a.name ?? a.login).localeCompare(b.name ?? b.login));
   }
 
+  /** Team Leads activos de team.json — para que el VENDEDOR asigne el Owner TL
+   *  al pasar el brief (rules/13 §Cerrar el brief: la asignación es suya). */
+  async listTls(): Promise<{ login: string; name: string | null }[]> {
+    const team = await this.load();
+    const out: { login: string; name: string | null }[] = [];
+    for (const m of team.values()) {
+      if (m.active === false) continue;
+      if ((m.allowed_roles ?? []).includes('tl')) out.push({ login: m.github_user, name: m.name ?? null });
+    }
+    return out.sort((a, b) => (a.name ?? a.login).localeCompare(b.name ?? b.login));
+  }
+
   private async load(): Promise<Map<string, TeamMember>> {
     if (this.cache && Date.now() - this.cache.ts < CACHE_TTL_MS) return this.cache.byUser;
     const byUser = new Map<string, TeamMember>();
