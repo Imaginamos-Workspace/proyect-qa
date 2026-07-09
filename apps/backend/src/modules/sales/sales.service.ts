@@ -601,6 +601,15 @@ export class SalesService {
       // Fusión defensiva: lo ya registrado NUNCA se pierde aunque el modelo
       // devuelva un draft parcial (causa raíz de re-preguntar el presupuesto).
       const mergedDraft = mergeDrafts(opp.draft, parsed.draft);
+      // "No hay asunciones" explícito → la sección queda cubierta DE VERDAD,
+      // registrado por el SERVIDOR (la instrucción en prosa no alcanzaba: el
+      // modelo la ignoraba y el brief quedaba en 8/9 para siempre, caso real).
+      if (
+        !(mergedDraft.asunciones ?? []).length &&
+        /(no (hay|tengo|tenemos)( m[áa]s)?|sin|ninguna)\s*(suposici|asunci)/i.test(content)
+      ) {
+        mergedDraft.asunciones = [{ texto: 'Sin asunciones relevantes (confirmado por el vendedor)', impactoSiFalla: 'N/A' }];
+      }
 
       // 4. Persistir la respuesta + draft actualizado.
       const nowReply = new Date().toISOString();
