@@ -4,24 +4,47 @@ import { supabase } from './supabase';
 // stray \n appended by Vercel when saved with quotes
 const API_URL = (import.meta.env.VITE_API_URL || '/api').trim().replace(/\/+$/, '');
 
-// getSession() puede COLGARSE en móvil: al volver del background con el token
-// vencido, el refresh de supabase-js se queda esperando indefinidamente
-// (deadlock conocido). Como este await corre ANTES del fetch, el AbortSignal
-// del request nunca llegaba a existir y la UI quedaba en "Pensando…" infinito
-// (caso real: 121s y contando). Tope propio → error legible y reintentable.
-const SESSION_READ_TIMEOUT_MS = 8_000;
+// getSession() puede COLGARSE: al volver del background con el token vencido
+// el refresh se queda esperando (deadlock conocido), y con varias pestañas
+// abiertas el navigator.lock de supabase-js deja a las demás en cola — con
+// buena conexión igual (caso real: el panel quedaba en bucle con "No se pudo
+// renovar la sesión"). Tope corto + FALLBACK al token cacheado en
+// localStorage, que no necesita el candado: si aún no venció, se usa directo.
+const SESSION_READ_TIMEOUT_MS = 4_000;
+
+/** Token de acceso cacheado por supabase-js (sb-<ref>-auth-token). Se usa tal
+ *  cual si le quedan >30s de vida — el backend lo valida igual. */
+function cachedAccessToken(): string | null {
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key || !/^sb-.*-auth-token$/.test(key)) continue;
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as { access_token?: string; expires_at?: number };
+      if (parsed.access_token && (!parsed.expires_at || parsed.expires_at * 1000 - Date.now() > 30_000)) {
+        return parsed.access_token;
+      }
+    }
+  } catch {
+    // localStorage inaccesible o shape inesperado → sin fallback
+  }
+  return null;
+}
 
 async function getAuthHeaders(): Promise<Record<string, string>> {
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const sessionTimeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(
-      () => reject(new Error('No se pudo renovar la sesión (conexión inestable). Intenta de nuevo o recarga la página.')),
-      SESSION_READ_TIMEOUT_MS,
-    );
+  const sessionTimeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), SESSION_READ_TIMEOUT_MS);
   });
   try {
-    const { data } = await Promise.race([supabase.auth.getSession(), sessionTimeout]);
-    const token = data.session?.access_token;
+    const result = await Promise.race([supabase.auth.getSession(), sessionTimeout]);
+    const token = result?.data.session?.access_token ?? cachedAccessToken();
+    if (!token && result === null) {
+      // Ni getSession respondió ni hay token vigente en caché → la sesión
+      // murió de verdad; reintentarlo no la revive.
+      throw new Error('Tu sesión expiró. Recarga la página y, si sigue igual, cierra sesión y vuelve a entrar.');
+    }
     return {
       'Content-Type': 'application/json',
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
