@@ -239,6 +239,36 @@ export class ProspectsService {
     return this.toSaved(data as Record<string, unknown>);
   }
 
+  /** Desbloquea el dato completo de un prospecto YA guardado (los de la
+   *  corrida semanal entran con la vista previa, sin email). Enriquece con
+   *  people/match (1 crédito) y persiste SOLO los campos de Apollo — el
+   *  teléfono/notas/estado que el vendedor ya nutrió no se tocan. */
+  async enrichSaved(id: string, vendedorLogin: string): Promise<SavedProspect> {
+    const current = await this.assertOwner(id, vendedorLogin);
+    if (current.apolloId.startsWith('ref-')) {
+      throw new BadRequestException('Este prospecto es un referido — no viene de Apollo, nutre sus datos a mano.');
+    }
+    const full = await this.enrich(current.apolloId);
+    const { data, error } = await this.supabase
+      .from(PROSPECTS_TABLE)
+      .update({
+        name: full.name,
+        title: full.title,
+        company: full.company ?? current.company,
+        company_website: full.companyWebsite,
+        industry: full.industry ?? current.industry,
+        location: full.location,
+        linkedin_url: full.linkedinUrl,
+        email: full.email ?? current.email,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', id)
+      .select('*')
+      .single();
+    if (error) throw new BadRequestException(`No se pudo actualizar el prospecto: ${error.message}`);
+    return this.toSaved(data as Record<string, unknown>);
+  }
+
   /** Pipeline del vendedor. Fail-soft sin migración 026 → []. */
   async listSaved(vendedorLogin: string | null): Promise<SavedProspect[]> {
     if (!vendedorLogin) return [];

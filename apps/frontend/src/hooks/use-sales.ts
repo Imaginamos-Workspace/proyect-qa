@@ -183,6 +183,16 @@ export function useUpdateProspect() {
   });
 }
 
+/** Desbloquea el dato completo de un prospecto guardado (1 crédito Apollo) —
+ *  para los que entraron por la corrida semanal con solo la vista previa. */
+export function useEnrichSavedProspect() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.post<SavedProspect>(`/sales/prospects/saved/${id}/enrich`, undefined, 25_000),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['sales', 'prospects', 'saved'] }),
+  });
+}
+
 export function useProspectInteractions(id: string | null) {
   return useQuery({
     queryKey: ['sales', 'prospects', 'interactions', id],

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
-import { Building2, ExternalLink, Linkedin, Loader2, Mail, Phone, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
+import { Building2, ExternalLink, Linkedin, Loader2, LockOpen, Mail, Phone, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -9,6 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {
   useAddInteraction,
   useCreateOpportunity,
+  useEnrichSavedProspect,
   useProspectInteractions,
   useSavedProspects,
   useUpdateProspect,
@@ -64,6 +65,7 @@ function ProspectDetail({ prospect, onClose }: { prospect: SavedProspect; onClos
   const { data: interactions, isLoading: loadingLog } = useProspectInteractions(prospect.id);
   const addInteraction = useAddInteraction();
   const updateProspect = useUpdateProspect();
+  const enrichSaved = useEnrichSavedProspect();
   const createOpportunity = useCreateOpportunity();
 
   const [tipo, setTipo] = useState('llamada');
@@ -158,6 +160,20 @@ function ProspectDetail({ prospect, onClose }: { prospect: SavedProspect; onClos
         )}
         {prospect.nextAttemptAt && (
           <Badge variant="warning" className="gap-1"><RotateCcw className="h-3 w-3" /> Reintentar {fmtDate(prospect.nextAttemptAt)}</Badge>
+        )}
+        {/* Los de la corrida semanal entran con la vista previa (sin email) —
+            desbloquear trae el dato completo de Apollo (1 crédito). */}
+        {!prospect.apolloId.startsWith('ref-') && (!prospect.email || !prospect.linkedinUrl) && (
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={enrichSaved.isPending}
+            onClick={() => enrichSaved.mutate(prospect.id, { onError: (e) => setErrorMsg((e as Error).message) })}
+          >
+            {enrichSaved.isPending
+              ? <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Desbloqueando…</>
+              : <><LockOpen className="mr-1.5 h-3.5 w-3.5" /> Desbloquear dato (1 crédito)</>}
+          </Button>
         )}
       </div>
 

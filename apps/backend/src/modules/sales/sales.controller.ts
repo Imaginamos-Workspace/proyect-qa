@@ -98,6 +98,14 @@ export class SalesController {
     });
   }
 
+  /** Desbloquea el dato completo de un prospecto guardado (1 crédito Apollo). */
+  @Post('prospects/saved/:id/enrich')
+  async enrichSaved(@Param('id') id: string, @Req() req: RequestWithUser) {
+    const login = await this.requireSeller(req);
+    if (!login) throw new ForbiddenException('No se pudo identificar tu usuario.');
+    return this.prospects.enrichSaved(id, login);
+  }
+
   /** Registra un intento de contacto (llamada/correo/WhatsApp/LinkedIn). */
   @Post('prospects/saved/:id/interactions')
   async addInteraction(@Param('id') id: string, @Body() body: AddInteractionDto, @Req() req: RequestWithUser) {
