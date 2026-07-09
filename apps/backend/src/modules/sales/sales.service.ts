@@ -1037,20 +1037,35 @@ export class SalesService {
     today: string,
   ): Promise<void> {
     const templateFiles = await this.listRepoDir('sales/templates', true);
-    // En paralelo: son ~11 archivos independientes entre sí (2 llamadas a
-    // GitHub cada uno). Secuencial se acerca/supera el timeout de la función
-    // serverless (Vercel Hobby); en paralelo el wall-clock es el del archivo
-    // más lento, no la suma de todos.
-    await Promise.all(
+    // LECTURAS de templates en paralelo (no commitean — sin carrera), pero
+    // ESCRITURAS SECUENCIALES: cada PUT de la Contents API es un commit que
+    // mueve el head de la rama — en paralelo chocan los SHAs (409/422) y el
+    // scaffold quedaba PARCIAL (caso real: carpetas con 1 de ~11 archivos y
+    // SIN status.md → la oportunidad era invisible para el discovery). La
+    // función tiene maxDuration=60s (vercel.json) — la secuencia (~10-15s)
+    // entra sobrada. status.md va PRIMERO: es el archivo del que dependen
+    // discovery, re-sync y notificaciones; si algo se corta, que sea lo demás.
+    const prepared = await Promise.all(
       templateFiles.map(async ({ path: file }) => {
         const existing = await this.readFileFromRepoRaw(file);
         const destPath = file.replace(/^sales\/templates\//, `sales/${cliente}/${oportunidad}/`);
         const substituted = existing.isText
           ? substitutePlaceholders(existing.text!, { cliente, oportunidad, vendedorLogin, today })
           : null;
-        await this.writeBinaryOrTextToRepo(destPath, existing, substituted);
+        return { destPath, existing, substituted };
       }),
     );
+    prepared.sort(
+      (a, b) => Number(b.destPath.endsWith('status.md')) - Number(a.destPath.endsWith('status.md')),
+    );
+    for (const { destPath, existing, substituted } of prepared) {
+      try {
+        await this.writeBinaryOrTextToRepo(destPath, existing, substituted);
+      } catch {
+        // Un reintento: pudo chocar con un commit concurrente de otro flujo.
+        await this.writeBinaryOrTextToRepo(destPath, existing, substituted);
+      }
+    }
   }
 
   /** Borra la oportunidad de forma completa: los archivos reales en el
