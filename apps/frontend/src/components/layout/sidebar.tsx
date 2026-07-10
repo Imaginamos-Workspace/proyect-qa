@@ -15,6 +15,7 @@ import {
   X,
 } from 'lucide-react';
 import { useAuthStore } from '@/stores/auth.store';
+import { useAccess } from '@/hooks/use-access';
 import { cn } from '@/lib/utils';
 import { useTranslation } from 'react-i18next';
 import { CatEyeGlasses } from '@/components/icons/cat-eye-glasses';
@@ -74,6 +75,9 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
   const { t } = useTranslation();
   const signOut = useAuthStore((s) => s.signOut);
   const user = useAuthStore((s) => s.user);
+  const { isSalesOnly } = useAccess();
+  // Un vendedor sin rol interno solo ve el grupo de Ventas.
+  const groups = isSalesOnly ? navGroups.filter((g) => g.labelKey === 'nav.groupSales') : navGroups;
 
   return (
     <>
@@ -110,7 +114,7 @@ export function Sidebar({ mobileOpen = false, onClose }: SidebarProps) {
         </div>
 
         <nav className="flex-1 space-y-6 overflow-y-auto px-4 py-2">
-          {navGroups.map((group) => (
+          {groups.map((group) => (
             <div key={group.labelKey}>
               <span className="px-3 text-[11px] font-semibold uppercase tracking-wider text-white/40">
                 {t(group.labelKey)}
