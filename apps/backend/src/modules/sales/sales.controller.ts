@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, ForbiddenException, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { SalesService } from './sales.service';
 import { ProspectsService } from './prospects.service';
+import { RateLimitService } from './rate-limit.service';
 import { RolesService } from '../scrum/roles.service';
 import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard';
 import {
@@ -41,6 +42,7 @@ export class SalesController {
     private readonly sales: SalesService,
     private readonly prospects: ProspectsService,
     private readonly roles: RolesService,
+    private readonly rateLimit: RateLimitService,
   ) {}
 
   /** Notificaciones del pipeline del que consulta (el TL publicó la propuesta,
@@ -67,6 +69,7 @@ export class SalesController {
   @Post('prospects/search')
   async searchProspects(@Body() body: SearchProspectsDto, @Req() req: RequestWithUser) {
     const login = await this.requireSeller(req);
+    await this.rateLimit.enforce(login, 'apollo-search', 30, 5 * 60_000);
     return this.prospects.search(body, login);
   }
 
@@ -75,6 +78,8 @@ export class SalesController {
   async saveProspect(@Body() body: SaveProspectDto, @Req() req: RequestWithUser) {
     const login = await this.requireSeller(req);
     if (!login) throw new ForbiddenException('No se pudo identificar tu usuario.');
+    // Guardar enriquece (1 crédito Apollo) — mismo cubo que enrich.
+    await this.rateLimit.enforce(login, 'apollo-enrich', 60, 60 * 60_000);
     return this.prospects.saveProspect(body.apolloId, login);
   }
 
@@ -101,6 +106,7 @@ export class SalesController {
   async enrichSaved(@Param('id') id: string, @Req() req: RequestWithUser) {
     const login = await this.requireSeller(req);
     if (!login) throw new ForbiddenException('No se pudo identificar tu usuario.');
+    await this.rateLimit.enforce(login, 'apollo-enrich', 60, 60 * 60_000);
     return this.prospects.enrichSaved(id, login);
   }
 
@@ -149,7 +155,8 @@ export class SalesController {
    *  Solo vendedor; se dispara al elegir un prospecto, no en la búsqueda. */
   @Post('prospects/enrich')
   async enrichProspect(@Body() body: EnrichProspectDto, @Req() req: RequestWithUser) {
-    await this.requireSeller(req);
+    const login = await this.requireSeller(req);
+    await this.rateLimit.enforce(login, 'apollo-enrich', 60, 60 * 60_000);
     return this.prospects.enrich(body.id);
   }
 
@@ -216,6 +223,9 @@ export class SalesController {
   @Post('opportunities/:id/messages')
   async sendMessage(@Param('id') id: string, @Body() body: SendMessageDto, @Req() req: RequestWithUser) {
     const login = await this.requireSeller(req);
+    // Cada mensaje dispara una cascada de LLM — 40/5min protege la cuota sin
+    // molestar el uso humano (1 cada ~7s de tope).
+    await this.rateLimit.enforce(login, 'llm-message', 40, 5 * 60_000);
     return this.sales.sendMessage(id, body.content, login);
   }
 
