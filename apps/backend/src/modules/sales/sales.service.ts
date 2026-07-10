@@ -26,6 +26,9 @@ const REPO = 'qa-automation-monorepo';
 const OPPORTUNITIES_TABLE = 'sales_opportunities';
 const MESSAGES_TABLE = 'sales_messages';
 const NOTIFICATIONS_TABLE = 'sales_notifications';
+/** Notificación pegajosa "te toca continuar con la propuesta" — no se marca
+ *  vista al abrir la campana; se resuelve sola al publicarse la propuesta. */
+const MARGINS_PENDING_TYPE = 'proposal:margins-pending';
 // Últimos N turnos que entran al prompt — suficiente contexto conversacional
 // sin inflar tokens en cada mensaje (una sesión de brief son ~10-20 turnos).
 const HISTORY_WINDOW = 12;
@@ -209,9 +212,9 @@ export class SalesService {
           // El TL NO cambia el status al terminar de armar los tiers (queda en
           // propuesta-en-armado) — su señal es el commit de propuestas-3-tier.yml.
           // Sin esto el vendedor no se enteraba de que le toca definir márgenes.
-          // Notificamos UNA vez (dedup por tipo) cuando detectamos los tiers.
+          // La notificación es pegajosa: vive hasta que la propuesta se publique.
           if (current === 'propuesta-en-armado') {
-            await this.notifyMarginsPending(row);
+            await this.syncMarginsPendingNotification(row);
           }
         }),
       );
@@ -221,37 +224,59 @@ export class SalesService {
   }
 
   /** El TL terminó de armar los tiers (aún en propuesta-en-armado) → avisar al
-   *  vendedor que le toca definir los márgenes, con CTA directo al form. Se
-   *  crea UNA sola vez (dedup por type) y solo si los tiers ya están y la
-   *  propuesta no se publicó todavía. */
-  private async notifyMarginsPending(opp: {
+   *  vendedor que le toca continuar (márgenes + publicar). Esta notificación es
+   *  PEGAJOSA: abrir la campana NO la apaga (markNotificationsSeen la excluye) y
+   *  si quedó vista por error revive — solo se resuelve cuando la propuesta se
+   *  PUBLICA de verdad (access.json commiteado por proposal:deploy). Es un
+   *  recordatorio de acción pendiente, no un mensaje leído/no-leído. */
+  private async syncMarginsPendingNotification(opp: {
     id: string;
     cliente: string;
     oportunidad: string;
     vendedor_login: string;
   }): Promise<void> {
-    const type = 'proposal:margins-pending';
-    const { data: already } = await this.supabase
-      .from(NOTIFICATIONS_TABLE)
-      .select('id')
-      .eq('opportunity_id', opp.id)
-      .eq('type', type)
-      .limit(1);
-    if (already?.length) return; // ya avisamos
-
     const base = `sales/${opp.cliente}/${opp.oportunidad}`;
-    const tiers = await this.readFileFromRepo(`${base}/propuestas-3-tier.yml`).catch(() => null);
+    const { data } = await this.supabase
+      .from(NOTIFICATIONS_TABLE)
+      .select('id, seen')
+      .eq('opportunity_id', opp.id)
+      .eq('type', MARGINS_PENDING_TYPE)
+      .limit(1);
+    const existing = data?.[0] as { id: string; seen: boolean } | undefined;
+
+    // ¿Publicada? access.json lo commitea el workflow de publicación — es la
+    // señal de "realmente publicada" que resuelve la alerta.
+    const published = await this.readFileFromRepo(`${base}/access.json`).catch(() => null);
+    if (published) {
+      if (existing && !existing.seen) {
+        await this.supabase.from(NOTIFICATIONS_TABLE).update({ seen: true }).eq('id', existing.id);
+      }
+      return;
+    }
+
+    if (existing) {
+      // Sigue sin publicar → la alerta debe seguir viva (badge encendido),
+      // incluida cualquier fila marcada vista antes de esta regla.
+      if (existing.seen) {
+        await this.supabase.from(NOTIFICATIONS_TABLE).update({ seen: false }).eq('id', existing.id);
+      }
+      return;
+    }
+
+    // Tiers listos = borrador del TL (propuestas-3-tier.yml) o ya renombrado a
+    // propuestas.yml por el finalize — en ambos casos la pelota es del vendedor.
+    const tiers =
+      (await this.readFileFromRepo(`${base}/propuestas-3-tier.yml`).catch(() => null)) ??
+      (await this.readFileFromRepo(`${base}/propuestas.yml`).catch(() => null));
     if (!tiers) return; // el TL aún no terminó de armar
-    const finalized = await this.readFileFromRepo(`${base}/PROPUESTAS.md`).catch(() => null);
-    if (finalized) return; // ya finalizada → no aplica el aviso de márgenes
 
     const { error } = await this.supabase.from(NOTIFICATIONS_TABLE).insert({
       opportunity_id: opp.id,
       vendedor_login: opp.vendedor_login,
-      type,
+      type: MARGINS_PENDING_TYPE,
       title: `El TL armó las propuestas de ${opp.cliente}/${opp.oportunidad}`,
-      body: 'Te toca definir los márgenes de los 3 tiers y generar el comparativo.',
-      cta_label: 'Definir márgenes',
+      body: 'Te toca continuar: define los márgenes y publica la propuesta. Este aviso se apaga solo cuando quede publicada.',
+      cta_label: 'Continuar',
       cta_path: `/ventas/${opp.id}/propuesta`,
     });
     if (error) this.logger.warn(`No se pudo crear la notificación de márgenes de ${opp.cliente}: ${error.message}`);
@@ -356,14 +381,17 @@ export class SalesService {
     return { notifications, unseenCount: notifications.filter((n) => !n.seen).length };
   }
 
-  /** Marca como vistas las notificaciones del que consulta (todas, o solo ids). */
+  /** Marca como vistas las notificaciones del que consulta (todas, o solo ids).
+   *  Excluye las pegajosas (acción pendiente): esas no se apagan por abrir el
+   *  panel — las resuelve el sistema cuando la acción se completa. */
   async markNotificationsSeen(login: string | null, ids?: string[]): Promise<{ ok: true }> {
     if (!login) return { ok: true };
     let query = this.supabase
       .from(NOTIFICATIONS_TABLE)
       .update({ seen: true })
       .eq('vendedor_login', login)
-      .eq('seen', false);
+      .eq('seen', false)
+      .neq('type', MARGINS_PENDING_TYPE);
     if (ids?.length) query = query.in('id', ids);
     const { error } = await query;
     if (error) this.logger.warn(`No se pudieron marcar notificaciones vistas: ${error.message}`);
@@ -1005,8 +1033,8 @@ export class SalesService {
         generated: false,
         tiersReady: false,
         pendingReason:
-          'el TL ya armó los 3 tiers; falta TU paso como vendedor: definir los márgenes y generar el comparativo ' +
-          '(`proposals:set-margin` + `proposals:compare` en el monorepo, rules/13). El TL no fija precios.',
+          'el TL ya armó los 3 tiers; falta TU paso como vendedor: definir los márgenes y publicar — ' +
+          'se hace desde esta misma página con el formulario de márgenes (rules/13). El TL no fija precios.',
       };
     }
     return { generated: false, tiersReady: true }; // finalizada → se puede publicar
