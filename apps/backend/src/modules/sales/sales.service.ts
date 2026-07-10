@@ -278,9 +278,15 @@ export class SalesService {
   }
 
   /** Notificaciones del que consulta (las últimas 30). Fail-soft: sin la
-   *  migración 025 devuelve vacío y la campana simplemente no muestra nada. */
+   *  migración 025 devuelve vacío y la campana simplemente no muestra nada.
+   *  DISPARA el discovery (throttled 60s + deadline 6s, igual que la lista):
+   *  la campana hace polling cada 60s desde cualquier vista, así que las
+   *  transiciones del TL se detectan aunque nadie abra la lista de
+   *  oportunidades (caso real: el TL terminó y la campana quedó muda 20+ min
+   *  porque el vendedor estaba en el Dashboard). */
   async listNotifications(login: string | null): Promise<SalesNotificationsResult> {
     if (!login) return { notifications: [], unseenCount: 0 };
+    await withTimeout(this.discoverOpportunitiesFromMonorepo(), DISCOVERY_DEADLINE_MS).catch(() => undefined);
     const { data, error } = await this.supabase
       .from(NOTIFICATIONS_TABLE)
       .select('*')
