@@ -1,4 +1,4 @@
-import { IsArray, IsIn, IsInt, IsISO8601, IsNotEmpty, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
+import { IsArray, IsIn, IsInt, IsISO8601, IsNotEmpty, IsObject, IsOptional, IsString, Matches, Max, MaxLength, Min } from 'class-validator';
 
 const SLUG = /^[a-z0-9-]+$/;
 
@@ -37,6 +37,13 @@ export class SearchProspectsDto {
 
   @IsOptional() @IsInt() @Min(1) @Max(500)
   page?: number;
+}
+
+/** Márgenes por tier para finalizar la propuesta (form de márgenes del
+ *  vendedor). `margins` = { "<tier>": { markup, coordination? } }. */
+export class FinalizeProposalDto {
+  @IsObject()
+  margins: Record<string, { markup: number; coordination?: number }>;
 }
 
 /** Enriquecer un prospecto de Apollo (people/match — consume 1 crédito). */

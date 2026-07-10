@@ -13,7 +13,9 @@ import type {
   SalesOpportunityDetail,
   SalesOwnershipResult,
   SalesProposalAccess,
+  SalesFinalizeMargin,
   SalesProposalMetrics,
+  SalesProposalTiersResult,
   SalesRegenerateProposalResult,
   SalesSendMessageResult,
   SalesSyncResult,
@@ -1045,6 +1047,106 @@ export class SalesService {
    *  en CI, dos regeneraciones en carrera podrían invalidar una contraseña
    *  que el vendedor ya compartió con el cliente. Se rechaza un segundo
    *  dispatch dentro de la ventana de cooldown. */
+  /** Los 3 tiers que dejó el TL, con su markup/coordinación actuales — para
+   *  prellenar el form de márgenes del vendedor. Lee propuestas.yml o el
+   *  borrador propuestas-3-tier.yml (lo que exista). Parser por regex acotado
+   *  (no metemos una dependencia YAML por 4 campos). */
+  async getProposalTiers(id: string, requesterLogin: string | null): Promise<SalesProposalTiersResult> {
+    const { opp } = await this.loadOpportunity(id);
+    this.assertCanView(opp, requesterLogin);
+    const base = `sales/${opp.cliente}/${opp.oportunidad}`;
+    const file =
+      (await this.readFileFromRepo(`${base}/propuestas.yml`).catch(() => null)) ??
+      (await this.readFileFromRepo(`${base}/propuestas-3-tier.yml`).catch(() => null));
+    if (!file) return { tiers: [], markupDefault: null, coordinationDefault: null };
+
+    const yaml = file.content;
+    const num = (re: RegExp) => {
+      const m = yaml.match(re);
+      return m ? Number(m[1]) : null;
+    };
+    const markupDefault = num(/^markup_pct_default:\s*([\d.]+)/m);
+    const coordinationDefault = num(/^coordination_multiplier_default:\s*([\d.]+)/m);
+
+    // Cortar el archivo en bloques de tier: cada tier arranca en "  <key>:"
+    // (2 espacios) bajo "tiers:". Tomamos desde tiers: hasta el fin.
+    const tiersIdx = yaml.indexOf('\ntiers:');
+    const tiersBlock = tiersIdx >= 0 ? yaml.slice(tiersIdx) : '';
+    const tiers: SalesProposalTiersResult['tiers'] = [];
+    const tierRe = /^ {2}([a-z_]+):\s*$/gm;
+    const heads: { key: string; at: number }[] = [];
+    let m: RegExpExecArray | null;
+    while ((m = tierRe.exec(tiersBlock))) heads.push({ key: m[1], at: m.index });
+    heads.forEach((h, i) => {
+      const seg = tiersBlock.slice(h.at, heads[i + 1]?.at ?? tiersBlock.length);
+      const headline = seg.match(/^ {4}headline:\s*(.+)$/m)?.[1]?.trim() ?? null;
+      const markup = seg.match(/^ {4}markup_pct:\s*([\d.]+)/m);
+      const coord = seg.match(/^ {4}coordination_multiplier:\s*([\d.]+)/m);
+      tiers.push({
+        key: h.key,
+        headline,
+        markupPct: markup ? Number(markup[1]) : markupDefault,
+        coordinationMultiplier: coord ? Number(coord[1]) : coordinationDefault,
+      });
+    });
+    return { tiers, markupDefault, coordinationDefault };
+  }
+
+  /** Dispara el workflow que finaliza la propuesta con los márgenes que puso
+   *  el vendedor (rename → set-margin ×tier → compare → rellena proposal.html).
+   *  El gate de rol (vendedor + dueño) va acá; el workflow no lo re-verifica. */
+  async finalizeProposal(
+    id: string,
+    requesterLogin: string | null,
+    margins: Record<string, SalesFinalizeMargin>,
+  ): Promise<SalesRegenerateProposalResult> {
+    const { opp } = await this.loadOpportunity(id);
+    this.assertCanEdit(opp, requesterLogin);
+    if (!this.writeToken) throw new Error('GITHUB_WRITE_TOKEN no configurado en el servidor.');
+
+    const entries = Object.entries(margins ?? {});
+    if (!entries.length) throw new BadRequestException('Define el margen de al menos un tier.');
+    for (const [tier, m] of entries) {
+      if (!Number.isFinite(m.markup) || m.markup < 0) {
+        throw new BadRequestException(`El margen del tier "${tier}" debe ser un porcentaje válido (ej. 40).`);
+      }
+      if (m.coordination != null && (!Number.isFinite(m.coordination) || m.coordination <= 0)) {
+        throw new BadRequestException(`El multiplicador de coordinación del tier "${tier}" debe ser positivo (ej. 1.2).`);
+      }
+    }
+
+    const res = await fetch(
+      `https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows/proposals-finalize.yml/dispatches`,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.writeToken}`,
+          Accept: 'application/vnd.github+json',
+          'Content-Type': 'application/json',
+          'User-Agent': 'qa-portal-sales',
+        },
+        body: JSON.stringify({
+          ref: 'main',
+          inputs: {
+            cliente: opp.cliente,
+            oportunidad: opp.oportunidad,
+            vendedor: requesterLogin ?? opp.vendedorLogin,
+            margins: JSON.stringify(margins),
+          },
+        }),
+        signal: AbortSignal.timeout(10_000),
+      },
+    );
+    if (res.status !== 204) {
+      const text = await res.text().catch(() => '');
+      throw new Error(
+        `GitHub Actions rechazó el dispatch (HTTP ${res.status}): ${text.slice(0, 200)}. ` +
+          'Verificá que existe .github/workflows/proposals-finalize.yml en main y que GITHUB_WRITE_TOKEN tiene scope Actions:write.',
+      );
+    }
+    return { dispatched: true };
+  }
+
   async regenerateProposalPassword(id: string, requesterLogin: string | null): Promise<SalesRegenerateProposalResult> {
     const { opp } = await this.loadOpportunity(id);
     this.assertCanEdit(opp, requesterLogin);

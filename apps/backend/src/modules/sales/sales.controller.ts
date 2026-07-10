@@ -9,6 +9,7 @@ import {
   CreateOpportunityDto,
   CreateSavedSearchDto,
   EnrichProspectDto,
+  FinalizeProposalDto,
   HandoffDto,
   MarkNotificationsSeenDto,
   SaveProspectDto,
@@ -210,6 +211,20 @@ export class SalesController {
   @Get('opportunities/:id/proposal/metrics')
   getProposalMetrics(@Param('id') id: string, @Req() req: RequestWithUser) {
     return this.sales.getProposalMetrics(id, githubLogin(req));
+  }
+
+  /** Los 3 tiers del TL con su markup/coordinación — para el form de márgenes. */
+  @Get('opportunities/:id/proposal/tiers')
+  getProposalTiers(@Param('id') id: string, @Req() req: RequestWithUser) {
+    return this.sales.getProposalTiers(id, githubLogin(req));
+  }
+
+  /** Finaliza la propuesta con los márgenes del vendedor (dispara CI:
+   *  set-margin ×tier → compare → rellena proposal.html). Solo el dueño. */
+  @Post('opportunities/:id/proposal/finalize')
+  async finalizeProposal(@Param('id') id: string, @Body() body: FinalizeProposalDto, @Req() req: RequestWithUser) {
+    const login = await this.requireSeller(req);
+    return this.sales.finalizeProposal(id, login, body.margins);
   }
 
   /** Regenera la contraseña y vuelve a publicar (dispara CI). Solo el dueño. */

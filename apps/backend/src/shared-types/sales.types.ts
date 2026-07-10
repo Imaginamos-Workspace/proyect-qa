@@ -113,6 +113,29 @@ export interface SalesProposalMetrics {
   lastViewedAt: string | null;
 }
 
+// Un tier de la propuesta (económica/media/sólida) tal como lo dejó el TL —
+// el vendedor solo ajusta markup + coordinación desde el form de márgenes.
+export interface SalesProposalTier {
+  key: string;
+  headline: string | null;
+  markupPct: number | null;
+  coordinationMultiplier: number | null;
+}
+
+export interface SalesProposalTiersResult {
+  /** Vacío si aún no hay propuestas-3-tier.yml / propuestas.yml. */
+  tiers: SalesProposalTier[];
+  /** Defaults del template para prellenar los que no tengan valor propio. */
+  markupDefault: number | null;
+  coordinationDefault: number | null;
+}
+
+/** Márgenes que el vendedor define por tier al finalizar la propuesta. */
+export interface SalesFinalizeMargin {
+  markup: number;
+  coordination?: number;
+}
+
 // --- Notificaciones del pipeline (migración 025) ---------------------------
 // El discovery detecta transiciones de status.md (el TL publicó la propuesta,
 // negociación, ganada, congelada por tiempo, diseño/desarrollo…) y crea una

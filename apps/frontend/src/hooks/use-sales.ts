@@ -8,6 +8,7 @@ import type {
   SalesOwnershipResult,
   SalesProposalAccess,
   SalesProposalMetrics,
+  SalesProposalTiersResult,
   ProspectInteraction,
   SalesProspect,
   SalesProspectSearchInput,
@@ -60,6 +61,26 @@ export function useProposalMetrics(id: string | null) {
     queryFn: () => api.get<SalesProposalMetrics>(`/sales/opportunities/${id}/proposal/metrics`),
     enabled: !!id,
     staleTime: 30_000,
+  });
+}
+
+/** Los 3 tiers del TL con su markup/coordinación — para el form de márgenes. */
+export function useProposalTiers(id: string | null, enabled: boolean) {
+  return useQuery({
+    queryKey: ['sales', 'opportunities', id, 'proposal', 'tiers'],
+    queryFn: () => api.get<SalesProposalTiersResult>(`/sales/opportunities/${id}/proposal/tiers`),
+    enabled: !!id && enabled,
+    staleTime: 30_000,
+  });
+}
+
+/** Finaliza la propuesta con los márgenes del vendedor (dispara CI ~1-2 min). */
+export function useFinalizeProposal(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (margins: Record<string, { markup: number; coordination?: number }>) =>
+      api.post<SalesRegenerateProposalResult>(`/sales/opportunities/${id}/proposal/finalize`, { margins }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['sales', 'opportunities', id, 'proposal'] }),
   });
 }
 

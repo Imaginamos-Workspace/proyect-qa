@@ -13,6 +13,7 @@ import {
   RefreshCw,
   Eye,
   Clock,
+  Loader2,
 } from 'lucide-react';
 import {
   useSalesOpportunity,
@@ -24,6 +25,7 @@ import {
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { MarginsForm } from './MarginsForm';
 
 // Sondea cada 10s mientras se regenera, hasta 2 min — tiempo típico del
 // workflow de CI (proposal-deploy.yml: password + wrangler deploy).
@@ -57,10 +59,13 @@ export function ProposalConfigPage() {
 
   const [regenerating, setRegenerating] = useState(false);
   const [publishFailed, setPublishFailed] = useState(false);
+  // Mientras se finaliza (workflow de márgenes), sondeamos el estado hasta que
+  // la propuesta deje de estar pendiente (PROPUESTAS.md generado).
+  const [finalizing, setFinalizing] = useState(false);
   const { data: opp, isLoading: loadingOpp } = useSalesOpportunity(id ?? null);
   const { data: access, isLoading: loadingAccess } = useProposalAccess(
     id ?? null,
-    regenerating ? REGENERATE_POLL_MS : false,
+    regenerating || finalizing ? REGENERATE_POLL_MS : false,
   );
   const { data: metrics } = useProposalMetrics(id ?? null);
   const regenerate = useRegenerateProposal(id ?? '');
@@ -89,6 +94,19 @@ export function ProposalConfigPage() {
   useEffect(() => {
     if (access?.generated) setPublishFailed(false);
   }, [access?.generated]);
+
+  // El workflow de márgenes terminó cuando la propuesta deja de estar pendiente
+  // (tiersReady) o ya se publicó — cortamos el sondeo y mostramos "Publicar".
+  useEffect(() => {
+    if (finalizing && access && (access.generated || access.tiersReady)) setFinalizing(false);
+  }, [finalizing, access]);
+
+  // Timeout de seguridad del finalize (mismo que publicar) — no girar infinito.
+  useEffect(() => {
+    if (!finalizing) return;
+    const t = setTimeout(() => setFinalizing(false), REGENERATE_TIMEOUT_MS);
+    return () => clearTimeout(t);
+  }, [finalizing]);
 
   const onRegenerate = () => {
     setPublishFailed(false);
@@ -121,20 +139,17 @@ export function ProposalConfigPage() {
         <Skeleton className="h-64 w-full" />
       ) : !access.generated ? (
         access.pendingReason ? (
-          <Card className="border-warning/40">
-            <CardContent className="flex items-start gap-3 p-4">
-              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
-              <div>
-                <p className="text-sm font-medium text-foreground">Falta un paso antes de publicar</p>
-                <p className="mt-1 text-sm text-muted-foreground">{access.pendingReason}</p>
-                <p className="mt-2 text-xs text-muted-foreground">
-                  Es el mismo control que aplica el CI al publicar (rules/13): no se publica una propuesta con
-                  placeholders o sin precios confirmados. Los precios los defines tú (el TL no los fija);
-                  cuando el comparativo esté generado, vuelve acá y publica.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+          finalizing ? (
+            <Card>
+              <CardContent className="flex items-center gap-3 p-4 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                Generando el comparativo con tus márgenes… (~1-2 min). En cuanto esté, podrás publicar.
+              </CardContent>
+            </Card>
+          ) : (
+            // El paso del vendedor (definir márgenes) se hace acá mismo, no en CLI.
+            <MarginsForm id={id ?? ''} onFinalizeStarted={() => setFinalizing(true)} />
+          )
         ) : access.tiersReady ? (
           /* El TL ya dejó los 3 tiers — el vendedor publica desde acá: el
              mismo workflow de CI genera la contraseña y sube la propuesta. */
