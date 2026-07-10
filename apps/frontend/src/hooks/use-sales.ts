@@ -79,7 +79,9 @@ export function useFinalizeProposal(id: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (margins: Record<string, { markup: number; coordination?: number }>) =>
-      api.post<SalesRegenerateProposalResult>(`/sales/opportunities/${id}/proposal/finalize`, { margins }),
+      // 60s: el backend genera la narrativa (Gemini) + commitea antes de
+      // disparar el workflow — puede pasar los 20s por defecto. maxDuration=60.
+      api.post<SalesRegenerateProposalResult>(`/sales/opportunities/${id}/proposal/finalize`, { margins }, 60_000),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sales', 'opportunities', id, 'proposal'] }),
   });
 }
