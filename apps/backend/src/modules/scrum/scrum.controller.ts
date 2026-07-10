@@ -21,25 +21,21 @@ import {
   AddEvidenceDto,
 } from './dto/create-issue.dto';
 
-// El guard pone el usuario de Supabase en request.user. De GitHub OAuth, el login
-// viene en user_metadata (user_name / preferred_username). El email está en
-// user.email — es lo que identifica a un QA SIN GitHub (login por email/contraseña).
+import { type AuthedUser, emailOf, githubLoginOf } from '../auth/github-identity';
+
+// El guard pone el usuario de Supabase en request.user. El login de GitHub sale
+// de la identidad OAuth (NO de user_metadata, que el propio usuario puede
+// editar — ver github-identity.ts). El email identifica a un QA SIN GitHub.
 interface RequestWithUser {
-  user?: { email?: string | null; user_metadata?: Record<string, unknown> };
+  user?: AuthedUser;
 }
 
 function githubLogin(req: RequestWithUser): string | null {
-  const m = req.user?.user_metadata ?? {};
-  return (
-    (m.user_name as string) ||
-    (m.preferred_username as string) ||
-    (m.nickname as string) ||
-    null
-  );
+  return githubLoginOf(req.user);
 }
 
 function userEmail(req: RequestWithUser): string | null {
-  return req.user?.email ?? null;
+  return emailOf(req.user);
 }
 
 @Controller('scrum')

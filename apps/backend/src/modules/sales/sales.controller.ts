@@ -22,18 +22,16 @@ import type {
   SavedProspectEstado,
 } from '../../shared-types/sales.types';
 
+import { type AuthedUser, githubLoginOf } from '../auth/github-identity';
+
 interface RequestWithUser {
-  user?: { user_metadata?: Record<string, unknown> };
+  user?: AuthedUser;
 }
 
+// Login del solicitante desde la identidad OAuth (NO falsificable) — ver
+// github-identity.ts: user_metadata es editable por el propio usuario.
 function githubLogin(req: RequestWithUser): string | null {
-  const m = req.user?.user_metadata ?? {};
-  return (
-    (m.user_name as string) ||
-    (m.preferred_username as string) ||
-    (m.nickname as string) ||
-    null
-  );
+  return githubLoginOf(req.user);
 }
 
 @Controller('sales')
