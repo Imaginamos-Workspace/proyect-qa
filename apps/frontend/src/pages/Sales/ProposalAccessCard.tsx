@@ -7,9 +7,23 @@ import { Button } from '@/components/ui/button';
 /** Resumen compacto en el chat — el detalle (link, contraseña, regenerar,
  *  métricas, compartir) vive en /ventas/:id/propuesta (ProposalConfigPage). */
 export function ProposalAccessCard({ id }: { id: string; cliente: string; oportunidad: string }) {
-  const { data, isLoading } = useProposalAccess(id);
+  const { data, isLoading, isError, refetch, isFetching } = useProposalAccess(id);
   const { data: metrics } = useProposalMetrics(data?.generated ? id : null);
 
+  // Ante error NO devolvemos null (el CTA desaparecía sin dejar rastro): un
+  // aviso con reintento, para no perder el paso siguiente del vendedor.
+  if (isError) {
+    return (
+      <Card className="border-destructive/40">
+        <CardContent className="flex flex-wrap items-center justify-between gap-2 p-4">
+          <p className="text-sm text-muted-foreground">No se pudo cargar el estado de la propuesta.</p>
+          <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching}>
+            {isFetching ? 'Reintentando…' : 'Reintentar'}
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
   if (isLoading || !data) return null;
 
   if (!data.generated) {

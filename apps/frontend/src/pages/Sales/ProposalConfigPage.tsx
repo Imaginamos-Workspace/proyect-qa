@@ -62,11 +62,15 @@ export function ProposalConfigPage() {
   // Mientras se finaliza (workflow de márgenes), sondeamos el estado hasta que
   // la propuesta deje de estar pendiente (PROPUESTAS.md generado).
   const [finalizing, setFinalizing] = useState(false);
-  const { data: opp, isLoading: loadingOpp } = useSalesOpportunity(id ?? null);
-  const { data: access, isLoading: loadingAccess } = useProposalAccess(
-    id ?? null,
-    regenerating || finalizing ? REGENERATE_POLL_MS : false,
-  );
+  const { data: opp, isLoading: loadingOpp, isError: oppError, error: oppErr } = useSalesOpportunity(id ?? null);
+  const {
+    data: access,
+    isLoading: loadingAccess,
+    isError: accessError,
+    error: accessErr,
+    refetch: refetchAccess,
+    isFetching: fetchingAccess,
+  } = useProposalAccess(id ?? null, regenerating || finalizing ? REGENERATE_POLL_MS : false);
   const { data: metrics } = useProposalMetrics(id ?? null);
   const regenerate = useRegenerateProposal(id ?? '');
   const markSent = useMarkProposalSent(id ?? '');
@@ -114,6 +118,21 @@ export function ProposalConfigPage() {
     regenerate.mutate();
   };
 
+  if (oppError) {
+    return (
+      <div className="mx-auto max-w-2xl space-y-4">
+        <Card>
+          <CardContent className="p-6 text-sm text-destructive">
+            No se pudo cargar la oportunidad: {(oppErr as Error).message}
+          </CardContent>
+        </Card>
+        <Link to="/ventas" className="text-sm text-muted-foreground hover:underline">
+          ← Volver a oportunidades
+        </Link>
+      </div>
+    );
+  }
+
   if (loadingOpp || !opp) {
     return (
       <div className="mx-auto max-w-2xl space-y-4">
@@ -135,7 +154,25 @@ export function ProposalConfigPage() {
         </div>
       </div>
 
-      {loadingAccess || !access ? (
+      {accessError ? (
+        // Sin esta rama la página se quedaba en el esqueleto para siempre ante
+        // cualquier fallo (sesión vencida, timeout, 500) — se veía "colgada".
+        <Card className="border-destructive/40">
+          <CardContent className="space-y-3 p-4">
+            <p className="text-sm font-medium text-destructive">No se pudo cargar el estado de la propuesta</p>
+            <p className="text-sm text-muted-foreground">{(accessErr as Error).message}</p>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => refetchAccess()} disabled={fetchingAccess}>
+                <RefreshCw className={`mr-2 h-3.5 w-3.5 ${fetchingAccess ? 'animate-spin' : ''}`} />
+                {fetchingAccess ? 'Reintentando…' : 'Reintentar'}
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => window.location.reload()}>
+                Recargar la página
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      ) : loadingAccess || !access ? (
         <Skeleton className="h-64 w-full" />
       ) : !access.generated ? (
         access.pendingReason ? (
