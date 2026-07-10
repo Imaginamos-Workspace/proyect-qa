@@ -9,9 +9,13 @@ interface TeamMember {
   active?: boolean;
 }
 
-// Fuente ÚNICA de roles: el team.json del monorepo (rules/01-roles.md). El portal
-// lo LEE directo (no mantiene copia) → sincronía estricta, cero drift.
-const TEAM_REPO = 'Imaginamos-Workspace/qa-automation-monorepo';
+// Fuente ÚNICA de roles: el team.json del monorepo VIVO (rules/01-roles.md). El
+// portal lo LEE directo (no mantiene copia) → sincronía estricta, cero drift.
+// OJO: apuntaba a `Imaginamos-Workspace/qa-automation-monorepo`, que quedó
+// ARCHIVADO (congelado el 2026-07-02, 7 miembros) tras migrar a la org
+// corporativa. Los altas nuevas (vendedores incluidos) no resolvían rol → veían
+// todo menos Ventas. El repo vivo es `imaginamos/…` (mismo que usa sales.service).
+const TEAM_REPO = 'imaginamos/qa-automation-monorepo';
 const TEAM_PATH = 'team.json';
 const CACHE_TTL_MS = 60_000;
 
