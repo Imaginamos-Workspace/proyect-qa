@@ -930,10 +930,29 @@ export class SalesService {
 
     const isLive = await this.isProposalLive(url);
     if (isLive) return { generated: true, url, password: null };
-    // ¿El TL ya dejó los 3 tiers armados? Con eso el VENDEDOR puede publicar
-    // desde la plataforma (mismo workflow de CI que "Regenerar contraseña").
-    const tiers = await this.readFileFromRepo(`sales/${opp.cliente}/${opp.oportunidad}/propuestas-3-tier.yml`).catch(() => null);
-    return { generated: false, tiersReady: !!tiers };
+
+    // ¿Se puede publicar? Solo si la propuesta está FINALIZADA — el mismo
+    // guardrail que aplica proposal:validate en el CI (rules/13):
+    //  - PROPUESTAS.md existe (el TL corrió proposals:compare → precios reales)
+    //  - proposal.html SIN placeholders sin reemplazar (_FECHA_, etc.)
+    // Si el TL solo dejó el borrador propuestas-3-tier.yml, NO está listo:
+    // publicar fallaría en validación. Distinguimos ambos para no mandar al
+    // vendedor a un "Publicar" condenado (caso real: colsaisa).
+    const base = `sales/${opp.cliente}/${opp.oportunidad}`;
+    const [html, propuestasMd, tierDraft] = await Promise.all([
+      this.readFileFromRepo(`${base}/proposal.html`).catch(() => null),
+      this.readFileFromRepo(`${base}/PROPUESTAS.md`).catch(() => null),
+      this.readFileFromRepo(`${base}/propuestas-3-tier.yml`).catch(() => null),
+    ]);
+    if (!html && !tierDraft) return { generated: false }; // el TL ni empezó
+
+    const pending: string[] = [];
+    if (!propuestasMd) pending.push('falta PROPUESTAS.md (el TL debe correr `proposals:compare`)');
+    if (tierDraft) pending.push('el borrador `propuestas-3-tier.yml` no se renombró a `propuestas.yml`');
+    if (html && /_FECHA_|_[A-Z_]{3,}_/.test(html.content)) pending.push('la propuesta tiene placeholders sin reemplazar (build incompleto del TL)');
+
+    if (pending.length) return { generated: false, tiersReady: false, pendingReason: pending.join('; ') };
+    return { generated: false, tiersReady: true }; // finalizada → el vendedor puede publicar
   }
 
   /** El VENDEDOR marca la propuesta como ENVIADA al cliente — es SU acción

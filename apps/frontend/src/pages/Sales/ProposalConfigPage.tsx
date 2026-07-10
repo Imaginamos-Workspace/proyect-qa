@@ -120,7 +120,23 @@ export function ProposalConfigPage() {
       {loadingAccess || !access ? (
         <Skeleton className="h-64 w-full" />
       ) : !access.generated ? (
-        access.tiersReady ? (
+        access.pendingReason ? (
+          <Card className="border-warning/40">
+            <CardContent className="flex items-start gap-3 p-4">
+              <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+              <div>
+                <p className="text-sm font-medium text-foreground">La propuesta aún no está lista para publicar</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  El TL debe terminarla antes de que puedas enviarla: {access.pendingReason}.
+                </p>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  Es el mismo control que aplica el CI al publicar (rules/13): no se publica una propuesta con
+                  placeholders o sin precios confirmados. Pídele al TL que la finalice y vuelve a entrar.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        ) : access.tiersReady ? (
           /* El TL ya dejó los 3 tiers — el vendedor publica desde acá: el
              mismo workflow de CI genera la contraseña y sube la propuesta. */
           <Card className="border-primary/40">
@@ -141,10 +157,8 @@ export function ProposalConfigPage() {
                   <p className="font-medium text-destructive">La publicación no se completó en 2 minutos.</p>
                   <p className="mt-1">
                     El deploy corre en GitHub Actions (workflow <code className="rounded bg-muted px-1">proposal-deploy</code> del
-                    monorepo). Suele fallar por falta de los secrets de Cloudflare
-                    (<code className="rounded bg-muted px-1">CLOUDFLARE_API_TOKEN</code>,{' '}
-                    <code className="rounded bg-muted px-1">CLOUDFLARE_ACCOUNT_ID</code>). Revisa el run en rojo en la pestaña
-                    Actions del repo y reintenta cuando estén configurados.
+                    monorepo) y aborta si la propuesta no pasa la validación (placeholders sin reemplazar, falta
+                    PROPUESTAS.md). Revisa el run en la pestaña Actions del repo para ver el motivo exacto y reintenta.
                   </p>
                 </div>
               )}

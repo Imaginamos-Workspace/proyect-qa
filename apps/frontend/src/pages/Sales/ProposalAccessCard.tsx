@@ -13,6 +13,22 @@ export function ProposalAccessCard({ id }: { id: string; cliente: string; oportu
   if (isLoading || !data) return null;
 
   if (!data.generated) {
+    // El TL dejó la propuesta a medias → decir QUÉ falta, no invitar a publicar.
+    if (data.pendingReason) {
+      return (
+        <Card className="border-warning/40">
+          <CardContent className="flex items-start gap-3 p-4">
+            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+            <div>
+              <p className="text-sm font-medium text-foreground">La propuesta aún no está lista para publicar</p>
+              <p className="mt-0.5 text-sm text-muted-foreground">
+                El TL debe terminarla: {data.pendingReason}.
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      );
+    }
     // El TL ya dejó los tiers → el vendedor puede publicarla desde acá mismo.
     if (data.tiersReady) {
       return (

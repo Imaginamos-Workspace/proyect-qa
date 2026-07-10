@@ -91,9 +91,14 @@ export interface SalesSyncResult {
 export type SalesProposalAccess =
   | {
       generated: false;
-      /** true = el TL ya commiteó propuestas-3-tier.yml: el vendedor puede
-       *  publicar desde la plataforma (botón "Publicar propuesta"). */
+      /** true = la propuesta está FINALIZADA (PROPUESTAS.md + proposal.html sin
+       *  placeholders): el vendedor puede publicarla. false/ausente = no lista. */
       tiersReady?: boolean;
+      /** Si el TL dejó la propuesta a medias, QUÉ falta para poder publicar
+       *  (placeholders, PROPUESTAS.md, renombrar el borrador). Se lo mostramos
+       *  al vendedor para que le pida al TL terminarla, en vez de un "Publicar"
+       *  que fallaría en la validación del CI. */
+      pendingReason?: string;
     }
   | {
       generated: true;
