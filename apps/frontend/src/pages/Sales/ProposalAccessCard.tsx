@@ -20,10 +20,8 @@ export function ProposalAccessCard({ id }: { id: string; cliente: string; oportu
           <CardContent className="flex items-start gap-3 p-4">
             <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
             <div>
-              <p className="text-sm font-medium text-foreground">La propuesta aún no está lista para publicar</p>
-              <p className="mt-0.5 text-sm text-muted-foreground">
-                El TL debe terminarla: {data.pendingReason}.
-              </p>
+              <p className="text-sm font-medium text-foreground">Falta un paso antes de publicar</p>
+              <p className="mt-0.5 text-sm text-muted-foreground">{data.pendingReason}</p>
             </div>
           </CardContent>
         </Card>

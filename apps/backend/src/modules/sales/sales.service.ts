@@ -933,11 +933,13 @@ export class SalesService {
 
     // ¿Se puede publicar? Solo si la propuesta está FINALIZADA — el mismo
     // guardrail que aplica proposal:validate en el CI (rules/13):
-    //  - PROPUESTAS.md existe (el TL corrió proposals:compare → precios reales)
+    //  - PROPUESTAS.md existe (comparativo generado con proposals:compare)
     //  - proposal.html SIN placeholders sin reemplazar (_FECHA_, etc.)
-    // Si el TL solo dejó el borrador propuestas-3-tier.yml, NO está listo:
-    // publicar fallaría en validación. Distinguimos ambos para no mandar al
-    // vendedor a un "Publicar" condenado (caso real: colsaisa).
+    // Si el TL dejó los 3 tiers (propuestas-3-tier.yml) pero faltan los pasos
+    // finales, esos son TAREA DEL VENDEDOR, no del TL (rules/13 §Cerrar el
+    // brief: `proposals:set-margin` exige rol vendedor; el TL NO toca precios).
+    // Distinguimos "listo" de "falta tu paso" para no mandar a un "Publicar"
+    // condenado ni culpar al TL (caso real: colsaisa).
     const base = `sales/${opp.cliente}/${opp.oportunidad}`;
     const [html, propuestasMd, tierDraft] = await Promise.all([
       this.readFileFromRepo(`${base}/proposal.html`).catch(() => null),
@@ -946,13 +948,20 @@ export class SalesService {
     ]);
     if (!html && !tierDraft) return { generated: false }; // el TL ni empezó
 
-    const pending: string[] = [];
-    if (!propuestasMd) pending.push('falta PROPUESTAS.md (el TL debe correr `proposals:compare`)');
-    if (tierDraft) pending.push('el borrador `propuestas-3-tier.yml` no se renombró a `propuestas.yml`');
-    if (html && /_FECHA_|_[A-Z_]{3,}_/.test(html.content)) pending.push('la propuesta tiene placeholders sin reemplazar (build incompleto del TL)');
-
-    if (pending.length) return { generated: false, tiersReady: false, pendingReason: pending.join('; ') };
-    return { generated: false, tiersReady: true }; // finalizada → el vendedor puede publicar
+    // Falta PROPUESTAS.md o hay placeholders → falta el paso del VENDEDOR
+    // (definir márgenes + comparativo). Un solo mensaje accionable, atribuido
+    // bien: es tu turno, no un pendiente del TL.
+    const notFinalized = !propuestasMd || (html && /_FECHA_|_[A-Z_]{3,}_/.test(html.content));
+    if (notFinalized) {
+      return {
+        generated: false,
+        tiersReady: false,
+        pendingReason:
+          'el TL ya armó los 3 tiers; falta TU paso como vendedor: definir los márgenes y generar el comparativo ' +
+          '(`proposals:set-margin` + `proposals:compare` en el monorepo, rules/13). El TL no fija precios.',
+      };
+    }
+    return { generated: false, tiersReady: true }; // finalizada → se puede publicar
   }
 
   /** El VENDEDOR marca la propuesta como ENVIADA al cliente — es SU acción

@@ -125,13 +125,12 @@ export function ProposalConfigPage() {
             <CardContent className="flex items-start gap-3 p-4">
               <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
               <div>
-                <p className="text-sm font-medium text-foreground">La propuesta aún no está lista para publicar</p>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  El TL debe terminarla antes de que puedas enviarla: {access.pendingReason}.
-                </p>
+                <p className="text-sm font-medium text-foreground">Falta un paso antes de publicar</p>
+                <p className="mt-1 text-sm text-muted-foreground">{access.pendingReason}</p>
                 <p className="mt-2 text-xs text-muted-foreground">
                   Es el mismo control que aplica el CI al publicar (rules/13): no se publica una propuesta con
-                  placeholders o sin precios confirmados. Pídele al TL que la finalice y vuelve a entrar.
+                  placeholders o sin precios confirmados. Los precios los defines tú (el TL no los fija);
+                  cuando el comparativo esté generado, vuelve acá y publica.
                 </p>
               </div>
             </CardContent>
