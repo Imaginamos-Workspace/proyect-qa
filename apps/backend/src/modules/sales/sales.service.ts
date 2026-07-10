@@ -929,7 +929,50 @@ export class SalesService {
     }
 
     const isLive = await this.isProposalLive(url);
-    return isLive ? { generated: true, url, password: null } : { generated: false };
+    if (isLive) return { generated: true, url, password: null };
+    // ¿El TL ya dejó los 3 tiers armados? Con eso el VENDEDOR puede publicar
+    // desde la plataforma (mismo workflow de CI que "Regenerar contraseña").
+    const tiers = await this.readFileFromRepo(`sales/${opp.cliente}/${opp.oportunidad}/propuestas-3-tier.yml`).catch(() => null);
+    return { generated: false, tiersReady: !!tiers };
+  }
+
+  /** El VENDEDOR marca la propuesta como ENVIADA al cliente — es SU acción
+   *  (rules/13): el TL entrega en propuesta-en-armado y su señal es el commit
+   *  de los tiers; "propuesta-enviada" significa que el cliente ya la tiene.
+   *  Actualiza línea Etapa actual + bitácora (contrato) + fila de Supabase. */
+  async markProposalSent(id: string, requesterLogin: string | null): Promise<SalesOpportunity> {
+    const { opp } = await this.loadOpportunity(id);
+    this.assertCanEdit(opp, requesterLogin);
+    try {
+      const statusPath = `sales/${opp.cliente}/${opp.oportunidad}/status.md`;
+      const current = await this.readFileFromRepo(statusPath);
+      if (current) {
+        let updated = current.content.replace(/\*\*Etapa actual:\*\*\s*\S+/, '**Etapa actual:** propuesta-enviada');
+        const hoy = new Date().toISOString().slice(0, 10);
+        const fila = `| ${hoy} | propuesta-enviada | @${requesterLogin ?? 'plataforma'} | Propuesta enviada al cliente desde la plataforma QA. |`;
+        updated = updated.replace(/(\n\|[^\n]*\|)(?![\s\S]*\n\|)/, `$1\n${fila}`);
+        await this.writeFileToRepo(
+          statusPath,
+          updated,
+          `sales(${opp.cliente}): ${opp.oportunidad} pasa a propuesta-enviada (enviada por @${requesterLogin})`,
+          current.sha,
+        );
+      }
+    } catch (err) {
+      if (err instanceof HttpException) throw err;
+      this.logger.error(`markProposalSent(${id}) falló: ${(err as Error).message}`);
+      throw new ServiceUnavailableException(
+        `No se pudo actualizar status.md (${(err as Error).message.slice(0, 120)}). Reintenta en un momento.`,
+      );
+    }
+    const { data, error } = await this.supabase
+      .from(OPPORTUNITIES_TABLE)
+      .update({ status: 'propuesta-enviada', updated_at: new Date().toISOString() })
+      .eq('id', id)
+      .select('*')
+      .single();
+    if (error) throw new BadRequestException(`status.md quedó actualizado pero la fila no: ${error.message}`);
+    return toOpportunity(data as DbOpportunity);
   }
 
   /** ¿La URL sirve contenido real de propuesta, o el fallback genérico de

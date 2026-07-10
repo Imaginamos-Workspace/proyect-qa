@@ -89,7 +89,12 @@ export interface SalesSyncResult {
 // contraseña registrada en el repo (hueco de seguridad real — rules/13
 // exige contraseña siempre; ver rules/13 §Contraseña por propuesta).
 export type SalesProposalAccess =
-  | { generated: false }
+  | {
+      generated: false;
+      /** true = el TL ya commiteó propuestas-3-tier.yml: el vendedor puede
+       *  publicar desde la plataforma (botón "Publicar propuesta"). */
+      tiersReady?: boolean;
+    }
   | {
       generated: true;
       url: string;

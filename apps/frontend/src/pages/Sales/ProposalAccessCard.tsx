@@ -13,6 +13,27 @@ export function ProposalAccessCard({ id }: { id: string; cliente: string; oportu
   if (isLoading || !data) return null;
 
   if (!data.generated) {
+    // El TL ya dejó los tiers → el vendedor puede publicarla desde acá mismo.
+    if (data.tiersReady) {
+      return (
+        <Card className="border-primary/40">
+          <CardContent className="flex flex-wrap items-center justify-between gap-3 p-4">
+            <div className="flex items-start gap-2">
+              <FileText className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+              <p className="text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">El TL ya armó las 3 propuestas.</span>{' '}
+                Publícala para obtener el link y la contraseña, revisarla y enviársela al cliente.
+              </p>
+            </div>
+            <Button size="sm" asChild>
+              <Link to={`/ventas/${id}/propuesta`}>
+                <Settings className="mr-2 h-3.5 w-3.5" /> Publicar y configurar
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
+      );
+    }
     return (
       <Card>
         <CardContent className="flex items-start gap-3 p-4">

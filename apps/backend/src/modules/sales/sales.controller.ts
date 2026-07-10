@@ -221,6 +221,14 @@ export class SalesController {
     return this.sales.sendMessage(id, body.content, login);
   }
 
+  /** El vendedor marca la propuesta como ENVIADA al cliente (rules/13: es su
+   *  acción, no del TL). Actualiza status.md (línea + bitácora) y la fila. */
+  @Post('opportunities/:id/mark-sent')
+  async markSent(@Param('id') id: string, @Req() req: RequestWithUser) {
+    const login = await this.requireSeller(req);
+    return this.sales.markProposalSent(id, login);
+  }
+
   /** Renderiza el draft a brief.md y lo escribe en el monorepo. Solo el dueño. */
   @Post('opportunities/:id/sync-brief')
   async syncBrief(@Param('id') id: string, @Req() req: RequestWithUser) {

@@ -332,6 +332,19 @@ export function useSendSalesMessage(id: string) {
   });
 }
 
+/** El vendedor marca la propuesta como enviada al cliente (rules/13: acción
+ *  suya, no del TL) — mueve el proceso a propuesta-enviada con bitácora. */
+export function useMarkProposalSent(id: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => api.post<SalesOpportunity>(`/sales/opportunities/${id}/mark-sent`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['sales', 'opportunities', id] });
+      qc.invalidateQueries({ queryKey: ['sales', 'opportunities'] });
+    },
+  });
+}
+
 export function useSyncBrief(id: string) {
   const qc = useQueryClient();
   return useMutation({

@@ -19,6 +19,7 @@ import {
   useProposalAccess,
   useProposalMetrics,
   useRegenerateProposal,
+  useMarkProposalSent,
 } from '@/hooks/use-sales';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -62,6 +63,7 @@ export function ProposalConfigPage() {
   );
   const { data: metrics } = useProposalMetrics(id ?? null);
   const regenerate = useRegenerateProposal(id ?? '');
+  const markSent = useMarkProposalSent(id ?? '');
 
   // Timeout fijo desde que arrancó el sondeo — OJO: `dataUpdatedAt` NO va en
   // las deps. Bug real que hubo acá: al incluirlo, cada poll exitoso (cada
@@ -104,15 +106,35 @@ export function ProposalConfigPage() {
       {loadingAccess || !access ? (
         <Skeleton className="h-64 w-full" />
       ) : !access.generated ? (
-        <Card>
-          <CardContent className="flex items-start gap-3 p-4">
-            <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">
-              La propuesta todavía no fue generada. El TL la arma con <code className="rounded bg-muted px-1">proposals:build</code>{' '}
-              y la publica con <code className="rounded bg-muted px-1">proposal:deploy</code> — mientras tanto podés seguir completando el brief.
-            </p>
-          </CardContent>
-        </Card>
+        access.tiersReady ? (
+          /* El TL ya dejó los 3 tiers — el vendedor publica desde acá: el
+             mismo workflow de CI genera la contraseña y sube la propuesta. */
+          <Card className="border-primary/40">
+            <CardContent className="space-y-3 p-4">
+              <p className="text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">El TL ya armó las 3 propuestas (media/sólida/económica).</span>{' '}
+                Publícala para obtener el link y la contraseña — después la revisas y se la envías al cliente por correo o WhatsApp desde esta misma página.
+              </p>
+              <Button className="w-full" onClick={onRegenerate} disabled={regenerating}>
+                <RefreshCw className={`mr-2 h-4 w-4 ${regenerating ? 'animate-spin' : ''}`} />
+                {regenerating ? 'Publicando… puede tardar 1-2 minutos' : 'Publicar propuesta'}
+              </Button>
+              {regenerate.isError && (
+                <p className="text-xs text-destructive">{(regenerate.error as Error).message}</p>
+              )}
+            </CardContent>
+          </Card>
+        ) : (
+          <Card>
+            <CardContent className="flex items-start gap-3 p-4">
+              <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">
+                La propuesta todavía no fue generada. El TL la arma con <code className="rounded bg-muted px-1">proposals:build</code>{' '}
+                y la publica con <code className="rounded bg-muted px-1">proposal:deploy</code> — mientras tanto podés seguir completando el brief.
+              </p>
+            </CardContent>
+          </Card>
+        )
       ) : (
         <>
           {access.password === null && (
@@ -210,6 +232,34 @@ export function ProposalConfigPage() {
               </p>
             </CardContent>
           </Card>
+
+          {/* La ENVÍA el vendedor (rules/13): revisada la propuesta y
+              compartido el link+contraseña, acá se marca — mueve el proceso a
+              propuesta-enviada (status.md línea + bitácora + fila). */}
+          {access.password && (
+            <Card>
+              <CardContent className="space-y-2 p-4">
+                {opp.status === 'propuesta-enviada' ? (
+                  <p className="flex items-center gap-2 text-sm text-success">
+                    <Check className="h-4 w-4" /> Marcada como enviada al cliente — sigue la evaluación (mira las métricas de apertura arriba).
+                  </p>
+                ) : (
+                  <>
+                    <Button className="w-full" onClick={() => markSent.mutate()} disabled={markSent.isPending}>
+                      <Mail className="mr-2 h-4 w-4" />
+                      {markSent.isPending ? 'Marcando…' : 'Ya la envié al cliente — marcar como enviada'}
+                    </Button>
+                    <p className="text-xs text-muted-foreground">
+                      Primero revísala (link de arriba) y compártela por correo o WhatsApp; este botón pasa el proceso a "Propuesta enviada".
+                    </p>
+                    {markSent.isError && (
+                      <p className="text-xs text-destructive">{(markSent.error as Error).message}</p>
+                    )}
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          )}
 
           <Card>
             <CardContent className="space-y-2 p-4">
