@@ -37,7 +37,9 @@ export class RegressionService {
   private readonly ref: string;
 
   constructor(private readonly config: ConfigService) {
-    this.owner = config.get<string>('GITHUB_PROJECT_OWNER') ?? 'Imaginamos-Workspace';
+    // Org viva: imaginamos (Imaginamos-Workspace quedó archivado). Igual que el
+    // default de scrum.service/evidence.service.
+    this.owner = config.get<string>('GITHUB_PROJECT_OWNER') ?? 'imaginamos';
     this.repo = config.get<string>('GITHUB_MONOREPO') ?? 'qa-automation-monorepo';
     this.ref = config.get<string>('GITHUB_MONOREPO_REF') ?? 'main';
   }
