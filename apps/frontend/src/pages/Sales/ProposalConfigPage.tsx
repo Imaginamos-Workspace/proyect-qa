@@ -56,6 +56,7 @@ export function ProposalConfigPage() {
   const navigate = useNavigate();
 
   const [regenerating, setRegenerating] = useState(false);
+  const [publishFailed, setPublishFailed] = useState(false);
   const { data: opp, isLoading: loadingOpp } = useSalesOpportunity(id ?? null);
   const { data: access, isLoading: loadingAccess } = useProposalAccess(
     id ?? null,
@@ -73,11 +74,24 @@ export function ProposalConfigPage() {
   // de CI tardaba más de la cuenta o colgaba.
   useEffect(() => {
     if (!regenerating) return;
-    const t = setTimeout(() => setRegenerating(false), REGENERATE_TIMEOUT_MS);
+    // Al agotar el tiempo sin que aparezca la propuesta publicada, dejamos un
+    // aviso accionable — antes solo se apagaba el spinner sin decir nada, y el
+    // vendedor se quedaba sin saber si publicó o falló (caso real: el workflow
+    // de deploy falla si faltan los secrets de Cloudflare en el monorepo).
+    const t = setTimeout(() => {
+      setRegenerating(false);
+      setPublishFailed(true);
+    }, REGENERATE_TIMEOUT_MS);
     return () => clearTimeout(t);
   }, [regenerating]);
 
+  // Si la propuesta pasó a publicada, borra cualquier aviso de fallo previo.
+  useEffect(() => {
+    if (access?.generated) setPublishFailed(false);
+  }, [access?.generated]);
+
   const onRegenerate = () => {
+    setPublishFailed(false);
     setRegenerating(true);
     regenerate.mutate();
   };
@@ -117,10 +131,22 @@ export function ProposalConfigPage() {
               </p>
               <Button className="w-full" onClick={onRegenerate} disabled={regenerating}>
                 <RefreshCw className={`mr-2 h-4 w-4 ${regenerating ? 'animate-spin' : ''}`} />
-                {regenerating ? 'Publicando… puede tardar 1-2 minutos' : 'Publicar propuesta'}
+                {regenerating ? 'Publicando… puede tardar 1-2 minutos' : publishFailed ? 'Reintentar publicación' : 'Publicar propuesta'}
               </Button>
               {regenerate.isError && (
                 <p className="text-xs text-destructive">{(regenerate.error as Error).message}</p>
+              )}
+              {publishFailed && !regenerating && (
+                <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-xs text-muted-foreground">
+                  <p className="font-medium text-destructive">La publicación no se completó en 2 minutos.</p>
+                  <p className="mt-1">
+                    El deploy corre en GitHub Actions (workflow <code className="rounded bg-muted px-1">proposal-deploy</code> del
+                    monorepo). Suele fallar por falta de los secrets de Cloudflare
+                    (<code className="rounded bg-muted px-1">CLOUDFLARE_API_TOKEN</code>,{' '}
+                    <code className="rounded bg-muted px-1">CLOUDFLARE_ACCOUNT_ID</code>). Revisa el run en rojo en la pestaña
+                    Actions del repo y reintenta cuando estén configurados.
+                  </p>
+                </div>
               )}
             </CardContent>
           </Card>
