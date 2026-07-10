@@ -19,7 +19,9 @@ function timeAgo(iso: string): string {
 /** Campana de notificaciones del pipeline del vendedor: el TL publicó la
  *  propuesta, negociación, ganada, congelada por tiempo, etapas nuevas
  *  (diseño/desarrollo)… Cada una con CTA directo a la acción que sigue.
- *  Al abrir el panel se marcan como vistas (el badge se apaga). */
+ *  Al abrir el panel se marcan como vistas (el badge se apaga) — EXCEPTO las
+ *  de acción pendiente ("te toca continuar con la propuesta"): esas siguen
+ *  encendidas hasta que la propuesta quede publicada de verdad. */
 export function NotificationsBell() {
   const [open, setOpen] = useState(false);
   const navigate = useNavigate();
@@ -73,7 +75,15 @@ export function NotificationsBell() {
                   >
                     <div className="flex items-start justify-between gap-2">
                       <p className="text-sm font-medium text-foreground">{n.title}</p>
-                      {!n.seen && <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-primary" />}
+                      {/* Pegajosa (acción pendiente): el punto no se apaga al abrir el
+                          panel — se resuelve solo cuando la propuesta se publica. */}
+                      {!n.seen && n.type === 'proposal:margins-pending' ? (
+                        <span className="mt-0.5 shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold text-primary">
+                          Pendiente
+                        </span>
+                      ) : !n.seen ? (
+                        <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-primary" />
+                      ) : null}
                     </div>
                     {n.body && <p className="mt-0.5 text-xs text-muted-foreground">{n.body}</p>}
                     <div className="mt-1 flex items-center justify-between gap-2">
