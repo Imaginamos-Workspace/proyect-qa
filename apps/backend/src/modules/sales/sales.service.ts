@@ -871,6 +871,13 @@ export class SalesService {
             ? updated.replace(/\*\*Owner TL:\*\*.*/, `**Owner TL:** @${tlLogin}`)
             : updated.replace(/(\*\*Owner vendedor:\*\*.*)/, `$1\n**Owner TL:** @${tlLogin}`);
         }
+        // Contrato de status.md (rules/13): toda transición = línea Etapa
+        // actual + fila en la bitácora, SIEMPRE juntas. Antes solo cambiábamos
+        // la línea — el mismo pecado (en espejo) que dejó muda una notificación
+        // cuando el TL solo escribió la bitácora.
+        const hoy = new Date().toISOString().slice(0, 10);
+        const fila = `| ${hoy} | propuesta-en-armado | @${requesterLogin ?? 'plataforma'} | Handoff desde la plataforma QA${tlLogin ? ` — Owner TL @${tlLogin}` : ''}. |`;
+        updated = updated.replace(/(\n\|[^\n]*\|)(?![\s\S]*\n\|)/, `$1\n${fila}`);
         await this.writeFileToRepo(
           statusPath,
           updated,
