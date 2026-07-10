@@ -1,5 +1,5 @@
 import { Link } from 'react-router';
-import { FileText, Info, ShieldAlert, Settings, Eye } from 'lucide-react';
+import { FileText, Info, ShieldAlert, Settings, Eye, Percent } from 'lucide-react';
 import { useProposalAccess, useProposalMetrics } from '@/hooks/use-sales';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -13,16 +13,27 @@ export function ProposalAccessCard({ id }: { id: string; cliente: string; oportu
   if (isLoading || !data) return null;
 
   if (!data.generated) {
-    // El TL dejó la propuesta a medias → decir QUÉ falta, no invitar a publicar.
+    // El TL terminó y le toca al vendedor definir los márgenes → CTA directo
+    // al formulario donde lo termina (no dejar el mensaje sin acción).
     if (data.pendingReason) {
       return (
-        <Card className="border-warning/40">
-          <CardContent className="flex items-start gap-3 p-4">
-            <ShieldAlert className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
-            <div>
-              <p className="text-sm font-medium text-foreground">Falta un paso antes de publicar</p>
-              <p className="mt-0.5 text-sm text-muted-foreground">{data.pendingReason}</p>
+        <Card className="border-primary/40">
+          <CardContent className="space-y-3 p-4">
+            <div className="flex items-start gap-3">
+              <Percent className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+              <div>
+                <p className="text-sm font-medium text-foreground">Te toca definir los márgenes</p>
+                <p className="mt-0.5 text-sm text-muted-foreground">
+                  El TL ya armó los 3 tiers. Define el margen de cada uno y genera el comparativo — con eso la propuesta
+                  queda lista para publicar (rules/13: los precios los defines tú).
+                </p>
+              </div>
             </div>
+            <Button className="w-full" asChild>
+              <Link to={`/ventas/${id}/propuesta`}>
+                <Percent className="mr-2 h-4 w-4" /> Definir márgenes y generar la propuesta
+              </Link>
+            </Button>
           </CardContent>
         </Card>
       );

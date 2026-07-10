@@ -198,17 +198,63 @@ export class SalesService {
         (existing ?? []).map(async (row) => {
           const statusFile = await this.readFileFromRepo(`sales/${row.cliente}/${row.oportunidad}/status.md`).catch(() => null);
           const fresh = statusFile?.content.match(/\*\*Etapa actual:\*\*\s*(\S+)/)?.[1];
-          if (!fresh || fresh === row.status) return;
-          await this.supabase
-            .from(OPPORTUNITIES_TABLE)
-            .update({ status: fresh, updated_at: new Date().toISOString() })
-            .eq('id', row.id);
-          await this.notifyStatusChange(row, fresh);
+          const current = fresh ?? row.status;
+          if (fresh && fresh !== row.status) {
+            await this.supabase
+              .from(OPPORTUNITIES_TABLE)
+              .update({ status: fresh, updated_at: new Date().toISOString() })
+              .eq('id', row.id);
+            await this.notifyStatusChange(row, fresh);
+          }
+          // El TL NO cambia el status al terminar de armar los tiers (queda en
+          // propuesta-en-armado) — su señal es el commit de propuestas-3-tier.yml.
+          // Sin esto el vendedor no se enteraba de que le toca definir márgenes.
+          // Notificamos UNA vez (dedup por tipo) cuando detectamos los tiers.
+          if (current === 'propuesta-en-armado') {
+            await this.notifyMarginsPending(row);
+          }
         }),
       );
     } catch (err) {
       this.logger.error(`Descubrimiento de oportunidades del monorepo falló: ${(err as Error).message}`);
     }
+  }
+
+  /** El TL terminó de armar los tiers (aún en propuesta-en-armado) → avisar al
+   *  vendedor que le toca definir los márgenes, con CTA directo al form. Se
+   *  crea UNA sola vez (dedup por type) y solo si los tiers ya están y la
+   *  propuesta no se publicó todavía. */
+  private async notifyMarginsPending(opp: {
+    id: string;
+    cliente: string;
+    oportunidad: string;
+    vendedor_login: string;
+  }): Promise<void> {
+    const type = 'proposal:margins-pending';
+    const { data: already } = await this.supabase
+      .from(NOTIFICATIONS_TABLE)
+      .select('id')
+      .eq('opportunity_id', opp.id)
+      .eq('type', type)
+      .limit(1);
+    if (already?.length) return; // ya avisamos
+
+    const base = `sales/${opp.cliente}/${opp.oportunidad}`;
+    const tiers = await this.readFileFromRepo(`${base}/propuestas-3-tier.yml`).catch(() => null);
+    if (!tiers) return; // el TL aún no terminó de armar
+    const finalized = await this.readFileFromRepo(`${base}/PROPUESTAS.md`).catch(() => null);
+    if (finalized) return; // ya finalizada → no aplica el aviso de márgenes
+
+    const { error } = await this.supabase.from(NOTIFICATIONS_TABLE).insert({
+      opportunity_id: opp.id,
+      vendedor_login: opp.vendedor_login,
+      type,
+      title: `El TL armó las propuestas de ${opp.cliente}/${opp.oportunidad}`,
+      body: 'Te toca definir los márgenes de los 3 tiers y generar el comparativo.',
+      cta_label: 'Definir márgenes',
+      cta_path: `/ventas/${opp.id}/propuesta`,
+    });
+    if (error) this.logger.warn(`No se pudo crear la notificación de márgenes de ${opp.cliente}: ${error.message}`);
   }
 
   /** Crea la notificación de una transición de etapa, con el CTA que lleva al
