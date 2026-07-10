@@ -850,23 +850,33 @@ export class SalesService {
     const result = await this.syncBrief(id, requesterLogin); // ya verifica dueño
     const { opp } = await this.loadOpportunity(id);
 
-    const statusPath = `sales/${opp.cliente}/${opp.oportunidad}/status.md`;
-    const current = await this.readFileFromRepo(statusPath);
-    if (current) {
-      let updated = current.content.replace(
-        /\*\*Etapa actual:\*\*\s*\S+/,
-        '**Etapa actual:** propuesta-en-armado',
-      );
-      if (tlLogin) {
-        updated = /\*\*Owner TL:\*\*/.test(updated)
-          ? updated.replace(/\*\*Owner TL:\*\*.*/, `**Owner TL:** @${tlLogin}`)
-          : updated.replace(/(\*\*Owner vendedor:\*\*.*)/, `$1\n**Owner TL:** @${tlLogin}`);
+    // Errores del monorepo con mensaje REAL: sin esto un Error genérico se
+    // volvía "Internal server error" opaco en el botón (caso real).
+    try {
+      const statusPath = `sales/${opp.cliente}/${opp.oportunidad}/status.md`;
+      const current = await this.readFileFromRepo(statusPath);
+      if (current) {
+        let updated = current.content.replace(
+          /\*\*Etapa actual:\*\*\s*\S+/,
+          '**Etapa actual:** propuesta-en-armado',
+        );
+        if (tlLogin) {
+          updated = /\*\*Owner TL:\*\*/.test(updated)
+            ? updated.replace(/\*\*Owner TL:\*\*.*/, `**Owner TL:** @${tlLogin}`)
+            : updated.replace(/(\*\*Owner vendedor:\*\*.*)/, `$1\n**Owner TL:** @${tlLogin}`);
+        }
+        await this.writeFileToRepo(
+          statusPath,
+          updated,
+          `sales(${opp.cliente}): ${opp.oportunidad} pasa a propuesta-en-armado${tlLogin ? ` (Owner TL @${tlLogin})` : ''}`,
+          current.sha,
+        );
       }
-      await this.writeFileToRepo(
-        statusPath,
-        updated,
-        `sales(${opp.cliente}): ${opp.oportunidad} pasa a propuesta-en-armado${tlLogin ? ` (Owner TL @${tlLogin})` : ''}`,
-        current.sha,
+    } catch (err) {
+      if (err instanceof HttpException) throw err;
+      this.logger.error(`handoff(${id}) falló escribiendo status.md: ${(err as Error).message}`);
+      throw new ServiceUnavailableException(
+        `El brief se sincronizó pero no se pudo actualizar status.md (${(err as Error).message.slice(0, 120)}). Reintenta "Pasar a TL" en un momento.`,
       );
     }
 
@@ -1021,7 +1031,11 @@ export class SalesService {
   }
 
   /** Crea/actualiza un archivo de texto en el monorepo vía Contents API.
-   *  Si no se pasa `sha`, lo busca (GET); 404 → archivo nuevo, sin sha. */
+   *  Si no se pasa `sha`, lo busca (GET); 404 → archivo nuevo, sin sha.
+   *  Con REINTENTO en 409/422: el afterTurn (auto-sync de brief.md) commitea
+   *  en segundo plano y deja el sha viejo justo cuando el vendedor toca
+   *  "Sincronizar"/"Pasar a TL" — se relee el sha fresco y se reintenta
+   *  (caso real: el handoff moría con "Internal server error"). */
   private async writeFileToRepo(path: string, content: string, message: string, sha?: string): Promise<void> {
     if (!this.writeToken) throw new Error('GITHUB_WRITE_TOKEN no configurado en el servidor.');
     let resolvedSha = sha;
@@ -1030,22 +1044,29 @@ export class SalesService {
       resolvedSha = existing?.sha;
     }
 
-    const res = await fetch(`https://api.github.com/repos/${OWNER}/${REPO}/contents/${path}`, {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${this.writeToken}`,
-        Accept: 'application/vnd.github+json',
-        'Content-Type': 'application/json',
-        'User-Agent': 'qa-portal-sales',
-      },
-      body: JSON.stringify({
-        message,
-        content: Buffer.from(content, 'utf8').toString('base64'),
-        branch: 'main',
-        ...(resolvedSha ? { sha: resolvedSha } : {}),
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
+    const attempt = async (useSha?: string): Promise<Response> =>
+      fetch(`https://api.github.com/repos/${OWNER}/${REPO}/contents/${path}`, {
+        method: 'PUT',
+        headers: {
+          Authorization: `Bearer ${this.writeToken}`,
+          Accept: 'application/vnd.github+json',
+          'Content-Type': 'application/json',
+          'User-Agent': 'qa-portal-sales',
+        },
+        body: JSON.stringify({
+          message,
+          content: Buffer.from(content, 'utf8').toString('base64'),
+          branch: 'main',
+          ...(useSha ? { sha: useSha } : {}),
+        }),
+        signal: AbortSignal.timeout(15_000),
+      });
+
+    let res = await attempt(resolvedSha);
+    if (res.status === 409 || res.status === 422) {
+      const fresh = await this.readFileFromRepo(path).catch(() => null);
+      res = await attempt(fresh?.sha);
+    }
     if (!res.ok) {
       const text = await res.text().catch(() => '');
       throw new Error(

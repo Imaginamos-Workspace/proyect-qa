@@ -528,20 +528,32 @@ export function SalesChatPage() {
                   </a>
                 )}
                 {/* rules/13 §Cerrar el brief: el VENDEDOR asigna el Owner TL.
-                    La lista sale de team.json (roles reales, fail-closed). */}
+                    Chips en vez de <select>: el popup nativo del select en
+                    móvil renderiza diminuto y lejos de la caja (caso real),
+                    y con 2-3 TLs los chips son un toque directo. */}
                 {opp.status === 'brief' && (
-                  <select
-                    value={handoffTl}
-                    onChange={(e) => setHandoffTl(e.target.value)}
-                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-                  >
-                    <option value="">¿A cuál TL? (elige para asignarlo)</option>
-                    {(tls ?? []).map((t) => (
-                      <option key={t.login} value={t.login}>
-                        {t.name ? `${t.name} (@${t.login})` : `@${t.login}`}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="space-y-1">
+                    <p className="text-xs font-medium text-muted-foreground">¿A cuál TL se lo pasas?</p>
+                    <div className="flex flex-wrap gap-2">
+                      {(tls ?? []).map((t) => (
+                        <button
+                          key={t.login}
+                          type="button"
+                          onClick={() => setHandoffTl(handoffTl === t.login ? '' : t.login)}
+                          className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
+                            handoffTl === t.login
+                              ? 'border-primary bg-primary text-primary-foreground'
+                              : 'border-input bg-background text-foreground hover:border-primary hover:bg-primary/5'
+                          }`}
+                        >
+                          {t.name ? `${t.name} (@${t.login})` : `@${t.login}`}
+                        </button>
+                      ))}
+                      {!tls?.length && (
+                        <p className="text-xs text-muted-foreground">No se pudieron cargar los TL de team.json.</p>
+                      )}
+                    </div>
+                  </div>
                 )}
                 <Button
                   className="w-full"
