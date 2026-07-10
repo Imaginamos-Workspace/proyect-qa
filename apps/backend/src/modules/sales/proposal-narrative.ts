@@ -15,6 +15,7 @@
 export interface ProposalNarrative {
   heroSub: string;
   problema: { callout: string; bullets: [string, string, string] };
+  objetivos: [ObjetivoItem, ObjetivoItem, ObjetivoItem, ObjetivoItem];
   solucion: {
     callout: string;
     mvp: { entrega: string; sirve: string };
@@ -28,6 +29,13 @@ export interface ProposalNarrative {
     media: { for: string; diff: string };
     solida: { for: string; diff: string };
   };
+  asunciones: [string, string, string, string];
+  riesgos: [string, string];
+}
+
+interface ObjetivoItem {
+  titulo: string;
+  detalle: string;
 }
 
 /** Placeholder EXACTO del template → función que saca su valor del JSON. El
@@ -39,6 +47,14 @@ const PLACEHOLDER_MAP: { ph: string; get: (n: ProposalNarrative) => string }[] =
   { ph: '(Dato concreto que cuantifica el dolor)', get: (n) => n.problema.bullets[0] },
   { ph: '(Consecuencia de no resolverlo en 6-12 meses)', get: (n) => n.problema.bullets[1] },
   { ph: '(Lo que el cliente ya intentó y por qué no funcionó)', get: (n) => n.problema.bullets[2] },
+  { ph: '(Objetivo 1 · título)', get: (n) => n.objetivos[0].titulo },
+  { ph: '(Objetivo 1 · qué gana el cliente)', get: (n) => n.objetivos[0].detalle },
+  { ph: '(Objetivo 2 · título)', get: (n) => n.objetivos[1].titulo },
+  { ph: '(Objetivo 2 · qué gana el cliente)', get: (n) => n.objetivos[1].detalle },
+  { ph: '(Objetivo 3 · título)', get: (n) => n.objetivos[2].titulo },
+  { ph: '(Objetivo 3 · qué gana el cliente)', get: (n) => n.objetivos[2].detalle },
+  { ph: '(Objetivo 4 · título)', get: (n) => n.objetivos[3].titulo },
+  { ph: '(Objetivo 4 · qué gana el cliente)', get: (n) => n.objetivos[3].detalle },
   { ph: '(Una frase: qué construimos para resolver ese problema.)', get: (n) => n.solucion.callout },
   { ph: '(Producto mínimo funcional)', get: (n) => n.solucion.mvp.entrega },
   { ph: '(Resultado concreto en su día a día)', get: (n) => n.solucion.mvp.sirve },
@@ -56,6 +72,12 @@ const PLACEHOLDER_MAP: { ph: string; get: (n: ProposalNarrative) => string }[] =
   { ph: '(2-3 capacidades adicionales)', get: (n) => n.tiers.media.diff },
   { ph: '(Qué obtiene — la versión completa.)', get: (n) => n.tiers.solida.for },
   { ph: '(las capacidades premium)', get: (n) => n.tiers.solida.diff },
+  { ph: '(Asunción 1)', get: (n) => n.asunciones[0] },
+  { ph: '(Asunción 2)', get: (n) => n.asunciones[1] },
+  { ph: '(Asunción 3)', get: (n) => n.asunciones[2] },
+  { ph: '(Asunción 4)', get: (n) => n.asunciones[3] },
+  { ph: '(Riesgo 1 y cómo lo manejamos)', get: (n) => n.riesgos[0] },
+  { ph: '(Riesgo 2 y cómo lo manejamos)', get: (n) => n.riesgos[1] },
 ];
 
 /** ¿El HTML todavía tiene placeholders narrativos del template? Sirve para NO
@@ -101,6 +123,10 @@ export function assertNarrativeComplete(n: unknown): asserts n is ProposalNarrat
   str(o.heroSub, 'heroSub');
   str(o.problema?.callout, 'problema.callout');
   [0, 1, 2].forEach((i) => str(o.problema?.bullets?.[i], `problema.bullets[${i}]`));
+  [0, 1, 2, 3].forEach((i) => {
+    str(o.objetivos?.[i]?.titulo, `objetivos[${i}].titulo`);
+    str(o.objetivos?.[i]?.detalle, `objetivos[${i}].detalle`);
+  });
   str(o.solucion?.callout, 'solucion.callout');
   str(o.solucion?.mvp?.entrega, 'solucion.mvp.entrega');
   str(o.solucion?.mvp?.sirve, 'solucion.mvp.sirve');
@@ -116,6 +142,8 @@ export function assertNarrativeComplete(n: unknown): asserts n is ProposalNarrat
   str(o.tiers?.media?.diff, 'tiers.media.diff');
   str(o.tiers?.solida?.for, 'tiers.solida.for');
   str(o.tiers?.solida?.diff, 'tiers.solida.diff');
+  [0, 1, 2, 3].forEach((i) => str(o.asunciones?.[i], `asunciones[${i}]`));
+  [0, 1].forEach((i) => str(o.riesgos?.[i], `riesgos[${i}]`));
   if (errs.length) throw new Error(`narrativa incompleta, faltan: ${errs.join(', ')}`);
 }
 
@@ -131,6 +159,12 @@ export function buildNarrativePrompt(brief: string, tiersSummary: string, client
     "callout": "una frase: qué le duele al cliente, a quién y por qué importa",
     "bullets": ["dato/consecuencia concreta del problema", "otra consecuencia o costo de no resolverlo", "tercer ángulo del problema, apoyado en el brief"]
   },
+  "objetivos": [
+    { "titulo": "objetivo 1 en 3-5 palabras", "detalle": "qué gana el cliente con ese objetivo, una frase" },
+    { "titulo": "objetivo 2 en 3-5 palabras", "detalle": "qué gana el cliente" },
+    { "titulo": "objetivo 3 en 3-5 palabras", "detalle": "qué gana el cliente" },
+    { "titulo": "objetivo 4 en 3-5 palabras", "detalle": "qué gana el cliente" }
+  ],
   "solucion": {
     "callout": "una frase: qué construimos para resolverlo",
     "mvp": { "entrega": "qué entregamos en la primera fase", "sirve": "para qué le sirve, resultado concreto" },
@@ -143,7 +177,9 @@ export function buildNarrativePrompt(brief: string, tiersSummary: string, client
     "economica": { "for": "qué obtiene concretamente en la opción económica", "ideal": "para qué tipo de cliente es la mejor" },
     "media": { "for": "qué obtiene en la opción media", "diff": "2-3 capacidades que la diferencian de la económica" },
     "solida": { "for": "qué obtiene en la opción sólida", "diff": "las capacidades premium que la diferencian" }
-  }
+  },
+  "asunciones": ["asunción de la que depende el plazo/precio (del brief: integraciones, accesos, documentación, responsable del cliente, contenidos)", "asunción 2", "asunción 3", "asunción 4"],
+  "riesgos": ["riesgo principal del proyecto y cómo lo manejamos (una frase)", "segundo riesgo o cómo se gestionan cambios de alcance"]
 }
 
 REGLAS DURAS:
