@@ -3,6 +3,12 @@ import { ConfigService } from '@nestjs/config';
 import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../../config/supabase.module';
 import { GeminiProvider } from '../ai/providers/gemini.provider';
+import {
+  assertNarrativeComplete,
+  buildNarrativePrompt,
+  hasNarrativePlaceholders,
+  injectNarrative,
+} from './proposal-narrative';
 import { SalesRagService } from './sales-rag.service';
 import { RolesService } from '../scrum/roles.service';
 import type {
@@ -1166,9 +1172,90 @@ export class SalesService {
     return { tiers, markupDefault, coordinationDefault };
   }
 
+  /** Extrae un resumen compacto de los tiers (headline + descripción + para
+   *  quién + nombres de features) para alimentar el prompt de la narrativa —
+   *  sin volcar todo el YAML de 24KB (precios/horas/stack no van al prompt). */
+  private summarizeTiersForPrompt(yaml: string): string {
+    const tiersIdx = yaml.indexOf('\ntiers:');
+    if (tiersIdx < 0) return '';
+    const block = yaml.slice(tiersIdx);
+    const heads: { key: string; at: number }[] = [];
+    const re = /^ {2}([a-z_]+):\s*$/gm;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(block))) heads.push({ key: m[1], at: m.index });
+    return heads
+      .map((h, i) => {
+        const seg = block.slice(h.at, heads[i + 1]?.at ?? block.length);
+        const one = (k: string) => seg.match(new RegExp(`^ {4}${k}:\\s*(.+)$`, 'm'))?.[1]?.replace(/^["']|["']$/g, '').trim();
+        const desc = seg.match(/^ {4}description:\s*\|?\s*\n([\s\S]*?)(?=\n {4}\w|\n {2}\w|$)/m)?.[1]
+          ?.split('\n').map((l) => l.trim()).filter(Boolean).join(' ') ?? '';
+        const feats = [...seg.matchAll(/^ {6}- name:\s*(.+)$/gm)].map((x) => x[1].trim());
+        return [
+          `### ${h.key}`,
+          one('headline') && `Titular: ${one('headline')}`,
+          desc && `Descripción: ${desc}`,
+          one('ideal_for') && `Ideal para: ${one('ideal_for')}`,
+          feats.length && `Incluye: ${feats.join('; ')}`,
+        ].filter(Boolean).join('\n');
+      })
+      .join('\n\n');
+  }
+
+  /** Genera la NARRATIVA de la propuesta (problema, solución, qué incluye, valor
+   *  por tier) con el modelo, desde el brief + los tiers, y la inyecta en
+   *  proposal.html. Idempotente: si ya no hay placeholders (el vendedor la
+   *  revisó/llenó), no toca nada. Best-effort: si el modelo falla, NO aborta la
+   *  finalización — el validador del workflow bloquea igual que antes, así que
+   *  nunca se publica con placeholders (falla fuerte, no en silencio). */
+  private async generateAndCommitNarrative(cliente: string, oportunidad: string): Promise<void> {
+    const base = `sales/${cliente}/${oportunidad}`;
+    const htmlFile = await this.readFileFromRepo(`${base}/proposal.html`).catch(() => null);
+    if (!htmlFile || !hasNarrativePlaceholders(htmlFile.content)) return; // nada que llenar
+
+    const briefFile = await this.readFileFromRepo(`${base}/brief.md`).catch(() => null);
+    const tiersFile =
+      (await this.readFileFromRepo(`${base}/propuestas-3-tier.yml`).catch(() => null)) ??
+      (await this.readFileFromRepo(`${base}/propuestas.yml`).catch(() => null));
+    if (!briefFile || !tiersFile) {
+      this.logger.warn(`Narrativa de ${cliente}: falta brief.md o propuestas-3-tier.yml — se deja el template, el validador bloqueará.`);
+      return;
+    }
+
+    try {
+      const prompt = buildNarrativePrompt(briefFile.content, this.summarizeTiersForPrompt(tiersFile.content), cliente);
+      const raw = await this.gemini.generateRaw({
+        prompt,
+        temperature: 0.3,
+        maxOutputTokens: 2048,
+        responseMimeType: 'application/json',
+      });
+      const narrative = JSON.parse(raw.trim().replace(/^```json\s*|\s*```$/g, ''));
+      assertNarrativeComplete(narrative);
+      const { html, missing } = injectNarrative(htmlFile.content, narrative);
+      if (missing.length) {
+        this.logger.warn(`Narrativa de ${cliente}: ${missing.length} placeholders sin valor — se deja el template, el validador bloqueará.`);
+        return;
+      }
+      await this.writeFileToRepo(
+        `${base}/proposal.html`,
+        html,
+        `sales(${cliente}): narrativa de ${oportunidad} generada desde el brief (revisar antes de enviar)`,
+        htmlFile.sha,
+      );
+      this.logger.log(`Narrativa de ${cliente}/${oportunidad} generada e inyectada en proposal.html.`);
+    } catch (err) {
+      // No abortamos la finalización: el validador del workflow bloquea la
+      // publicación si quedan placeholders. Fallo visible en logs, no al cliente.
+      this.logger.error(`Narrativa de ${cliente}/${oportunidad} falló (${(err as Error).message}) — sigue el flujo; el validador bloqueará si hay placeholders.`);
+    }
+  }
+
   /** Dispara el workflow que finaliza la propuesta con los márgenes que puso
    *  el vendedor (rename → set-margin ×tier → compare → rellena proposal.html).
-   *  El gate de rol (vendedor + dueño) va acá; el workflow no lo re-verifica. */
+   *  El gate de rol (vendedor + dueño) va acá; el workflow no lo re-verifica.
+   *  ANTES del dispatch genera la narrativa (problema/solución/tiers) desde el
+   *  brief y la commitea, para que el workflow rellene precios sobre un HTML ya
+   *  nutrido y el validador no bloquee por placeholders del template. */
   async finalizeProposal(
     id: string,
     requesterLogin: string | null,
@@ -1188,6 +1275,10 @@ export class SalesService {
         throw new BadRequestException(`El multiplicador de coordinación del tier "${tier}" debe ser positivo (ej. 1.2).`);
       }
     }
+
+    // Nutrir la narrativa ANTES del dispatch: el workflow luego rellena precios
+    // sobre este HTML ya lleno. Best-effort (no bloquea la finalización).
+    await this.generateAndCommitNarrative(opp.cliente, opp.oportunidad);
 
     const res = await fetch(
       `https://api.github.com/repos/${OWNER}/${REPO}/actions/workflows/proposals-finalize.yml/dispatches`,
