@@ -3,7 +3,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../../../config/supabase.module';
 import { ScraperService } from './scraper.service';
 import { normalizeDomain } from './scraper.utils';
-import type { OpenDataCompany } from './opendata.service';
+import type { OpenDataCompany } from '../../../shared-types/sales.types';
 
 const PROSPECTS_TABLE = 'sales_prospects';
 const SEARCHES_TABLE = 'sales_prospect_searches';

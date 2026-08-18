@@ -20,6 +20,8 @@ import type {
   SalesSendMessageResult,
   SalesSyncResult,
   SalesVendedor,
+  OpenDataCompany,
+  ProspectSources,
 } from '@qa/shared-types';
 
 export function useSalesOpportunities() {
@@ -422,5 +424,35 @@ export function useDeleteOpportunity() {
   return useMutation({
     mutationFn: (id: string) => api.delete<{ deleted: true; filesDeleted: number }>(`/sales/opportunities/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sales', 'opportunities'] }),
+  });
+}
+
+// ── Fuente WEB: Datos Abiertos Colombia ─────────────────────────────────────
+
+/** Qué fuentes de prospección están operativas (Apollo puede estar sin plan). */
+export function useProspectSources() {
+  return useQuery({
+    queryKey: ['sales', 'prospects', 'sources'],
+    queryFn: () => api.get<ProspectSources>('/sales/prospects/sources'),
+    staleTime: 5 * 60_000,
+  });
+}
+
+/** Busca empresas colombianas en el registro público (SECOP II).
+ *  A diferencia de Apollo, no consume créditos ni cuota. */
+export function useOpenDataSearch() {
+  return useMutation({
+    mutationFn: (input: { keywords: string; city?: string; limit?: number; offset?: number }) =>
+      api.post<OpenDataCompany[]>('/sales/prospects/opendata/search', input, 25_000),
+  });
+}
+
+/** Guarda una de esas empresas en el pipeline (idempotente por NIT). */
+export function useSaveOpenDataCompany() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (c: OpenDataCompany) =>
+      api.post<{ saved: boolean; reason?: string }>('/sales/prospects/opendata/save', c),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['sales', 'prospects', 'saved'] }),
   });
 }

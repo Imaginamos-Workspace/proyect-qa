@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, Logger, ServiceUnavailableException } from '@nestjs/common';
 import { normalizeDomain } from './scraper.utils';
+import type { OpenDataCompany } from '../../../shared-types/sales.types';
 
 /**
  * Descubrimiento de empresas desde DATOS ABIERTOS COLOMBIA (datos.gov.co),
@@ -32,21 +33,7 @@ const MAX_LIMIT = 50;
 /** El dataset escribe "No Provisto" en vez de dejar el campo vacío. */
 const SIN_DATO = /^(no provisto|no definido|n\/?a|ninguno|-)$/i;
 
-export interface OpenDataCompany {
-  /** Razón social tal como está en el registro. */
-  name: string;
-  nit: string | null;
-  phone: string | null;
-  email: string | null;
-  address: string | null;
-  city: string | null;
-  department: string | null;
-  /** Dominio normalizado del sitio web, si lo declararon. */
-  domain: string | null;
-  /** Tipo societario (SAS, LTDA…) — sirve para calificar el lead. */
-  companyType: string | null;
-  category: string | null;
-}
+// El tipo vive en shared-types (lo consume también el frontend).
 
 function limpio(v: unknown): string | null {
   const s = typeof v === 'string' ? v.trim() : '';
