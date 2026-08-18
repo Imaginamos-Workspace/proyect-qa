@@ -61,7 +61,9 @@ export function ProspectsSearch() {
   const createSavedSearch = useCreateSavedSearch();
   const deleteSavedSearch = useDeleteSavedSearch();
 
-  const [view, setView] = useState<'buscar' | 'pipeline'>('pipeline');
+  // Arranca en "Buscar en Apollo" — es la primera pestaña, y su contenido es el
+  // que se ve al entrar. "Mis clientes" queda a un clic.
+  const [view, setView] = useState<'buscar' | 'pipeline'>('buscar');
   const [keywords, setKeywords] = useState('');
   const [titles, setTitles] = useState('');
   const [locations, setLocations] = useState('');
@@ -100,11 +102,11 @@ export function ProspectsSearch() {
   return (
     <div className="space-y-4">
       <div className="flex gap-2">
-        <Button variant={view === 'pipeline' ? 'default' : 'outline'} size="sm" onClick={() => setView('pipeline')}>
-          <KanbanSquare className="mr-2 h-4 w-4" /> Mi pipeline{pipelineCount ? ` (${pipelineCount})` : ''}
-        </Button>
         <Button variant={view === 'buscar' ? 'default' : 'outline'} size="sm" onClick={() => setView('buscar')}>
           <Search className="mr-2 h-4 w-4" /> Buscar en Apollo
+        </Button>
+        <Button variant={view === 'pipeline' ? 'default' : 'outline'} size="sm" onClick={() => setView('pipeline')}>
+          <KanbanSquare className="mr-2 h-4 w-4" /> Mis clientes{pipelineCount ? ` (${pipelineCount})` : ''}
         </Button>
       </div>
 
