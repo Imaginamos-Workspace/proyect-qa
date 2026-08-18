@@ -5,6 +5,8 @@ import { SalesRagService } from './sales-rag.service';
 import { ProspectsService } from './prospects.service';
 import { ProspectsCronController } from './prospects-cron.controller';
 import { RateLimitService } from './rate-limit.service';
+import { ScraperService } from './web/scraper.service';
+import { WebProspectsService } from './web/web-prospects.service';
 import { AuthModule } from '../auth/auth.module';
 import { AIModule } from '../ai/ai.module';
 import { ScrumModule } from '../scrum/scrum.module';
@@ -12,6 +14,6 @@ import { ScrumModule } from '../scrum/scrum.module';
 @Module({
   imports: [AuthModule, AIModule, ScrumModule],
   controllers: [SalesController, ProspectsCronController],
-  providers: [SalesService, SalesRagService, ProspectsService, RateLimitService],
+  providers: [SalesService, SalesRagService, ProspectsService, RateLimitService, ScraperService, WebProspectsService],
 })
 export class SalesModule {}
