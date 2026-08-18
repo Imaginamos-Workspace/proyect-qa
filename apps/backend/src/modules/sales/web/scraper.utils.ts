@@ -78,14 +78,25 @@ export function extractRoleEmails(text: string): string[] {
 /**
  * Teléfonos colombianos. Dos formas válidas desde la marcación unificada de
  * 2022, ambas de 10 dígitos:
- *   - móvil:  3XX XXX XXXX
- *   - fijo:   60X XXX XXXX   (601 Bogotá, 604 Medellín, 602 Cali…)
+ *   - móvil:  3XX XXX XXXX  (indicativos realmente asignados, no cualquier 3XX)
+ *   - fijo:   60X XXX XXXX  (601 Bogotá, 604 Medellín, 602 Cali…)
  * Acepta +57 opcional, espacios, guiones y paréntesis. Normaliza a "+57XXXXXXXXXX".
+ *
+ * El HTML real está lleno de UUIDs y hashes que contienen secuencias de 10
+ * dígitos: `...adfa-c23805172508` y `...b014a3030723815a8a` se colaban como
+ * teléfonos. De ahí las dos defensas:
+ *   1. el número no puede estar pegado a otro carácter alfanumérico, y
+ *   2. el indicativo tiene que ser uno de los rangos asignados en Colombia.
  */
+const PHONE_PREFIX = '3(?:0[0-5]|1\\d|2[0-4]|5[0-2])|60[1-8]';
+const PHONE_RE = new RegExp(
+  `(?<![0-9a-zA-Z])(?:\\+?57[\\s.-]*)?(?:\\(\\s*(${PHONE_PREFIX})\\s*\\)|(${PHONE_PREFIX}))[\\s.-]*(\\d{3})[\\s.-]*(\\d{4})(?![0-9a-zA-Z])`,
+  'g',
+);
+
 export function extractColombianPhones(text: string): string[] {
   const out = new Set<string>();
-  const re = /(?:\+?57[\s.-]*)?(?:\(\s*(3\d{2}|60\d)\s*\)|(3\d{2}|60\d))[\s.-]*(\d{3})[\s.-]*(\d{4})(?!\d)/g;
-  for (const m of text.matchAll(re)) {
+  for (const m of text.matchAll(PHONE_RE)) {
     const area = m[1] ?? m[2];
     out.add(`+57${area}${m[3]}${m[4]}`);
   }

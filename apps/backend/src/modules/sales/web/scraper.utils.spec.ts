@@ -82,6 +82,31 @@ test('extractColombianPhones: ignora números que no son telefónicos', () => {
   assert.deepEqual(extractColombianPhones('12345678901'), []);
 });
 
+test('extractColombianPhones: no matchea dentro de UUIDs ni hashes (regresión real)', () => {
+  // Ambos salieron de HTML de producción (colsubsidio.com y alqueria.com.co)
+  // y se colaban como teléfonos: dígitos embebidos en un id y en un hash.
+  assert.deepEqual(
+    extractColombianPhones('"id":"1a4928a5-7bee-4324-adfa-c23805172508","drupal_internal__'),
+    [],
+  );
+  assert.deepEqual(
+    extractColombianPhones('f811a16c3578fc70dd45e7b014a3030723815a8a_f4744e52c3.jpg'),
+    [],
+  );
+});
+
+test('extractColombianPhones: solo indicativos realmente asignados', () => {
+  // 380 y 333 no son rangos móviles de Colombia; 609 no es un fijo válido.
+  assert.deepEqual(extractColombianPhones('380 517 2508'), []);
+  assert.deepEqual(extractColombianPhones('333 123 4567'), []);
+  assert.deepEqual(extractColombianPhones('609 123 4567'), []);
+  // Estos sí: Tigo 300, Claro 320, Movistar 315, fijo Barranquilla 605.
+  assert.deepEqual(extractColombianPhones('300 123 4567').length, 1);
+  assert.deepEqual(extractColombianPhones('320 123 4567').length, 1);
+  assert.deepEqual(extractColombianPhones('315 123 4567').length, 1);
+  assert.deepEqual(extractColombianPhones('605 123 4567').length, 1);
+});
+
 test('extractColombianPhones: deduplica el mismo número escrito distinto', () => {
   const t = '(601) 745 8900 y +57 601 7458900 y 601-745-8900';
   assert.deepEqual(extractColombianPhones(t), ['+576017458900']);
