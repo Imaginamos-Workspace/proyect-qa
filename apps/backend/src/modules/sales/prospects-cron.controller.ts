@@ -1,5 +1,6 @@
 import { Controller, ForbiddenException, Get, Req } from '@nestjs/common';
 import { ProspectsService } from './prospects.service';
+import { WebProspectsService } from './web/web-prospects.service';
 
 import { timingSafeEqual } from 'crypto';
 
@@ -12,7 +13,10 @@ import { timingSafeEqual } from 'crypto';
  *  automáticamente `Authorization: Bearer $CRON_SECRET` en sus crons. */
 @Controller('sales/prospects')
 export class ProspectsCronController {
-  constructor(private readonly prospects: ProspectsService) {}
+  constructor(
+    private readonly prospects: ProspectsService,
+    private readonly web: WebProspectsService,
+  ) {}
 
   @Get('cron-weekly')
   async cronWeekly(@Req() req: { headers: Record<string, string | string[] | undefined> }) {
@@ -30,7 +34,12 @@ export class ProspectsCronController {
         'No autorizado. Configura CRON_SECRET en el backend (Vercel lo envía como Bearer en sus crons).',
       );
     }
-    return this.prospects.runWeekly();
+    // Dos fuentes independientes: si Apollo está sin plan o sin créditos, la
+    // web tiene que correr igual. Por eso van con catch por separado y el
+    // resultado dice qué pasó con cada una.
+    const apollo = await this.prospects.runWeekly().catch((e: Error) => ({ error: e.message }));
+    const web = await this.web.runWeekly().catch((e: Error) => ({ error: e.message }));
+    return { apollo, web };
   }
 }
 

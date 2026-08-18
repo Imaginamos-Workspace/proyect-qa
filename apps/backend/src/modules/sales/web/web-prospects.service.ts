@@ -3,6 +3,7 @@ import { SupabaseClient } from '@supabase/supabase-js';
 import { SUPABASE_CLIENT } from '../../../config/supabase.module';
 import { ScraperService } from './scraper.service';
 import { normalizeDomain } from './scraper.utils';
+import type { OpenDataCompany } from './opendata.service';
 
 const PROSPECTS_TABLE = 'sales_prospects';
 const SEARCHES_TABLE = 'sales_prospect_searches';
@@ -149,6 +150,51 @@ export class WebProspectsService {
       }
     }
     return { found: candidatos.length, queued };
+  }
+
+  /**
+   * Guarda en el pipeline una empresa venida de Datos Abiertos.
+   *
+   * La llave de idempotencia es el NIT (`nit:<nit>`), no el dominio: es el
+   * identificador oficial de la empresa en Colombia y muchas no declaran
+   * sitio web. Si no hay NIT se cae al dominio, y si tampoco hay, se rechaza
+   * — sin una llave estable el mismo lead entraría duplicado en cada corrida.
+   *
+   * Reutiliza el mismo patrón de prefijo que los referidos ('ref-<uuid>') y
+   * los de Google ('web:<dominio>').
+   */
+  async saveFromOpenData(vendedorLogin: string, c: OpenDataCompany): Promise<{ saved: boolean; reason?: string }> {
+    const key = c.nit ? `nit:${c.nit}` : c.domain ? `web:${c.domain}` : null;
+    if (!key) return { saved: false, reason: 'La empresa no trae NIT ni sitio web — sin llave estable no se puede guardar.' };
+
+    const { error } = await this.supabase.from(PROSPECTS_TABLE).insert({
+      apollo_id: key,
+      vendedor_login: vendedorLogin,
+      source: 'web',
+      origen: 'manual',
+      domain: c.domain,
+      // El registro da la EMPRESA, no una persona: `name` queda con la razón
+      // social y el vendedor completa el contacto cuando lo consiga.
+      name: c.name,
+      company: c.name,
+      company_website: c.domain ? `https://${c.domain}` : null,
+      industry: c.category,
+      location: [c.city, c.department].filter(Boolean).join(', ') || null,
+      email: c.email,
+      phone: c.phone,
+      notes: c.nit ? `NIT ${c.nit}${c.companyType ? ` · ${c.companyType}` : ''}${c.address ? ` · ${c.address}` : ''}` : null,
+      source_url: 'https://www.datos.gov.co/resource/qmzu-gj57.json',
+      // Si declaró sitio web queda pendiente de scrapear para sumarle correo
+      // y redes; si no, no hay nada que scrapear y se marca como ya visto.
+      last_scraped_at: c.domain ? null : new Date().toISOString(),
+    });
+
+    if (error) {
+      if (error.code === '23505') return { saved: false, reason: 'Ya estaba en el pipeline.' };
+      this.logger.warn(`No se pudo guardar ${key}: ${error.message}`);
+      return { saved: false, reason: error.message };
+    }
+    return { saved: true };
   }
 
   // ── Scraping en lotes ─────────────────────────────────────────────────────
