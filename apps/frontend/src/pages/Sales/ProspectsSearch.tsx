@@ -61,7 +61,9 @@ export function ProspectsSearch() {
   const createSavedSearch = useCreateSavedSearch();
   const deleteSavedSearch = useDeleteSavedSearch();
 
-  const [view, setView] = useState<'buscar' | 'pipeline'>('pipeline');
+  // Arranca en "Buscar en Apollo" — es la primera pestaña, y su contenido es el
+  // que se ve al entrar. "Mis clientes" queda a un clic.
+  const [view, setView] = useState<'buscar' | 'pipeline'>('buscar');
   const [keywords, setKeywords] = useState('');
   const [titles, setTitles] = useState('');
   const [locations, setLocations] = useState('');
