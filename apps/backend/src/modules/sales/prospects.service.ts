@@ -406,7 +406,7 @@ export class ProspectsService {
 
   async createSavedSearch(
     vendedorLogin: string,
-    input: { keywords?: string; titles?: string[]; locations?: string[] },
+    input: { keywords?: string; titles?: string[]; locations?: string[]; source?: 'apollo' | 'web'; city?: string },
   ): Promise<SavedProspectSearch> {
     const { data, error } = await this.supabase
       .from(SEARCHES_TABLE)
@@ -415,6 +415,8 @@ export class ProspectsService {
         keywords: (input.keywords ?? '').trim() || null,
         titles: input.titles ?? [],
         locations: input.locations ?? [],
+        source: input.source ?? 'apollo',
+        city: (input.city ?? '').trim() || null,
       })
       .select('*')
       .single();
@@ -536,6 +538,8 @@ export class ProspectsService {
       active: !!r.active,
       lastRunAt: (r.last_run_at as string | null) ?? null,
       createdAt: r.created_at as string,
+      source: ((r.source as string) ?? 'apollo') as 'apollo' | 'web',
+      city: (r.city as string | null) ?? null,
     };
   }
 

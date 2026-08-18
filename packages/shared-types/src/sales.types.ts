@@ -267,6 +267,10 @@ export interface SavedProspectSearch {
   active: boolean;
   lastRunAt: string | null;
   createdAt: string;
+  /** Motor que ejecuta la corrida semanal. */
+  source: 'apollo' | 'web';
+  /** Solo para `web`: municipio del registro público. */
+  city: string | null;
 }
 
 export interface SalesRegenerateProposalResult {

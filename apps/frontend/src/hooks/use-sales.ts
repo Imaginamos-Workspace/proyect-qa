@@ -268,8 +268,15 @@ export function useSavedSearches() {
 export function useCreateSavedSearch() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (input: { keywords?: string; titles?: string[]; locations?: string[] }) =>
-      api.post<SavedProspectSearch>('/sales/prospects/searches', input),
+    mutationFn: (input: {
+      keywords?: string;
+      titles?: string[];
+      locations?: string[];
+      /** 'apollo' (default) o 'web' — qué motor corre la búsqueda semanal. */
+      source?: 'apollo' | 'web';
+      /** Solo para 'web': municipio del registro público. */
+      city?: string;
+    }) => api.post<SavedProspectSearch>('/sales/prospects/searches', input),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sales', 'prospects', 'searches'] }),
   });
 }

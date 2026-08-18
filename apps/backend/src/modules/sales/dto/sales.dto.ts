@@ -185,6 +185,15 @@ export class CreateSavedSearchDto {
 
   @IsOptional() @IsArray() @IsString({ each: true }) @MaxLength(80, { each: true })
   locations?: string[];
+
+  /** Qué motor corre la búsqueda semanal. Por defecto 'apollo' para no
+   *  cambiarle el comportamiento a las que ya existen. */
+  @IsOptional() @IsIn(['apollo', 'web'])
+  source?: 'apollo' | 'web';
+
+  /** Solo aplica a `web`: municipio del registro público. */
+  @IsOptional() @IsString() @MaxLength(80)
+  city?: string;
 }
 
 /** Handoff al TL — el vendedor asigna el Owner TL (rules/13 §Cerrar el brief). */

@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { Bookmark, BookmarkCheck, Building2, Globe, Loader2, Mail, MapPin, Phone, Search } from 'lucide-react';
+import { Bookmark, BookmarkCheck, Building2, CalendarClock, Globe, Loader2, Mail, MapPin, Phone, Search } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { useOpenDataSearch, useSaveOpenDataCompany } from '@/hooks/use-sales';
+import { useCreateSavedSearch, useOpenDataSearch, useSaveOpenDataCompany } from '@/hooks/use-sales';
 import type { OpenDataCompany } from '@qa/shared-types';
 
 /**
@@ -23,6 +23,7 @@ export function OpenDataSearch({ isVendedor }: { isVendedor: boolean }) {
 
   const search = useOpenDataSearch();
   const save = useSaveOpenDataCompany();
+  const guardarSemanal = useCreateSavedSearch();
 
   const claveDe = (c: OpenDataCompany) => c.nit ?? c.domain ?? c.name;
 
@@ -84,11 +85,25 @@ export function OpenDataSearch({ isVendedor }: { isVendedor: boolean }) {
               />
             </div>
             <div className="flex items-end">
-              <Button onClick={buscar} disabled={!keywords.trim() || search.isPending}>
-                {search.isPending
-                  ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Buscando…</>
-                  : <><Search className="mr-2 h-4 w-4" /> Buscar</>}
-              </Button>
+              <div className="flex gap-2">
+                <Button onClick={buscar} disabled={!keywords.trim() || search.isPending}>
+                  {search.isPending
+                    ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Buscando…</>
+                    : <><Search className="mr-2 h-4 w-4" /> Buscar</>}
+                </Button>
+                <Button
+                  variant="outline"
+                  disabled={!isVendedor || !keywords.trim() || guardarSemanal.isPending}
+                  onClick={() => guardarSemanal.mutate({
+                    keywords: keywords.trim(),
+                    city: city.trim() || undefined,
+                    source: 'web',
+                  })}
+                  title="El cron la ejecuta cada lunes y suma las empresas nuevas a tu pipeline, sin duplicar"
+                >
+                  <CalendarClock className="mr-2 h-4 w-4" /> Semanal
+                </Button>
+              </div>
             </div>
           </div>
 
@@ -100,6 +115,11 @@ export function OpenDataSearch({ isVendedor }: { isVendedor: boolean }) {
 
           {search.isError && (
             <p className="text-sm text-destructive">{(search.error as Error).message}</p>
+          )}
+          {guardarSemanal.isSuccess && (
+            <p className="text-xs text-primary">
+              Búsqueda guardada — corre cada lunes y suma las empresas nuevas sin duplicar.
+            </p>
           )}
         </CardContent>
       </Card>
