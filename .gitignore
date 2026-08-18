@@ -42,3 +42,4 @@ blob-report/
 .vercel
 .claude/
 .secrets.local
+.test-build/
