@@ -204,8 +204,19 @@ export class ProspectsService {
 
   /** Guarda un prospecto en el pipeline: enriquece (people/match, 1 crédito)
    *  y hace UPSERT por apollo_id — guardar dos veces (o que la corrida
-   *  semanal lo vuelva a traer) NO duplica ni pisa el estado/notas. */
-  async saveProspect(apolloId: string, vendedorLogin: string): Promise<SavedProspect> {
+   *  semanal lo vuelva a traer) NO duplica ni pisa el estado/notas.
+   *
+   *  `preview` son los datos que la búsqueda ya mostró en pantalla. Si el
+   *  enriquecimiento falla (sin créditos, rate limit, API key, Apollo caído),
+   *  el prospecto entra con esos datos en vez de quedar vacío. Antes el error
+   *  se tragaba con un `.catch(() => null)` silencioso y la fila se insertaba
+   *  toda en null devolviendo 201: el vendedor gastaba el clic y el prospecto
+   *  aparecía como "(por confirmar) / Sin empresa" (bug 2026-07-30). */
+  async saveProspect(
+    apolloId: string,
+    vendedorLogin: string,
+    preview?: Partial<Omit<SalesProspect, 'id' | 'email'>>,
+  ): Promise<SavedProspect> {
     const { data: existing } = await this.supabase
       .from(PROSPECTS_TABLE)
       .select('*')
@@ -213,20 +224,31 @@ export class ProspectsService {
       .maybeSingle();
     if (existing) return this.toSaved(existing as Record<string, unknown>);
 
-    const full = await this.enrich(apolloId).catch(() => null);
+    // El enriquecimiento es best-effort, pero NO en silencio: si falla queremos
+    // el motivo real en los logs, no un prospecto vacío sin explicación.
+    let full: SalesProspect | null = null;
+    try {
+      full = await this.enrich(apolloId);
+    } catch (err) {
+      this.logger.warn(
+        `No se pudo enriquecer ${apolloId} al guardarlo (se usa la vista previa de la búsqueda): ${(err as Error).message}`,
+      );
+    }
+
+    const name = full?.name ?? preview?.name ?? '(por confirmar)';
     const { data, error } = await this.supabase
       .from(PROSPECTS_TABLE)
       .insert({
         apollo_id: apolloId,
         vendedor_login: vendedorLogin,
         origen: 'manual',
-        name: full?.name ?? '(por confirmar)',
-        title: full?.title ?? null,
-        company: full?.company ?? null,
-        company_website: full?.companyWebsite ?? null,
-        industry: full?.industry ?? null,
-        location: full?.location ?? null,
-        linkedin_url: full?.linkedinUrl ?? null,
+        name,
+        title: full?.title ?? preview?.title ?? null,
+        company: full?.company ?? preview?.company ?? null,
+        company_website: full?.companyWebsite ?? preview?.companyWebsite ?? null,
+        industry: full?.industry ?? preview?.industry ?? null,
+        location: full?.location ?? preview?.location ?? null,
+        linkedin_url: full?.linkedinUrl ?? preview?.linkedinUrl ?? null,
         email: full?.email ?? null,
       })
       .select('*')

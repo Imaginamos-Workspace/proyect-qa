@@ -81,7 +81,15 @@ export class SalesController {
     if (!login) throw new ForbiddenException('No se pudo identificar tu usuario.');
     // Guardar enriquece (1 crédito Apollo) — mismo cubo que enrich.
     await this.rateLimit.enforce(login, 'apollo-enrich', 60, 60 * 60_000);
-    return this.prospects.saveProspect(body.apolloId, login);
+    return this.prospects.saveProspect(body.apolloId, login, {
+      name: body.previewName,
+      title: body.previewTitle,
+      company: body.previewCompany,
+      companyWebsite: body.previewCompanyWebsite,
+      industry: body.previewIndustry,
+      location: body.previewLocation,
+      linkedinUrl: body.previewLinkedinUrl,
+    });
   }
 
   /** Pipeline de prospección del que consulta. */

@@ -52,10 +52,34 @@ export class EnrichProspectDto {
   id: string;
 }
 
-/** Guardar un prospecto de la búsqueda en el pipeline (enriquece + upsert). */
+/** Guardar un prospecto de la búsqueda en el pipeline (enriquece + upsert).
+ *  Los campos `preview*` son los que la búsqueda YA mostró en pantalla: sirven
+ *  de respaldo si el enriquecimiento con Apollo falla (sin créditos, rate limit,
+ *  API caída). Sin ellos el prospecto entraría vacío — ver el bug de 2026-07-30. */
 export class SaveProspectDto {
   @IsString() @IsNotEmpty() @MaxLength(64)
   apolloId: string;
+
+  @IsOptional() @IsString() @MaxLength(200)
+  previewName?: string;
+
+  @IsOptional() @IsString() @MaxLength(200)
+  previewTitle?: string;
+
+  @IsOptional() @IsString() @MaxLength(200)
+  previewCompany?: string;
+
+  @IsOptional() @IsString() @MaxLength(300)
+  previewCompanyWebsite?: string;
+
+  @IsOptional() @IsString() @MaxLength(200)
+  previewIndustry?: string;
+
+  @IsOptional() @IsString() @MaxLength(200)
+  previewLocation?: string;
+
+  @IsOptional() @IsString() @MaxLength(300)
+  previewLinkedinUrl?: string;
 }
 
 const PROSPECT_ESTADOS = ['por-contactar', 'en-seguimiento', 'contactado', 'reunion-agendada', 'referido', 'descartado', 'convertido'];

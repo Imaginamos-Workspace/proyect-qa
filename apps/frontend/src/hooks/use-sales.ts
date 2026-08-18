@@ -187,11 +187,28 @@ export function useSavedProspects() {
   });
 }
 
-/** Guarda un prospecto en el pipeline (enriquece 1 crédito + upsert idempotente). */
+/** Guarda un prospecto en el pipeline (enriquece 1 crédito + upsert idempotente).
+ *  Manda además lo que la búsqueda YA mostró en pantalla: si Apollo no puede
+ *  enriquecer (sin créditos, rate limit, caído), el prospecto entra con esos
+ *  datos en vez de quedar en "(por confirmar) / Sin empresa". */
 export function useSaveProspect() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (apolloId: string) => api.post<SavedProspect>('/sales/prospects/save', { apolloId }, 25_000),
+    mutationFn: (p: SalesProspect) =>
+      api.post<SavedProspect>(
+        '/sales/prospects/save',
+        {
+          apolloId: p.id,
+          previewName: p.name ?? undefined,
+          previewTitle: p.title ?? undefined,
+          previewCompany: p.company ?? undefined,
+          previewCompanyWebsite: p.companyWebsite ?? undefined,
+          previewIndustry: p.industry ?? undefined,
+          previewLocation: p.location ?? undefined,
+          previewLinkedinUrl: p.linkedinUrl ?? undefined,
+        },
+        25_000,
+      ),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sales', 'prospects', 'saved'] }),
   });
 }
