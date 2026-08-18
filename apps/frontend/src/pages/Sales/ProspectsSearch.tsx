@@ -100,11 +100,11 @@ export function ProspectsSearch() {
   return (
     <div className="space-y-4">
       <div className="flex gap-2">
-        <Button variant={view === 'pipeline' ? 'default' : 'outline'} size="sm" onClick={() => setView('pipeline')}>
-          <KanbanSquare className="mr-2 h-4 w-4" /> Mis clientes{pipelineCount ? ` (${pipelineCount})` : ''}
-        </Button>
         <Button variant={view === 'buscar' ? 'default' : 'outline'} size="sm" onClick={() => setView('buscar')}>
           <Search className="mr-2 h-4 w-4" /> Buscar en Apollo
+        </Button>
+        <Button variant={view === 'pipeline' ? 'default' : 'outline'} size="sm" onClick={() => setView('pipeline')}>
+          <KanbanSquare className="mr-2 h-4 w-4" /> Mis clientes{pipelineCount ? ` (${pipelineCount})` : ''}
         </Button>
       </div>
 
