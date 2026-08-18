@@ -225,7 +225,7 @@ export function ProspectsSearch() {
                               size="sm"
                               variant={isSaved ? 'secondary' : 'default'}
                               disabled={!isVendedor || isSaved || isSaving}
-                              onClick={() => { setSavingId(p.id); saveProspect.mutate(p.id); }}
+                              onClick={() => { setSavingId(p.id); saveProspect.mutate(p); }}
                             >
                               {isSaving
                                 ? <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Guardando…</>
