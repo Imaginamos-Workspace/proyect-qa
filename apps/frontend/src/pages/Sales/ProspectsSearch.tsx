@@ -33,7 +33,7 @@ export function ProspectsSearch() {
     <div className="space-y-4">
       <div className="flex gap-2">
         <Button variant={view === 'buscar' ? 'default' : 'outline'} size="sm" onClick={() => setView('buscar')}>
-          <Search className="mr-2 h-4 w-4" /> Búsqueda de prospectos
+          <Search className="mr-2 h-4 w-4" /> Busca nuevos clientes
         </Button>
         <Button variant={view === 'pipeline' ? 'default' : 'outline'} size="sm" onClick={() => setView('pipeline')}>
           <KanbanSquare className="mr-2 h-4 w-4" /> Mis clientes{pipelineCount ? ` (${pipelineCount})` : ''}
