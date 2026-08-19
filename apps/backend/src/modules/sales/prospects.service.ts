@@ -13,24 +13,23 @@ import type {
   SavedProspect,
   SavedProspectEstado,
   SavedProspectSearch,
+  ProspectTlReview,
 } from '../../shared-types/sales.types';
 
 const PROSPECTS_TABLE = 'sales_prospects';
 const INTERACTIONS_TABLE = 'sales_prospect_interactions';
 const SEARCHES_TABLE = 'sales_prospect_searches';
+const TL_REVIEWS_TABLE = 'sales_prospect_tl_reviews';
 
-// Transición automática de estado según el resultado del intento — el
-// vendedor registra QUÉ pasó y el pipeline se mueve solo (menos clics).
-const RESULT_TO_ESTADO: Record<ProspectInteractionResultado, SavedProspectEstado> = {
-  'sin-respuesta': 'en-seguimiento',
-  'contacto-logrado': 'contactado',
-  'reunion-agendada': 'reunion-agendada',
-  referido: 'referido',
-  rechazado: 'descartado',
-  // La persona ya no está en la empresa: se descarta CON bitácora (queda el
-  // porqué). Si dio referido, usar 'referido' — ese sí crea el contacto nuevo.
-  'ya-no-trabaja': 'descartado',
-};
+// La bitácora YA NO mueve la tarjeta. Registrar una llamada es registrar una
+// llamada; si el negocio avanzó, el vendedor lo dice moviendo la tarjeta o
+// con el desplegable del card — un solo vocabulario, una sola acción
+// explícita. Antes había dos listas compitiendo (columnas vs. resultados del
+// intento) y la tarjeta saltaba a una columna que nadie había elegido.
+
+/** Tras 3 "sin respuesta" SEGUIDOS se le SUGIERE al vendedor pasar a Frío.
+ *  Se sugiere, no se aplica: mover la tarjeta es decisión suya. */
+const INTENTOS_ANTES_DE_FRIO = 3;
 
 // Búsqueda de personas de Apollo.io. La key va en el header X-Api-Key y se
 // configura SOLO como variable de entorno del backend (APOLLO_API_KEY) —
@@ -357,10 +356,27 @@ export class ProspectsService {
       .single();
     if (error) throw new BadRequestException(`No se pudo registrar el intento: ${error.message}`);
 
+    // Solo se guarda el reintento agendado: el ESTADO no se toca. Registrar
+    // una llamada es registrar una llamada; si el negocio avanzó, el vendedor
+    // lo dice moviendo la tarjeta o con el desplegable del card.
     const prospect = await this.updateProspect(id, vendedorLogin, {
-      estado: RESULT_TO_ESTADO[input.resultado],
       nextAttemptAt: input.reintentarAt ?? null,
     });
+
+    // Sugerencia, no acción: 3 "sin respuesta" SEGUIDOS = candidato a Frío.
+    // Mover la tarjeta sigue siendo decisión del vendedor.
+    let sugerirFrio = false;
+    if (input.resultado === 'sin-respuesta') {
+      const { data: bitacora } = await this.supabase
+        .from(INTERACTIONS_TABLE)
+        .select('resultado')
+        .eq('prospect_id', id)
+        .order('created_at', { ascending: false })
+        .limit(INTENTOS_ANTES_DE_FRIO);
+      sugerirFrio =
+        (bitacora ?? []).length >= INTENTOS_ANTES_DE_FRIO &&
+        (bitacora ?? []).every((i) => i.resultado === 'sin-respuesta');
+    }
 
     // Referido → prospecto nuevo en el pipeline, listo para contactar.
     let referral: SavedProspect | null = null;
@@ -555,6 +571,54 @@ export class ProspectsService {
       location,
       linkedinUrl: p.linkedin_url ?? null,
       email,
+    };
+  }
+
+  // ── Envío de la propuesta al TL ───────────────────────────────────────────
+
+  /** Registra que la propuesta se mandó al TL a revisar. Se repite si el
+   *  cliente pide cambios, por eso es historial y no un campo. */
+  async addTlReview(
+    prospectId: string,
+    vendedorLogin: string,
+    input: { tlEmail: string; sentAt: string; comments?: string },
+  ): Promise<ProspectTlReview> {
+    await this.assertOwner(prospectId, vendedorLogin);
+
+    const { data, error } = await this.supabase
+      .from(TL_REVIEWS_TABLE)
+      .insert({
+        prospect_id: prospectId,
+        vendedor_login: vendedorLogin,
+        tl_email: input.tlEmail.trim().toLowerCase(),
+        // La fecha viene como ISO del navegador; la columna es `date`.
+        sent_at: input.sentAt.slice(0, 10),
+        comments: input.comments?.trim() || null,
+      })
+      .select('*')
+      .single();
+    if (error) throw new BadRequestException(`No se pudo registrar el envío al TL: ${error.message}`);
+
+    return this.toTlReview(data as Record<string, unknown>);
+  }
+
+  async listTlReviews(prospectId: string, vendedorLogin: string): Promise<ProspectTlReview[]> {
+    await this.assertOwner(prospectId, vendedorLogin);
+    const { data } = await this.supabase
+      .from(TL_REVIEWS_TABLE)
+      .select('*')
+      .eq('prospect_id', prospectId)
+      .order('sent_at', { ascending: false });
+    return (data ?? []).map((r) => this.toTlReview(r as Record<string, unknown>));
+  }
+
+  private toTlReview(r: Record<string, unknown>): ProspectTlReview {
+    return {
+      id: r.id as string,
+      tlEmail: r.tl_email as string,
+      sentAt: r.sent_at as string,
+      comments: (r.comments as string | null) ?? null,
+      createdAt: r.created_at as string,
     };
   }
 }

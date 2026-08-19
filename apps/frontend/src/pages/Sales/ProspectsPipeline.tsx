@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
-import { Building2, ExternalLink, Linkedin, Loader2, LockOpen, Mail, Phone, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
+import { Building2, ExternalLink, Linkedin, Loader2, LockOpen, Mail, Phone, RotateCcw, Send, Sparkles, Trash2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   useAddInteraction,
@@ -14,6 +15,8 @@ import {
   useSavedProspects,
   useSalesOpportunities,
   useUpdateProspect,
+  useAddTlReview,
+  useTlReviews,
 } from '@/hooks/use-sales';
 import { api } from '@/lib/api';
 import type { SavedProspect, SavedProspectEstado } from '@qa/shared-types';
@@ -28,14 +31,49 @@ function slugify(text: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
-const COLUMNS: { estado: SavedProspectEstado; label: string }[] = [
-  { estado: 'por-contactar', label: 'Por contactar' },
-  { estado: 'en-seguimiento', label: 'En seguimiento' },
-  { estado: 'contactado', label: 'Contactado' },
-  { estado: 'reunion-agendada', label: 'Reunión agendada' },
-  { estado: 'referido', label: 'Referido' },
-  { estado: 'convertido', label: 'Convertido' },
-  { estado: 'descartado', label: 'Descartado' },
+/**
+ * Las 11 etapas del proceso comercial, en el orden numerado por el equipo.
+ * `hint` es el criterio para mover una tarjeta acá: sin un criterio explícito
+ * cada vendedor interpreta "Propuesta" o "Frío" a su manera y el embudo deja
+ * de ser comparable entre personas.
+ */
+/**
+ * Equivalencia de los 7 estados anteriores a las 11 etapas nuevas, SOLO para
+ * mostrar. Existe porque el código puede desplegarse antes de que corra la
+ * migración 032: sin esto, una tarjeta con estado 'por-contactar' no
+ * coincidiría con ninguna columna y desaparecería del tablero — el vendedor
+ * vería su pipeline vacío y pensaría que perdió los clientes.
+ *
+ * Cuando la migración corra, ningún registro caerá acá y este mapa deja de
+ * usarse solo. Se puede borrar una vez confirmado.
+ */
+const LEGACY: Record<string, SavedProspectEstado> = {
+  'por-contactar': 'contacto',
+  contactado: 'contacto',
+  referido: 'contacto',
+  'en-seguimiento': 'recontactar',
+  'reunion-agendada': 'reunion',
+  convertido: 'aprobado-cerrado',
+  descartado: 'perdido',
+};
+
+/** Etapa efectiva de un prospecto, tolerando los estados del esquema viejo. */
+export function etapaVigente(estado: string): SavedProspectEstado {
+  return (LEGACY[estado] ?? estado) as SavedProspectEstado;
+}
+
+export const COLUMNS: { estado: SavedProspectEstado; label: string; hint: string }[] = [
+  { estado: 'contacto', label: 'Contacto', hint: '1. Lead registrado y primer acercamiento para validar interés y necesidad. Inbound (llegó solo) u outbound (lo contactamos).' },
+  { estado: 'reunion', label: 'Reunión', hint: '2. Reuniones para entender necesidad, contexto y alcance. Puede repetirse; registra en observaciones cómo va y los puntos tratados.' },
+  { estado: 'propuesta', label: 'Propuesta', hint: '3. Etapa interna: armás alcance, tiempos e inversión, y validás con el equipo antes de enviarla.' },
+  { estado: 'en-revision', label: 'En revisión', hint: '4. Ya enviada, el cliente la evalúa. Registra qué servicios ofreciste, el monto y la fecha de envío.' },
+  { estado: 'aprobado-documentos', label: 'Aprobado / Documentos', hint: '5. Confirmó avanzar: contrato, firma, validación de documentos y primera factura.' },
+  { estado: 'aprobado-cerrado', label: 'Aprobado / Cerrado', hint: '6. Cerrado con éxito, documentos firmados, listo para operaciones.' },
+  { estado: 'perdido', label: 'Perdido', hint: '7. No avanzó: desistió, eligió otro proveedor o no se hará. El motivo es obligatorio en observaciones.' },
+  { estado: 'frio', label: 'Frío', hint: '8. En pausa por falta de contacto. Máximo 3 intentos antes de llegar acá.' },
+  { estado: 'cambio-propuesta', label: 'Cambio de propuesta', hint: '9. Pidió ajustes de alcance, tiempos o inversión: actualizala y reenviala.' },
+  { estado: 'no-calificado', label: 'No calificado', hint: '10. Tras la reunión inicial, no reúne las características para ser cliente potencial.' },
+  { estado: 'recontactar', label: 'Recontactar', hint: '11. Aplazó o dejó de contestar, pero se ve potencial. Anota en observaciones cuándo volver.' },
 ];
 
 const TIPOS = [
@@ -63,6 +101,108 @@ function fmtDate(iso: string | null): string {
 /** Panel de gestión del prospecto seleccionado: datos de contacto accionables,
  *  nutrición (teléfono/notas), registro de intentos con transición automática,
  *  referidos que crean prospecto nuevo, reintentos agendados, y conversión. */
+/**
+ * Envío de la propuesta al TL para revisión. Se registra como historial y no
+ * como un campo del prospecto: si el cliente pide cambios ("Cambio de
+ * propuesta"), la propuesta vuelve al TL y hay que poder ver las dos vueltas.
+ *
+ * La fecha la declara el vendedor —pudo haberla mandado ayer y registrarla
+ * hoy—, así que no se usa la del servidor.
+ */
+function TlReviewModal({ prospect, onClose }: { prospect: SavedProspect; onClose: () => void }) {
+  const enviar = useAddTlReview(prospect.id);
+  const { data: previos } = useTlReviews(prospect.id);
+  const [tlEmail, setTlEmail] = useState('');
+  // Por defecto hoy, que es el caso normal.
+  const [sentAt, setSentAt] = useState(() => new Date().toISOString().slice(0, 10));
+  const [comments, setComments] = useState('');
+
+  const emailValido = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(tlEmail.trim());
+
+  const guardar = () => {
+    if (!emailValido || !sentAt) return;
+    enviar.mutate(
+      { tlEmail: tlEmail.trim(), sentAt, comments: comments.trim() || undefined },
+      { onSuccess: onClose },
+    );
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Enviar propuesta al TL"
+      onClick={onClose}
+    >
+      <Card className="w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
+        <CardContent className="space-y-4 p-5">
+          <div>
+            <p className="font-semibold text-foreground">Enviar propuesta al TL</p>
+            <p className="text-sm text-muted-foreground">
+              {prospect.company ?? prospect.name} · queda registrado en el historial de revisiones.
+            </p>
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground" htmlFor="tl-email">Correo del TL</label>
+            <Input
+              id="tl-email"
+              type="email"
+              value={tlEmail}
+              onChange={(e) => setTlEmail(e.target.value)}
+              placeholder="nombre@imaginamos.com"
+            />
+            {tlEmail && !emailValido && (
+              <p className="text-xs text-destructive">Ese correo no parece válido.</p>
+            )}
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground" htmlFor="tl-fecha">Fecha de envío</label>
+            <Input id="tl-fecha" type="date" value={sentAt} onChange={(e) => setSentAt(e.target.value)} />
+          </div>
+
+          <div className="space-y-1">
+            <label className="text-xs text-muted-foreground" htmlFor="tl-coment">Comentarios</label>
+            <Textarea
+              id="tl-coment"
+              rows={4}
+              value={comments}
+              onChange={(e) => setComments(e.target.value)}
+              placeholder="Qué revisar, alcance propuesto, dudas para el TL…"
+            />
+          </div>
+
+          {!!previos?.length && (
+            <div className="rounded-lg border border-border p-3">
+              <p className="mb-1 text-xs font-medium text-foreground">Envíos anteriores</p>
+              <ul className="space-y-1 text-xs text-muted-foreground">
+                {previos.map((r) => (
+                  <li key={r.id}>{r.sentAt} · {r.tlEmail}{r.comments ? ` — ${r.comments}` : ''}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {enviar.isError && (
+            <p className="text-sm text-destructive">{(enviar.error as Error).message}</p>
+          )}
+
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={onClose}>Cancelar</Button>
+            <Button onClick={guardar} disabled={!emailValido || !sentAt || enviar.isPending}>
+              {enviar.isPending
+                ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Registrando…</>
+                : <><Send className="mr-2 h-4 w-4" /> Registrar envío</>}
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
 function ProspectDetail({ prospect, onClose }: { prospect: SavedProspect; onClose: () => void }) {
   const navigate = useNavigate();
   const { data: interactions, isLoading: loadingLog } = useProspectInteractions(prospect.id);
@@ -71,6 +211,7 @@ function ProspectDetail({ prospect, onClose }: { prospect: SavedProspect; onClos
   const enrichSaved = useEnrichSavedProspect();
   const createOpportunity = useCreateOpportunity();
 
+  const [modalTl, setModalTl] = useState(false);
   const [tipo, setTipo] = useState('llamada');
   const [resultado, setResultado] = useState('sin-respuesta');
   const [notas, setNotas] = useState('');
@@ -127,7 +268,9 @@ function ProspectDetail({ prospect, onClose }: { prospect: SavedProspect; onClos
         `${prospect.notes ? ` Notas de prospección: ${prospect.notes}.` : ''}` +
         ` Ayúdame a armar el brief con esto como punto de partida.`;
       await api.post(`/sales/opportunities/${opp.id}/messages`, { content: seedMessage }, 55_000);
-      await updateProspect.mutateAsync({ id: prospect.id, estado: 'convertido', opportunityId: opp.id });
+      // Crear la oportunidad además cierra la etapa comercial: el negocio
+      // quedó aprobado y pasa a operaciones.
+      await updateProspect.mutateAsync({ id: prospect.id, estado: 'aprobado-cerrado', opportunityId: opp.id });
       navigate(`/ventas/${opp.id}`);
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : 'No se pudo convertir el prospecto.');
@@ -146,6 +289,27 @@ function ProspectDetail({ prospect, onClose }: { prospect: SavedProspect; onClos
         </div>
         <Button variant="ghost" size="sm" onClick={onClose}>Cerrar</Button>
       </div>
+
+      {/* La MISMA lista de las columnas: cambiarla acá mueve la tarjeta, y
+          arrastrar la tarjeta cambia esto. Es el mismo dato, dos formas. */}
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="text-xs text-muted-foreground" htmlFor="etapa">Etapa</label>
+        <select
+          id="etapa"
+          className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+          value={etapaVigente(prospect.estado)}
+          onChange={(e) => updateProspect.mutate({ id: prospect.id, estado: e.target.value as SavedProspectEstado })}
+          title={COLUMNS.find((c) => c.estado === etapaVigente(prospect.estado))?.hint}
+        >
+          {COLUMNS.map((c) => <option key={c.estado} value={c.estado}>{c.label}</option>)}
+        </select>
+        {updateProspect.isPending && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+        <Button variant="outline" size="sm" onClick={() => setModalTl(true)}>
+          <Send className="mr-2 h-4 w-4" /> Enviar propuesta al TL
+        </Button>
+      </div>
+
+      {modalTl && <TlReviewModal prospect={prospect} onClose={() => setModalTl(false)} />}
 
       {/* Accesos directos de contacto — para llamar/escribir sin salir. */}
       <div className="flex flex-wrap gap-2 text-sm">
@@ -260,19 +424,19 @@ function ProspectDetail({ prospect, onClose }: { prospect: SavedProspect; onClos
       {errorMsg && <p className="text-sm text-destructive">{errorMsg}</p>}
 
       <div className="flex flex-wrap gap-2">
-        <Button onClick={convertir} disabled={converting || prospect.estado === 'convertido'}>
-          {converting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creando oportunidad…</> : prospect.estado === 'convertido' ? 'Ya convertido' : <><Sparkles className="mr-2 h-4 w-4" /> Crear oportunidad</>}
+        <Button onClick={convertir} disabled={converting || etapaVigente(prospect.estado) === 'aprobado-cerrado'}>
+          {converting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creando oportunidad…</> : etapaVigente(prospect.estado) === 'aprobado-cerrado' ? 'Ya convertido' : <><Sparkles className="mr-2 h-4 w-4" /> Crear oportunidad</>}
         </Button>
         {prospect.opportunityId && (
           <Button variant="outline" onClick={() => navigate(`/ventas/${prospect.opportunityId}`)}>Abrir oportunidad</Button>
         )}
-        {prospect.estado !== 'descartado' && prospect.estado !== 'convertido' && (
+        {etapaVigente(prospect.estado) !== 'perdido' && etapaVigente(prospect.estado) !== 'aprobado-cerrado' && (
           <Button
             variant="ghost"
             className="text-destructive"
-            onClick={() => updateProspect.mutate({ id: prospect.id, estado: 'descartado' })}
+            onClick={() => updateProspect.mutate({ id: prospect.id, estado: 'perdido' })}
           >
-            <Trash2 className="mr-2 h-4 w-4" /> Descartar
+            <Trash2 className="mr-2 h-4 w-4" /> Marcar perdido
           </Button>
         )}
       </div>
@@ -289,6 +453,20 @@ export function ProspectsPipeline() {
   // sin obligar al vendedor a salir del tablero a buscarla.
   const { data: oportunidades } = useSalesOpportunities();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Drag & drop nativo de HTML5: cero dependencias nuevas.
+  const [arrastrando, setArrastrando] = useState<string | null>(null);
+  const [sobre, setSobre] = useState<SavedProspectEstado | null>(null);
+  const mover = useUpdateProspect();
+
+  const soltarEn = (estado: SavedProspectEstado) => {
+    const id = arrastrando;
+    setArrastrando(null);
+    setSobre(null);
+    if (!id) return;
+    const actual = (prospects ?? []).find((p) => p.id === id);
+    if (!actual || etapaVigente(actual.estado) === estado) return; // soltó en su misma columna
+    mover.mutate({ id, estado });
+  };
 
   const etapaDe = (opportunityId: string) =>
     (oportunidades ?? []).find((o) => o.id === opportunityId)?.status ?? null;
@@ -316,11 +494,17 @@ export function ProspectsPipeline() {
           vendedor creía que sus clientes habían desaparecido. */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {COLUMNS.map((col) => {
-          const items = all.filter((p) => p.estado === col.estado);
+          const items = all.filter((p) => etapaVigente(p.estado) === col.estado);
           return (
-            <div key={col.estado} className="min-w-0">
+            <div
+              key={col.estado}
+              className={`min-w-0 rounded-lg p-1 transition-colors ${sobre === col.estado ? 'bg-primary/10 ring-2 ring-primary' : ''}`}
+              onDragOver={(e) => { e.preventDefault(); setSobre(col.estado); }}
+              onDragLeave={() => setSobre((x) => (x === col.estado ? null : x))}
+              onDrop={(e) => { e.preventDefault(); soltarEn(col.estado); }}
+            >
               <div className="mb-2 flex items-center justify-between px-1">
-                <p className="text-sm font-semibold text-foreground">{col.label}</p>
+                <p className="cursor-help text-sm font-semibold text-foreground" title={col.hint}>{col.label}</p>
                 <Badge variant="secondary">{items.length}</Badge>
               </div>
               <div className="space-y-2">
@@ -329,9 +513,12 @@ export function ProspectsPipeline() {
                     key={p.id}
                     role="button"
                     tabIndex={0}
+                    draggable
+                    onDragStart={() => setArrastrando(p.id)}
+                    onDragEnd={() => { setArrastrando(null); setSobre(null); }}
                     onClick={() => setSelectedId(p.id)}
                     onKeyDown={(e) => { if (e.key === 'Enter') setSelectedId(p.id); }}
-                    className={`cursor-pointer transition-colors hover:border-primary hover:bg-primary/5 ${selectedId === p.id ? 'border-primary' : ''}`}
+                    className={`cursor-grab transition-colors hover:border-primary hover:bg-primary/5 active:cursor-grabbing ${selectedId === p.id ? 'border-primary' : ''} ${arrastrando === p.id ? 'opacity-40' : ''}`}
                   >
                     <CardContent className="space-y-1 p-3">
                       <div className="flex items-center justify-between gap-1 text-muted-foreground">
@@ -354,7 +541,9 @@ export function ProspectsPipeline() {
                   </Card>
                 ))}
                 {items.length === 0 && (
-                  <p className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">Vacío</p>
+                  <p className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">
+                    {sobre === col.estado ? 'Soltá acá' : 'Vacío'}
+                  </p>
                 )}
               </div>
             </div>

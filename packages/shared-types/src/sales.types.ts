@@ -209,13 +209,38 @@ export interface SalesProspectSearchResult {
 // registrar intentos/referidos/reintentos → convertir en oportunidad.
 
 export type SavedProspectEstado =
-  | 'por-contactar'
-  | 'en-seguimiento'
-  | 'contactado'
-  | 'reunion-agendada'
-  | 'referido'
-  | 'descartado'
-  | 'convertido';
+  /** 1. Lead registrado, primer acercamiento (inbound u outbound). */
+  | 'contacto'
+  /** 2. Reuniones para entender necesidad, contexto y alcance (1, 2, 3…). */
+  | 'reunion'
+  /** 3. INTERNA: el comercial arma alcance, tiempos e inversión. */
+  | 'propuesta'
+  /** 4. Propuesta enviada, el cliente la está evaluando. */
+  | 'en-revision'
+  /** 5. Confirmó avanzar: contrato, documentos, primera factura. */
+  | 'aprobado-documentos'
+  /** 6. Cerrado y firmado, listo para operaciones. */
+  | 'aprobado-cerrado'
+  /** 7. No avanzó — el motivo es obligatorio en observaciones. */
+  | 'perdido'
+  /** 8. Sin contacto tras 3 intentos. */
+  | 'frio'
+  /** 9. Pidió ajustes de alcance, tiempos o inversión. */
+  | 'cambio-propuesta'
+  /** 10. Tras la reunión inicial, no es cliente potencial. */
+  | 'no-calificado'
+  /** 11. Aplazó o dejó de responder, pero sigue siendo potencial. */
+  | 'recontactar';
+
+/** Un envío de la propuesta al TL para que la revise. Se repite si el cliente
+ *  pide cambios, por eso es una lista y no un campo. */
+export interface ProspectTlReview {
+  id: string;
+  tlEmail: string;
+  sentAt: string;
+  comments: string | null;
+  createdAt: string;
+}
 
 export interface SavedProspect {
   id: string;

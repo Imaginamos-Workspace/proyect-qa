@@ -149,7 +149,10 @@ export class ApolloOrgSearchDto {
   limit?: number;
 }
 
-const PROSPECT_ESTADOS = ['por-contactar', 'en-seguimiento', 'contactado', 'reunion-agendada', 'referido', 'descartado', 'convertido'];
+const PROSPECT_ESTADOS = [
+  'contacto', 'reunion', 'propuesta', 'en-revision', 'aprobado-documentos',
+  'aprobado-cerrado', 'perdido', 'frio', 'cambio-propuesta', 'no-calificado', 'recontactar',
+];
 
 /** Nutrir un prospecto guardado (teléfono, email, notas, reintento, estado). */
 export class UpdateProspectDto {
@@ -230,6 +233,21 @@ export class AddContactDto {
 
   @IsOptional() @IsString() @MaxLength(300)
   linkedinUrl?: string;
+}
+
+/** Enviar la propuesta al TL para que la revise. */
+export class TlReviewDto {
+  @IsString() @IsNotEmpty() @MaxLength(150)
+  @Matches(/^[^@\s]+@[^@\s]+\.[^@\s]+$/, { message: 'tlEmail debe ser un correo válido.' })
+  tlEmail: string;
+
+  /** Fecha declarada por el vendedor: pudo haberla mandado ayer y registrarla
+   *  hoy, así que no se usa la fecha del servidor. */
+  @IsISO8601()
+  sentAt: string;
+
+  @IsOptional() @IsString() @MaxLength(2000)
+  comments?: string;
 }
 
 /** Handoff al TL — el vendedor asigna el Owner TL (rules/13 §Cerrar el brief). */
