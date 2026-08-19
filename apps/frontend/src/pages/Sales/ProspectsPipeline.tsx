@@ -225,7 +225,7 @@ function ProspectDetail({ prospect, onClose }: { prospect: SavedProspect; onClos
         {resultado === 'ya-no-trabaja' && (
           <p className="text-xs text-muted-foreground">
             Se descarta con su bitácora. Si te dio otro nombre, usa mejor "Me refirió a otra persona"; si no,
-            busca {prospect.company ? `"${prospect.company}"` : 'la empresa'} en "Buscar en Apollo" y guarda otro contacto.
+            agrega otro contacto de {prospect.company ? `"${prospect.company}"` : 'la empresa'} en el panel de Contactos.
           </p>
         )}
       </div>
