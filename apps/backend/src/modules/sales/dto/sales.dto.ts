@@ -214,6 +214,24 @@ export class CreateSavedSearchDto {
   city?: string;
 }
 
+/** Alta manual de un contacto — el vendedor lo consiguió llamando. Gratis. */
+export class AddContactDto {
+  @IsString() @IsNotEmpty() @MaxLength(120)
+  name: string;
+
+  @IsOptional() @IsString() @MaxLength(120)
+  title?: string;
+
+  @IsOptional() @IsString() @MaxLength(150)
+  email?: string;
+
+  @IsOptional() @IsString() @MaxLength(40)
+  phone?: string;
+
+  @IsOptional() @IsString() @MaxLength(300)
+  linkedinUrl?: string;
+}
+
 /** Handoff al TL — el vendedor asigna el Owner TL (rules/13 §Cerrar el brief). */
 export class HandoffDto {
   @IsOptional() @IsString() @MaxLength(80)

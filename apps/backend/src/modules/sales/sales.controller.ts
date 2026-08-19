@@ -4,10 +4,12 @@ import { ProspectsService } from './prospects.service';
 import { RateLimitService } from './rate-limit.service';
 import { OpenDataService } from './web/opendata.service';
 import { ApolloOrgsService, KEYWORD_SETS, SEGMENTS } from './web/apollo-orgs.service';
+import { ProspectContactsService } from './web/prospect-contacts.service';
 import { WebProspectsService } from './web/web-prospects.service';
 import { RolesService } from '../scrum/roles.service';
 import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard';
 import {
+  AddContactDto,
   AddInteractionDto,
   ApolloOrgSearchDto,
   CreateOpportunityDto,
@@ -52,6 +54,7 @@ export class SalesController {
     private readonly rateLimit: RateLimitService,
     private readonly openData: OpenDataService,
     private readonly apolloOrgs: ApolloOrgsService,
+    private readonly contacts: ProspectContactsService,
     private readonly webProspects: WebProspectsService,
   ) {}
 
@@ -202,6 +205,27 @@ export class SalesController {
       tipo: body.tipo as ProspectInteractionTipo,
       resultado: body.resultado as ProspectInteractionResultado,
     });
+  }
+
+  /** Contactos (personas) de un prospecto.
+   *
+   *  ÚNICO punto del flujo que puede consumir créditos de Apollo, y solo la
+   *  primera vez: si ya se enriqueció, se lee de nuestra base. Por eso se
+   *  llama al ABRIR el prospecto para trabajarlo, no al buscar ni al listar. */
+  @Get('prospects/saved/:id/contacts')
+  async prospectContacts(@Param('id') id: string, @Req() req: RequestWithUser) {
+    const login = await this.requireSeller(req);
+    if (!login) throw new ForbiddenException('No se pudo identificar tu usuario.');
+    return this.contacts.getContacts(id, login);
+  }
+
+  /** Alta manual de un contacto — no consume nada. Es el camino mientras el
+   *  plan de Apollo no habilite la búsqueda de personas. */
+  @Post('prospects/saved/:id/contacts')
+  async addProspectContact(@Param('id') id: string, @Body() body: AddContactDto, @Req() req: RequestWithUser) {
+    const login = await this.requireSeller(req);
+    if (!login) throw new ForbiddenException('No se pudo identificar tu usuario.');
+    return this.contacts.addManual(id, login, body);
   }
 
   /** Bitácora de intentos de un prospecto. */

@@ -325,3 +325,27 @@ export interface ApolloOrgSearchResult {
   total: number;
   page: number;
 }
+
+/** Persona dentro de una empresa del pipeline. */
+export interface ProspectContact {
+  id: string;
+  name: string;
+  title: string | null;
+  /** Cargo normalizado: ceo | rrhh | tecnologia | compras | comercial | finanzas | direccion | otro */
+  roleTag: string;
+  email: string | null;
+  phone: string | null;
+  /** Enlace wa.me armado desde el teléfono — no consume nada de Apollo. */
+  whatsapp: string | null;
+  linkedinUrl: string | null;
+  source: string;
+}
+
+export interface ProspectContactsResult {
+  contacts: ProspectContact[];
+  /** true = salió de nuestra base; no se consumió nada de Apollo. */
+  fromCache: boolean;
+  status: 'ok' | 'sin-resultados' | 'plan-no-permite' | 'error' | 'sin-dominio';
+  enrichedAt: string | null;
+  message?: string;
+}
