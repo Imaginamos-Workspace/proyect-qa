@@ -11,6 +11,7 @@ import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard';
 import {
   AddContactDto,
   AddInteractionDto,
+  TlReviewDto,
   ApolloOrgSearchDto,
   CreateOpportunityDto,
   CreateSavedSearchDto,
@@ -226,6 +227,22 @@ export class SalesController {
     const login = await this.requireSeller(req);
     if (!login) throw new ForbiddenException('No se pudo identificar tu usuario.');
     return this.contacts.addManual(id, login, body);
+  }
+
+  /** Envíos de la propuesta al TL para revisión (historial). */
+  @Get('prospects/saved/:id/tl-reviews')
+  async listTlReviews(@Param('id') id: string, @Req() req: RequestWithUser) {
+    const login = await this.requireSeller(req);
+    if (!login) throw new ForbiddenException('No se pudo identificar tu usuario.');
+    return this.prospects.listTlReviews(id, login);
+  }
+
+  /** Registra que la propuesta se mandó al TL a revisar. */
+  @Post('prospects/saved/:id/tl-reviews')
+  async addTlReview(@Param('id') id: string, @Body() body: TlReviewDto, @Req() req: RequestWithUser) {
+    const login = await this.requireSeller(req);
+    if (!login) throw new ForbiddenException('No se pudo identificar tu usuario.');
+    return this.prospects.addTlReview(id, login, body);
   }
 
   /** Bitácora de intentos de un prospecto. */

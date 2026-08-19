@@ -25,6 +25,7 @@ import type {
   ApolloOrgSearchResult,
   ProspectContact,
   ProspectContactsResult,
+  ProspectTlReview,
 } from '@qa/shared-types';
 
 export function useSalesOpportunities() {
@@ -499,5 +500,26 @@ export function useAddProspectContact(prospectId: string) {
     mutationFn: (input: { name: string; title?: string; email?: string; phone?: string; linkedinUrl?: string }) =>
       api.post<ProspectContact>(`/sales/prospects/saved/${prospectId}/contacts`, input),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sales', 'prospects', 'contacts', prospectId] }),
+  });
+}
+
+// ── Envíos de la propuesta al TL ────────────────────────────────────────────
+
+/** Historial de revisiones: la propuesta puede volver al TL si el cliente
+ *  pide cambios, así que son varias, no una. */
+export function useTlReviews(prospectId: string | null) {
+  return useQuery({
+    queryKey: ['sales', 'prospects', 'tl-reviews', prospectId],
+    queryFn: () => api.get<ProspectTlReview[]>(`/sales/prospects/saved/${prospectId}/tl-reviews`),
+    enabled: !!prospectId,
+  });
+}
+
+export function useAddTlReview(prospectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { tlEmail: string; sentAt: string; comments?: string }) =>
+      api.post<ProspectTlReview>(`/sales/prospects/saved/${prospectId}/tl-reviews`, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['sales', 'prospects', 'tl-reviews', prospectId] }),
   });
 }
