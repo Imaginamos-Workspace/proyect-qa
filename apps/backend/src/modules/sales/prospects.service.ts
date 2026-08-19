@@ -224,32 +224,26 @@ export class ProspectsService {
       .maybeSingle();
     if (existing) return this.toSaved(existing as Record<string, unknown>);
 
-    // El enriquecimiento es best-effort, pero NO en silencio: si falla queremos
-    // el motivo real en los logs, no un prospecto vacío sin explicación.
-    let full: SalesProspect | null = null;
-    try {
-      full = await this.enrich(apolloId);
-    } catch (err) {
-      this.logger.warn(
-        `No se pudo enriquecer ${apolloId} al guardarlo (se usa la vista previa de la búsqueda): ${(err as Error).message}`,
-      );
-    }
-
-    const name = full?.name ?? preview?.name ?? '(por confirmar)';
+    // NO se enriquece al guardar: eso consumía 1 crédito por cada prospecto
+    // que el vendedor guardaba, aunque nunca lo llamara. La regla es que a la
+    // API de Apollo se le pega SOLO en la corrida semanal y en el botón
+    // explícito "Desbloquear dato" (enrichSaved). Acá se persiste la vista
+    // previa que la búsqueda ya mostró en pantalla.
     const { data, error } = await this.supabase
       .from(PROSPECTS_TABLE)
       .insert({
         apollo_id: apolloId,
         vendedor_login: vendedorLogin,
         origen: 'manual',
-        name,
-        title: full?.title ?? preview?.title ?? null,
-        company: full?.company ?? preview?.company ?? null,
-        company_website: full?.companyWebsite ?? preview?.companyWebsite ?? null,
-        industry: full?.industry ?? preview?.industry ?? null,
-        location: full?.location ?? preview?.location ?? null,
-        linkedin_url: full?.linkedinUrl ?? preview?.linkedinUrl ?? null,
-        email: full?.email ?? null,
+        name: preview?.name ?? '(por confirmar)',
+        title: preview?.title ?? null,
+        company: preview?.company ?? null,
+        company_website: preview?.companyWebsite ?? null,
+        industry: preview?.industry ?? null,
+        location: preview?.location ?? null,
+        linkedin_url: preview?.linkedinUrl ?? null,
+        // El email lo trae el enriquecimiento explícito, que cuesta 1 crédito.
+        email: null,
       })
       .select('*')
       .single();

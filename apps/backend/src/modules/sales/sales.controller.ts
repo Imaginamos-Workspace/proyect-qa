@@ -3,11 +3,15 @@ import { SalesService } from './sales.service';
 import { ProspectsService } from './prospects.service';
 import { RateLimitService } from './rate-limit.service';
 import { OpenDataService } from './web/opendata.service';
+import { ApolloOrgsService, KEYWORD_SETS, SEGMENTS } from './web/apollo-orgs.service';
+import { ProspectContactsService } from './web/prospect-contacts.service';
 import { WebProspectsService } from './web/web-prospects.service';
 import { RolesService } from '../scrum/roles.service';
 import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard';
 import {
+  AddContactDto,
   AddInteractionDto,
+  ApolloOrgSearchDto,
   CreateOpportunityDto,
   CreateSavedSearchDto,
   EnrichProspectDto,
@@ -49,6 +53,8 @@ export class SalesController {
     private readonly roles: RolesService,
     private readonly rateLimit: RateLimitService,
     private readonly openData: OpenDataService,
+    private readonly apolloOrgs: ApolloOrgsService,
+    private readonly contacts: ProspectContactsService,
     private readonly webProspects: WebProspectsService,
   ) {}
 
@@ -85,8 +91,8 @@ export class SalesController {
   async saveProspect(@Body() body: SaveProspectDto, @Req() req: RequestWithUser) {
     const login = await this.requireSeller(req);
     if (!login) throw new ForbiddenException('No se pudo identificar tu usuario.');
-    // Guardar enriquece (1 crédito Apollo) — mismo cubo que enrich.
-    await this.rateLimit.enforce(login, 'apollo-enrich', 60, 60 * 60_000);
+    // Guardar ya NO enriquece: no consume créditos. El enriquecimiento va
+    // solo por el botón "Desbloquear dato" o por la corrida semanal.
     return this.prospects.saveProspect(body.apolloId, login, {
       name: body.previewName,
       title: body.previewTitle,
@@ -108,7 +114,28 @@ export class SalesController {
     return {
       apollo: this.prospects.status().configured,
       opendata: this.openData.status().configured,
+      apolloOrgs: this.apolloOrgs.status().configured,
+      // Presets para que el frontend no tenga que duplicar la lista.
+      keywordSets: KEYWORD_SETS,
+      segments: SEGMENTS,
     };
+  }
+
+  /** Busca empresas en el CATÁLOGO de Apollo ya descargado.
+   *
+   *  NO pega a la API: a Apollo se le consume SOLO en la corrida semanal
+   *  (cron). Las búsquedas manuales leen esta caché, y si está vacía el
+   *  vendedor tiene el registro público, que es gratis e ilimitado. Así una
+   *  tarde de pruebas no quema la cuota del plan. */
+  @Post('prospects/apollo-orgs/search')
+  async apolloOrgSearch(@Body() body: ApolloOrgSearchDto, @Req() req: RequestWithUser) {
+    await this.requireSeller(req);
+    return this.apolloOrgs.searchCache(
+      body.sector ?? null,
+      body.segment ?? null,
+      body.text ?? null,
+      body.limit ?? 25,
+    );
   }
 
   /** Busca empresas colombianas en el registro público. No consume cuota ni
@@ -178,6 +205,27 @@ export class SalesController {
       tipo: body.tipo as ProspectInteractionTipo,
       resultado: body.resultado as ProspectInteractionResultado,
     });
+  }
+
+  /** Contactos (personas) de un prospecto.
+   *
+   *  ÚNICO punto del flujo que puede consumir créditos de Apollo, y solo la
+   *  primera vez: si ya se enriqueció, se lee de nuestra base. Por eso se
+   *  llama al ABRIR el prospecto para trabajarlo, no al buscar ni al listar. */
+  @Get('prospects/saved/:id/contacts')
+  async prospectContacts(@Param('id') id: string, @Req() req: RequestWithUser) {
+    const login = await this.requireSeller(req);
+    if (!login) throw new ForbiddenException('No se pudo identificar tu usuario.');
+    return this.contacts.getContacts(id, login);
+  }
+
+  /** Alta manual de un contacto — no consume nada. Es el camino mientras el
+   *  plan de Apollo no habilite la búsqueda de personas. */
+  @Post('prospects/saved/:id/contacts')
+  async addProspectContact(@Param('id') id: string, @Body() body: AddContactDto, @Req() req: RequestWithUser) {
+    const login = await this.requireSeller(req);
+    if (!login) throw new ForbiddenException('No se pudo identificar tu usuario.');
+    return this.contacts.addManual(id, login, body);
   }
 
   /** Bitácora de intentos de un prospecto. */

@@ -22,6 +22,9 @@ import type {
   SalesVendedor,
   OpenDataCompany,
   ProspectSources,
+  ApolloOrgSearchResult,
+  ProspectContact,
+  ProspectContactsResult,
 } from '@qa/shared-types';
 
 export function useSalesOpportunities() {
@@ -461,5 +464,40 @@ export function useSaveOpenDataCompany() {
     mutationFn: (c: OpenDataCompany) =>
       api.post<{ saved: boolean; reason?: string }>('/sales/prospects/opendata/save', c),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sales', 'prospects', 'saved'] }),
+  });
+}
+
+/** Busca EMPRESAS en Apollo. Este endpoint sí funciona en el plan Free —
+ *  los de personas dan 403 — y no consume créditos. */
+export function useApolloOrgSearch() {
+  return useMutation({
+    mutationFn: (input: { keywords: string[]; locations?: string[]; employeeRanges?: string[]; page?: number }) =>
+      api.post<ApolloOrgSearchResult>('/sales/prospects/apollo-orgs/search', input, 30_000),
+  });
+}
+
+// ── Contactos de un prospecto ───────────────────────────────────────────────
+
+/** Personas de la empresa. Se pide al ABRIR el prospecto para trabajarlo —
+ *  es el único punto que puede consumir créditos, y solo la primera vez:
+ *  después sale de nuestra base (`fromCache: true`). */
+export function useProspectContacts(prospectId: string | null) {
+  return useQuery({
+    queryKey: ['sales', 'prospects', 'contacts', prospectId],
+    queryFn: () => api.get<ProspectContactsResult>(`/sales/prospects/saved/${prospectId}/contacts`),
+    enabled: !!prospectId,
+    // Una vez enriquecido el dato no cambia solo: no tiene sentido refrescar.
+    staleTime: Infinity,
+  });
+}
+
+/** Alta manual de un contacto — gratis, y es el camino mientras el plan de
+ *  Apollo no habilite la búsqueda de personas. */
+export function useAddProspectContact(prospectId: string) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { name: string; title?: string; email?: string; phone?: string; linkedinUrl?: string }) =>
+      api.post<ProspectContact>(`/sales/prospects/saved/${prospectId}/contacts`, input),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['sales', 'prospects', 'contacts', prospectId] }),
   });
 }

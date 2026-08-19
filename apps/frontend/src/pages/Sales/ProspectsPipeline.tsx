@@ -16,6 +16,7 @@ import {
 } from '@/hooks/use-sales';
 import { api } from '@/lib/api';
 import type { SavedProspect, SavedProspectEstado } from '@qa/shared-types';
+import { ProspectContacts } from './ProspectContacts';
 
 // Mismo criterio kebab-case que exige CreateOpportunityDto en el backend.
 function slugify(text: string): string {
@@ -228,6 +229,11 @@ function ProspectDetail({ prospect, onClose }: { prospect: SavedProspect; onClos
           </p>
         )}
       </div>
+
+      {/* Contactos — se cargan al abrir la ficha, que es cuando el vendedor
+          empieza a trabajar el prospecto. Único punto que puede consumir
+          créditos, y solo la primera vez. */}
+      <ProspectContacts prospectId={prospect.id} />
 
       {/* Bitácora */}
       <div>
