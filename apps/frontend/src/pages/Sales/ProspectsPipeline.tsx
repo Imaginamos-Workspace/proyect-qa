@@ -29,22 +29,23 @@ function slugify(text: string): string {
 }
 
 /**
- * Las 11 etapas del proceso comercial, en el orden en que avanza un negocio.
- * `hint` es el criterio para saber cuándo mover una tarjeta acá — sin eso cada
- * vendedor interpreta las etapas a su manera y el embudo deja de ser comparable.
+ * Las 11 etapas del proceso comercial, en el orden numerado que definió el
+ * equipo de ventas. `hint` es el criterio para saber cuándo mover una tarjeta
+ * acá — sin eso cada vendedor interpreta las etapas a su manera y el embudo
+ * deja de ser comparable entre personas.
  */
 const COLUMNS: { estado: SavedProspectEstado; label: string; hint: string }[] = [
-  { estado: 'contacto', label: 'Contacto', hint: 'Lead registrado y primer acercamiento, sea inbound u outbound.' },
-  { estado: 'reunion', label: 'Reunión', hint: 'Reuniones para entender necesidad y alcance. Puede repetirse; anota los puntos en observaciones.' },
-  { estado: 'propuesta', label: 'Propuesta', hint: 'Etapa interna: estás armando alcance, tiempos e inversión.' },
-  { estado: 'en-revision', label: 'En revisión', hint: 'Ya enviada. Registra servicios ofrecidos, monto y fecha de envío.' },
-  { estado: 'cambio-propuesta', label: 'Cambio de propuesta', hint: 'Pidió ajustes de alcance, tiempos o inversión.' },
-  { estado: 'aprobado-documentos', label: 'Aprobado / Documentos', hint: 'Confirmó avanzar: contrato, documentos y primera factura.' },
-  { estado: 'aprobado-cerrado', label: 'Aprobado / Cerrado', hint: 'Firmado y listo para operaciones.' },
-  { estado: 'recontactar', label: 'Recontactar', hint: 'Aplazó o dejó de responder, pero sigue siendo potencial. Anota cuándo volver.' },
-  { estado: 'frio', label: 'Frío', hint: 'Sin contacto tras 3 intentos.' },
-  { estado: 'no-calificado', label: 'No calificado', hint: 'Tras la reunión inicial, no encaja como cliente potencial.' },
-  { estado: 'perdido', label: 'Perdido', hint: 'No avanzó. El motivo es obligatorio en observaciones.' },
+  { estado: 'contacto', label: 'Contacto', hint: '1. Lead registrado y primer acercamiento para validar interés y necesidad. Puede ser inbound (llegó solo) u outbound (lo contactamos).' },
+  { estado: 'reunion', label: 'Reunión', hint: '2. Reuniones para entender necesidad, contexto y alcance. Puede repetirse (reunión 1, 2, 3); registra en observaciones cómo va y los puntos tratados.' },
+  { estado: 'propuesta', label: 'Propuesta', hint: '3. Etapa interna: estás armando alcance, tiempos e inversión, y validando con el equipo antes de enviarla.' },
+  { estado: 'en-revision', label: 'En revisión', hint: '4. Ya enviada, el cliente la está evaluando. Registra qué servicios ofreciste, el monto y la fecha de envío.' },
+  { estado: 'aprobado-documentos', label: 'Aprobado / Documentos', hint: '5. Confirmó avanzar: contrato, firma, validación de documentos y primera factura.' },
+  { estado: 'aprobado-cerrado', label: 'Aprobado / Cerrado', hint: '6. Cerrado con éxito, documentos firmados y listo para iniciar con operaciones.' },
+  { estado: 'perdido', label: 'Perdido', hint: '7. No avanzó: desistió, eligió otro proveedor o no se hará. El motivo es obligatorio en observaciones.' },
+  { estado: 'frio', label: 'Frío', hint: '8. En pausa por falta de contacto. Máximo 3 intentos antes de llegar acá.' },
+  { estado: 'cambio-propuesta', label: 'Cambio de propuesta', hint: '9. Pidió ajustes de alcance, tiempos o inversión: hay que actualizarla y reenviarla.' },
+  { estado: 'no-calificado', label: 'No calificado', hint: '10. Tras la reunión inicial, no reúne las características para ser cliente potencial de Imaginamos.' },
+  { estado: 'recontactar', label: 'Recontactar', hint: '11. Aplazó, pidió que lo busquemos después o dejó de contestar, pero se ve potencial. Anota en observaciones cuándo volver.' },
 ];
 
 const TIPOS = [
