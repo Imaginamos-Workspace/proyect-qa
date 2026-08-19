@@ -36,6 +36,9 @@ const OPENROUTER_MAX_TRIES = 3;
 // plantilla repetidas y no registraba el draft), misma velocidad de Groq.
 const GROQ_MODELS = ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile', 'llama-3.1-8b-instant'];
 
+/** Dimensión de la columna `embedding vector(768)` (migración 023). */
+const EMBED_DIMS = 768;
+
 @Injectable()
 export class GeminiProvider implements AIProvider {
   private readonly model;
@@ -53,24 +56,43 @@ export class GeminiProvider implements AIProvider {
     // respaldo real. (2.5-pro daba 429 siempre en free; 2.0-flash también quedó
     // con cuota recortada — casos reales del diagnóstico.)
     this.fallbackModel = genAI.getGenerativeModel({ model: 'gemini-2.5-flash-lite' });
-    // Embeddings para el RAG de ventas — 768 dims, capa gratuita. Misma key,
-    // sin dependencia nueva.
-    this.embedModel = genAI.getGenerativeModel({ model: 'text-embedding-004' });
+    // Embeddings para el RAG de ventas. Misma key, sin dependencia nueva.
+    // OJO: `text-embedding-004` fue RETIRADO por Google y devuelve 404, lo que
+    // rompía "Reindexar conocimiento" con un 500. El reemplazo devuelve 3072
+    // dims por defecto, pero la columna es vector(768) (migración 023), así que
+    // se piden 768 explícitamente con outputDimensionality — sin eso habría que
+    // migrar el esquema y re-indexar todo lo ya guardado.
+    this.embedModel = genAI.getGenerativeModel({ model: 'gemini-embedding-001' });
   }
 
   /**
    * Embeddings (768 dims) para el RAG. batchEmbedContents mete todos los
    * fragmentos en UNA llamada — clave para no gastar cuota gratuita al indexar
    * un brief entero. Devuelve un vector por texto, en el mismo orden.
+   *
+   * `outputDimensionality: 768` es obligatorio: gemini-embedding-001 devuelve
+   * 3072 por defecto y la columna es vector(768). Si algún día se sube la
+   * dimensión, hay que migrar la tabla Y re-indexar todo — los vectores de
+   * distinta dimensión no se pueden comparar entre sí.
    */
   async embed(texts: string[]): Promise<number[][]> {
     if (texts.length === 0) return [];
     const res = await this.embedModel.batchEmbedContents({
       requests: texts.map((text) => ({
         content: { role: 'user', parts: [{ text }] },
+        outputDimensionality: EMBED_DIMS,
       })),
     });
-    return res.embeddings.map((e) => e.values);
+    const vectores = res.embeddings.map((e) => e.values);
+    // Defensa: si el proveedor cambia el default otra vez, es mejor fallar acá
+    // con un mensaje claro que insertar basura o romper con un error de Postgres.
+    const malas = vectores.filter((v) => v.length !== EMBED_DIMS).length;
+    if (malas) {
+      throw new Error(
+        `El modelo de embeddings devolvió ${vectores[0]?.length} dimensiones y la base espera ${EMBED_DIMS}.`,
+      );
+    }
+    return vectores;
   }
 
   // Lista EN VIVO de modelos :free de OpenRouter (endpoint público, sin key),
