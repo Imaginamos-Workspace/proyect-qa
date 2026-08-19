@@ -37,6 +37,31 @@ function slugify(text: string): string {
  * cada vendedor interpreta "Propuesta" o "Frío" a su manera y el embudo deja
  * de ser comparable entre personas.
  */
+/**
+ * Equivalencia de los 7 estados anteriores a las 11 etapas nuevas, SOLO para
+ * mostrar. Existe porque el código puede desplegarse antes de que corra la
+ * migración 032: sin esto, una tarjeta con estado 'por-contactar' no
+ * coincidiría con ninguna columna y desaparecería del tablero — el vendedor
+ * vería su pipeline vacío y pensaría que perdió los clientes.
+ *
+ * Cuando la migración corra, ningún registro caerá acá y este mapa deja de
+ * usarse solo. Se puede borrar una vez confirmado.
+ */
+const LEGACY: Record<string, SavedProspectEstado> = {
+  'por-contactar': 'contacto',
+  contactado: 'contacto',
+  referido: 'contacto',
+  'en-seguimiento': 'recontactar',
+  'reunion-agendada': 'reunion',
+  convertido: 'aprobado-cerrado',
+  descartado: 'perdido',
+};
+
+/** Etapa efectiva de un prospecto, tolerando los estados del esquema viejo. */
+export function etapaVigente(estado: string): SavedProspectEstado {
+  return (LEGACY[estado] ?? estado) as SavedProspectEstado;
+}
+
 export const COLUMNS: { estado: SavedProspectEstado; label: string; hint: string }[] = [
   { estado: 'contacto', label: 'Contacto', hint: '1. Lead registrado y primer acercamiento para validar interés y necesidad. Inbound (llegó solo) u outbound (lo contactamos).' },
   { estado: 'reunion', label: 'Reunión', hint: '2. Reuniones para entender necesidad, contexto y alcance. Puede repetirse; registra en observaciones cómo va y los puntos tratados.' },
@@ -272,9 +297,9 @@ function ProspectDetail({ prospect, onClose }: { prospect: SavedProspect; onClos
         <select
           id="etapa"
           className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-          value={prospect.estado}
+          value={etapaVigente(prospect.estado)}
           onChange={(e) => updateProspect.mutate({ id: prospect.id, estado: e.target.value as SavedProspectEstado })}
-          title={COLUMNS.find((c) => c.estado === prospect.estado)?.hint}
+          title={COLUMNS.find((c) => c.estado === etapaVigente(prospect.estado))?.hint}
         >
           {COLUMNS.map((c) => <option key={c.estado} value={c.estado}>{c.label}</option>)}
         </select>
@@ -399,13 +424,13 @@ function ProspectDetail({ prospect, onClose }: { prospect: SavedProspect; onClos
       {errorMsg && <p className="text-sm text-destructive">{errorMsg}</p>}
 
       <div className="flex flex-wrap gap-2">
-        <Button onClick={convertir} disabled={converting || prospect.estado === 'aprobado-cerrado'}>
-          {converting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creando oportunidad…</> : prospect.estado === 'aprobado-cerrado' ? 'Ya convertido' : <><Sparkles className="mr-2 h-4 w-4" /> Crear oportunidad</>}
+        <Button onClick={convertir} disabled={converting || etapaVigente(prospect.estado) === 'aprobado-cerrado'}>
+          {converting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creando oportunidad…</> : etapaVigente(prospect.estado) === 'aprobado-cerrado' ? 'Ya convertido' : <><Sparkles className="mr-2 h-4 w-4" /> Crear oportunidad</>}
         </Button>
         {prospect.opportunityId && (
           <Button variant="outline" onClick={() => navigate(`/ventas/${prospect.opportunityId}`)}>Abrir oportunidad</Button>
         )}
-        {prospect.estado !== 'perdido' && prospect.estado !== 'aprobado-cerrado' && (
+        {etapaVigente(prospect.estado) !== 'perdido' && etapaVigente(prospect.estado) !== 'aprobado-cerrado' && (
           <Button
             variant="ghost"
             className="text-destructive"
@@ -439,7 +464,7 @@ export function ProspectsPipeline() {
     setSobre(null);
     if (!id) return;
     const actual = (prospects ?? []).find((p) => p.id === id);
-    if (!actual || actual.estado === estado) return; // soltó en su misma columna
+    if (!actual || etapaVigente(actual.estado) === estado) return; // soltó en su misma columna
     mover.mutate({ id, estado });
   };
 
@@ -469,7 +494,7 @@ export function ProspectsPipeline() {
           vendedor creía que sus clientes habían desaparecido. */}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {COLUMNS.map((col) => {
-          const items = all.filter((p) => p.estado === col.estado);
+          const items = all.filter((p) => etapaVigente(p.estado) === col.estado);
           return (
             <div
               key={col.estado}
