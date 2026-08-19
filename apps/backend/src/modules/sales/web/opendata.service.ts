@@ -29,6 +29,13 @@ const TIMEOUT_MS = 20_000;
 /** Socrata admite hasta 1000; de a 50 alcanza para una pantalla y mantiene
  *  la respuesta liviana. */
 const MAX_LIMIT = 50;
+/** Reintentos ante 503/429. Socrata devuelve 503 cuando el cupo ANÓNIMO de la
+ *  IP está agotado, y las IPs de Vercel son compartidas entre miles de
+ *  proyectos: desde una IP residencial la misma consulta responde 5/5 en 0,5s
+ *  y desde el serverless rebota. El App Token lo resuelve de raíz; los
+ *  reintentos son la red de contención mientras tanto. */
+const REINTENTOS = 3;
+const BACKOFF_MS = [400, 1200];
 
 /**
  * Normaliza texto para poder buscar en el dataset, que tiene la codificación
@@ -94,9 +101,17 @@ function limpio(v: unknown): string | null {
 export class OpenDataService {
   private readonly logger = new Logger(OpenDataService.name);
 
-  /** No necesita configuración: el dataset es público. */
-  status(): { configured: boolean } {
-    return { configured: true };
+  /** Token de aplicación de Socrata. Es GRATIS y no autentica a nadie: solo
+   *  identifica a la app para darle cupo propio en vez del pool anónimo
+   *  compartido por IP. Sin él, desde Vercel se recibe 503 constante. */
+  private get appToken(): string | null {
+    return process.env.SOCRATA_APP_TOKEN?.trim().replace(/^["']|["']$/g, '') || null;
+  }
+
+  /** El dataset es público, así que siempre está "configurado" — pero avisamos
+   *  si falta el token, que es lo que causa los 503 desde serverless. */
+  status(): { configured: boolean; hasAppToken: boolean } {
+    return { configured: true, hasAppToken: !!this.appToken };
   }
 
   /**
@@ -126,16 +141,37 @@ export class OpenDataService {
     url.searchParams.set('$limit', String(Math.min(limit, MAX_LIMIT)));
     url.searchParams.set('$offset', String(offset));
 
-    let res: Response;
-    try {
-      res = await fetch(url, { signal: AbortSignal.timeout(TIMEOUT_MS) });
-    } catch (err) {
-      this.logger.error(`datos.gov.co no respondió: ${(err as Error).message}`);
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (this.appToken) headers['X-App-Token'] = this.appToken;
+
+    let res: Response | null = null;
+    for (let intento = 0; intento < REINTENTOS; intento++) {
+      try {
+        res = await fetch(url, { headers, signal: AbortSignal.timeout(TIMEOUT_MS) });
+      } catch (err) {
+        this.logger.warn(`datos.gov.co no respondió (intento ${intento + 1}): ${(err as Error).message}`);
+        res = null;
+      }
+      // 503/429 = cupo de la IP agotado. Reintentar con espera suele bastar.
+      if (res && res.status !== 503 && res.status !== 429) break;
+      if (intento < REINTENTOS - 1) {
+        await new Promise((r) => setTimeout(r, BACKOFF_MS[intento] ?? 1200));
+      }
+    }
+
+    if (!res) {
       throw new ServiceUnavailableException('Datos Abiertos Colombia no respondió. Intenta de nuevo.');
     }
     if (!res.ok) {
       const detalle = (await res.text().catch(() => '')).slice(0, 200);
       this.logger.error(`datos.gov.co ${res.status}: ${detalle}`);
+      if (res.status === 503 || res.status === 429) {
+        throw new ServiceUnavailableException(
+          this.appToken
+            ? 'Datos Abiertos está saturado en este momento. Intenta de nuevo en unos segundos.'
+            : 'Datos Abiertos rechazó la consulta por exceso de peticiones. Falta configurar SOCRATA_APP_TOKEN en el backend (es gratis y da cupo propio).',
+        );
+      }
       throw new BadRequestException(`Datos Abiertos rechazó la consulta (${res.status}).`);
     }
 
