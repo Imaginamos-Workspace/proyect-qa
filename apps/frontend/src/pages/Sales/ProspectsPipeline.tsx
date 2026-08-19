@@ -12,6 +12,7 @@ import {
   useEnrichSavedProspect,
   useProspectInteractions,
   useSavedProspects,
+  useSalesOpportunities,
   useUpdateProspect,
 } from '@/hooks/use-sales';
 import { api } from '@/lib/api';
@@ -284,7 +285,13 @@ function ProspectDetail({ prospect, onClose }: { prospect: SavedProspect; onClos
  *  búsqueda (botón Guardar), de la corrida semanal (cron) y de referidos. */
 export function ProspectsPipeline() {
   const { data: prospects, isLoading } = useSavedProspects();
+  // Para poder mostrar en qué etapa va la oportunidad de un cliente convertido,
+  // sin obligar al vendedor a salir del tablero a buscarla.
+  const { data: oportunidades } = useSalesOpportunities();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  const etapaDe = (opportunityId: string) =>
+    (oportunidades ?? []).find((o) => o.id === opportunityId)?.status ?? null;
 
   if (isLoading) return <Skeleton className="h-64 w-full" />;
   const all = prospects ?? [];
@@ -304,11 +311,14 @@ export function ProspectsPipeline() {
   return (
     <div className="space-y-4">
       {selected && <ProspectDetail key={selected.id} prospect={selected} onClose={() => setSelectedId(null)} />}
-      <div className="flex gap-4 overflow-x-auto pb-2">
+      {/* Rejilla que envuelve, NO scroll horizontal: con 7 columnas de ancho
+          fijo, "Convertido" y "Descartado" quedaban fuera de pantalla y el
+          vendedor creía que sus clientes habían desaparecido. */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
         {COLUMNS.map((col) => {
           const items = all.filter((p) => p.estado === col.estado);
           return (
-            <div key={col.estado} className="w-64 shrink-0">
+            <div key={col.estado} className="min-w-0">
               <div className="mb-2 flex items-center justify-between px-1">
                 <p className="text-sm font-semibold text-foreground">{col.label}</p>
                 <Badge variant="secondary">{items.length}</Badge>
@@ -329,6 +339,11 @@ export function ProspectsPipeline() {
                         {p.origen !== 'manual' && <Badge variant="secondary" className="shrink-0 text-[10px]">{p.origen}</Badge>}
                       </div>
                       <p className="truncate text-sm font-medium text-foreground">{p.name}</p>
+                      {/* Un cliente convertido sigue vivo: mostrar en qué etapa
+                          va su oportunidad evita tener que salir a buscarla. */}
+                      {p.opportunityId && etapaDe(p.opportunityId) && (
+                        <Badge variant="outline" className="text-[10px]">{etapaDe(p.opportunityId)}</Badge>
+                      )}
                       <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
                         {p.email && <Mail className="h-3 w-3" />}
                         {p.phone && <Phone className="h-3 w-3" />}

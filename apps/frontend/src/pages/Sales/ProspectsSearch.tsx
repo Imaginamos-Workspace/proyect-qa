@@ -25,9 +25,10 @@ export function ProspectsSearch() {
 
   const [view, setView] = useState<'buscar' | 'pipeline'>('buscar');
 
-  const pipelineCount = (saved ?? []).filter(
-    (p) => p.estado !== 'descartado' && p.estado !== 'convertido',
-  ).length;
+  // Cuenta TODOS: excluir convertidos y descartados hacía que el número no
+  // coincidiera con las tarjetas del tablero, y el vendedor creía que se le
+  // habían perdido clientes.
+  const pipelineCount = (saved ?? []).length;
 
   return (
     <div className="space-y-4">
