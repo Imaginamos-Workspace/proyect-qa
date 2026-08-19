@@ -8,6 +8,7 @@ import { RateLimitService } from './rate-limit.service';
 import { ScraperService } from './web/scraper.service';
 import { WebProspectsService } from './web/web-prospects.service';
 import { OpenDataService } from './web/opendata.service';
+import { ApolloOrgsService } from './web/apollo-orgs.service';
 import { AuthModule } from '../auth/auth.module';
 import { AIModule } from '../ai/ai.module';
 import { ScrumModule } from '../scrum/scrum.module';
@@ -15,6 +16,6 @@ import { ScrumModule } from '../scrum/scrum.module';
 @Module({
   imports: [AuthModule, AIModule, ScrumModule],
   controllers: [SalesController, ProspectsCronController],
-  providers: [SalesService, SalesRagService, ProspectsService, RateLimitService, ScraperService, WebProspectsService, OpenDataService],
+  providers: [SalesService, SalesRagService, ProspectsService, RateLimitService, ScraperService, WebProspectsService, OpenDataService, ApolloOrgsService],
 })
 export class SalesModule {}

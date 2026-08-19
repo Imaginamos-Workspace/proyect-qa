@@ -131,6 +131,24 @@ export class SaveOpenDataDto {
   category?: string;
 }
 
+/** Búsqueda de EMPRESAS en Apollo (`organizations/search` — disponible en el
+ *  plan Free, a diferencia de los endpoints de personas). */
+export class ApolloOrgSearchDto {
+  /** Sector del catálogo ('logistica', 'seguros'…). */
+  @IsOptional() @IsString() @MaxLength(40)
+  sector?: string;
+
+  @IsOptional() @IsIn(['Startup', 'SMB', 'Enterprise'])
+  segment?: string;
+
+  /** Filtro de texto sobre la razón social, dentro del catálogo. */
+  @IsOptional() @IsString() @MaxLength(80)
+  text?: string;
+
+  @IsOptional() @IsInt() @Min(1) @Max(50)
+  limit?: number;
+}
+
 const PROSPECT_ESTADOS = ['por-contactar', 'en-seguimiento', 'contactado', 'reunion-agendada', 'referido', 'descartado', 'convertido'];
 
 /** Nutrir un prospecto guardado (teléfono, email, notas, reintento, estado). */

@@ -22,6 +22,7 @@ import type {
   SalesVendedor,
   OpenDataCompany,
   ProspectSources,
+  ApolloOrgSearchResult,
 } from '@qa/shared-types';
 
 export function useSalesOpportunities() {
@@ -461,5 +462,14 @@ export function useSaveOpenDataCompany() {
     mutationFn: (c: OpenDataCompany) =>
       api.post<{ saved: boolean; reason?: string }>('/sales/prospects/opendata/save', c),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sales', 'prospects', 'saved'] }),
+  });
+}
+
+/** Busca EMPRESAS en Apollo. Este endpoint sí funciona en el plan Free —
+ *  los de personas dan 403 — y no consume créditos. */
+export function useApolloOrgSearch() {
+  return useMutation({
+    mutationFn: (input: { keywords: string[]; locations?: string[]; employeeRanges?: string[]; page?: number }) =>
+      api.post<ApolloOrgSearchResult>('/sales/prospects/apollo-orgs/search', input, 30_000),
   });
 }

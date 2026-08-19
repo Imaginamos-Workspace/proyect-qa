@@ -301,3 +301,27 @@ export interface ProspectSources {
   apollo: boolean;
   opendata: boolean;
 }
+
+/** Empresa de Apollo (`organizations/search`). Complementa al registro
+ *  público: Apollo aporta industria, tamaño y LinkedIn; el registro, el NIT. */
+export interface ApolloOrg {
+  apolloId: string | null;
+  name: string;
+  domain: string | null;
+  website: string | null;
+  industry: string | null;
+  employees: number | null;
+  segment: string | null;
+  linkedinUrl: string | null;
+  phone: string | null;
+  city: string | null;
+  country: string | null;
+  foundedYear: number | null;
+  description: string | null;
+}
+
+export interface ApolloOrgSearchResult {
+  orgs: ApolloOrg[];
+  total: number;
+  page: number;
+}

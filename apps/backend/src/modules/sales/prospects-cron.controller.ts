@@ -1,6 +1,7 @@
 import { Controller, ForbiddenException, Get, Req } from '@nestjs/common';
 import { ProspectsService } from './prospects.service';
 import { WebProspectsService } from './web/web-prospects.service';
+import { ApolloOrgsService } from './web/apollo-orgs.service';
 
 import { timingSafeEqual } from 'crypto';
 
@@ -16,6 +17,7 @@ export class ProspectsCronController {
   constructor(
     private readonly prospects: ProspectsService,
     private readonly web: WebProspectsService,
+    private readonly apolloOrgs: ApolloOrgsService,
   ) {}
 
   @Get('cron-weekly')
@@ -39,7 +41,9 @@ export class ProspectsCronController {
     // resultado dice qué pasó con cada una.
     const apollo = await this.prospects.runWeekly().catch((e: Error) => ({ error: e.message }));
     const web = await this.web.runWeekly().catch((e: Error) => ({ error: e.message }));
-    return { apollo, web };
+    // ÚNICO punto donde se consume la API de Apollo. Todo lo demás lee la caché.
+    const apolloOrgs = await this.apolloOrgs.refreshWeekly().catch((e: Error) => ({ error: e.message }));
+    return { apollo, web, apolloOrgs };
   }
 }
 
