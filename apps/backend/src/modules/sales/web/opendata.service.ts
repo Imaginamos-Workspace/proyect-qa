@@ -30,6 +30,55 @@ const TIMEOUT_MS = 20_000;
  *  la respuesta liviana. */
 const MAX_LIMIT = 50;
 
+/**
+ * Normaliza texto para poder buscar en el dataset, que tiene la codificación
+ * CORROMPIDA EN ORIGEN. El mapa real de daño, medido sobre los municipios:
+ *
+ *   vocales con tilde  →  ROTAS, quedan en minúscula sin tilde
+ *                         "BOGOTa", "MEDELLiN", "ALBaN", "AGUSTiN CODAZZI"
+ *   Ñ                  →  INTACTA   "BRICEÑO", "CAÑASGORDAS"
+ *   Ü                  →  INTACTA   "CHACHAGÜi"
+ *
+ * Por eso NO se pueden quitar todos los diacríticos: eso rompería Briceño y
+ * Cañasgordas, que en el dataset sí están bien escritos. Se quitan solo las
+ * tildes de vocales, que son las que están dañadas.
+ *
+ * Sin esto, escribir "Bogotá" con tilde devuelve CERO sobre 59.613 empresas.
+ */
+const TILDES_VOCAL: Record<string, string> = {
+  á: 'a', é: 'e', í: 'i', ó: 'o', ú: 'u',
+  Á: 'A', É: 'E', Í: 'I', Ó: 'O', Ú: 'U',
+  à: 'a', è: 'e', ì: 'i', ò: 'o', ù: 'u',
+  À: 'A', È: 'E', Ì: 'I', Ò: 'O', Ù: 'U',
+  â: 'a', ê: 'e', î: 'i', ô: 'o', û: 'u',
+  Â: 'A', Ê: 'E', Î: 'I', Ô: 'O', Û: 'U',
+  ä: 'a', ë: 'e', ï: 'i', ö: 'o',
+  Ä: 'A', Ë: 'E', Ï: 'I', Ö: 'O',
+};
+
+/** Sufijos administrativos que el vendedor escribe y el dataset no tiene:
+ *  "Bogotá D.C." está guardado como "BOGOTa" a secas. */
+const SUFIJOS_ADMIN = /\s+(D\.?\s*C\.?|DC|DISTRITO\s+CAPITAL)\s*$/i;
+
+/**
+ * Deja el texto en la forma con la que sí se puede matchear:
+ * sin tildes de vocal, sin puntuación, sin sufijos administrativos, con los
+ * espacios colapsados. Tolera acentos, mayúsculas, espacios de más y comas.
+ *
+ *   "  Bogotá  D.C. " → "Bogota"
+ *   "MEDELLÍN"        → "MEDELLIN"
+ *   "Briceño"         → "Briceño"   (la ñ se conserva)
+ */
+export function normalizarBusqueda(texto: string): string {
+  if (!texto) return '';
+  let out = texto.normalize('NFC');
+  out = out.replace(/[áéíóúÁÉÍÓÚàèìòùÀÈÌÒÙâêîôûÂÊÎÔÛäëïöÄËÏÖ]/g, (c) => TILDES_VOCAL[c] ?? c);
+  out = out.replace(/[.,;:()"'`]/g, ' ');
+  out = out.replace(/\s+/g, ' ').trim();
+  out = out.replace(SUFIJOS_ADMIN, '').trim();
+  return out;
+}
+
 /** El dataset escribe "No Provisto" en vez de dejar el campo vacío. */
 const SIN_DATO = /^(no provisto|no definido|n\/?a|ninguno|-)$/i;
 
@@ -58,14 +107,15 @@ export class OpenDataService {
    *                 el dataset trae "BOGOTa", "MEDELLiN" y variantes.
    */
   async search(keywords: string, city: string | null, limit = 25, offset = 0): Promise<OpenDataCompany[]> {
-    const q = keywords?.trim();
+    // Mismo problema en los nombres: el dataset trae "LOGiSTICA" y "CONSTRUCCIoN".
+    const q = normalizarBusqueda(keywords ?? '');
     if (!q) throw new BadRequestException('La búsqueda necesita al menos una palabra clave.');
 
     const where = [
       "esta_activa='Si'",
       // Habeas Data: una persona natural no es una empresa, y sus datos son personales.
       "tipo_empresa NOT LIKE '%PERSONA NATURAL%'",
-      city ? `upper(municipio) LIKE '%${this.escape(city.toUpperCase())}%'` : null,
+      city ? `upper(municipio) LIKE '%${this.escape(normalizarBusqueda(city).toUpperCase())}%'` : null,
     ]
       .filter(Boolean)
       .join(' AND ');
