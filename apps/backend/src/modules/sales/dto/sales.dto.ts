@@ -82,6 +82,55 @@ export class SaveProspectDto {
   previewLinkedinUrl?: string;
 }
 
+/** Búsqueda de empresas en Datos Abiertos Colombia (fuente `web`, sin API key). */
+export class OpenDataSearchDto {
+  @IsString() @IsNotEmpty() @MaxLength(120)
+  keywords: string;
+
+  @IsOptional() @IsString() @MaxLength(80)
+  city?: string;
+
+  @IsOptional() @IsInt() @Min(1) @Max(50)
+  limit?: number;
+
+  @IsOptional() @IsInt() @Min(0) @Max(1000)
+  offset?: number;
+}
+
+/** Guardar en el pipeline una empresa devuelta por la búsqueda anterior.
+ *  Se reciben los campos ya resueltos para no repetir la consulta al dataset. */
+export class SaveOpenDataDto {
+  @IsString() @IsNotEmpty() @MaxLength(200)
+  name: string;
+
+  @IsOptional() @IsString() @MaxLength(20)
+  nit?: string;
+
+  @IsOptional() @IsString() @MaxLength(50)
+  phone?: string;
+
+  @IsOptional() @IsString() @MaxLength(150)
+  email?: string;
+
+  @IsOptional() @IsString() @MaxLength(250)
+  address?: string;
+
+  @IsOptional() @IsString() @MaxLength(80)
+  city?: string;
+
+  @IsOptional() @IsString() @MaxLength(80)
+  department?: string;
+
+  @IsOptional() @IsString() @MaxLength(150)
+  domain?: string;
+
+  @IsOptional() @IsString() @MaxLength(100)
+  companyType?: string;
+
+  @IsOptional() @IsString() @MaxLength(150)
+  category?: string;
+}
+
 const PROSPECT_ESTADOS = ['por-contactar', 'en-seguimiento', 'contactado', 'reunion-agendada', 'referido', 'descartado', 'convertido'];
 
 /** Nutrir un prospecto guardado (teléfono, email, notas, reintento, estado). */
@@ -136,6 +185,15 @@ export class CreateSavedSearchDto {
 
   @IsOptional() @IsArray() @IsString({ each: true }) @MaxLength(80, { each: true })
   locations?: string[];
+
+  /** Qué motor corre la búsqueda semanal. Por defecto 'apollo' para no
+   *  cambiarle el comportamiento a las que ya existen. */
+  @IsOptional() @IsIn(['apollo', 'web'])
+  source?: 'apollo' | 'web';
+
+  /** Solo aplica a `web`: municipio del registro público. */
+  @IsOptional() @IsString() @MaxLength(80)
+  city?: string;
 }
 
 /** Handoff al TL — el vendedor asigna el Owner TL (rules/13 §Cerrar el brief). */

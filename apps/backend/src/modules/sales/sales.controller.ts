@@ -2,6 +2,8 @@ import { Body, Controller, Delete, ForbiddenException, Get, Param, Post, Req, Us
 import { SalesService } from './sales.service';
 import { ProspectsService } from './prospects.service';
 import { RateLimitService } from './rate-limit.service';
+import { OpenDataService } from './web/opendata.service';
+import { WebProspectsService } from './web/web-prospects.service';
 import { RolesService } from '../scrum/roles.service';
 import { SupabaseAuthGuard } from '../auth/guards/supabase-auth.guard';
 import {
@@ -12,6 +14,8 @@ import {
   FinalizeProposalDto,
   HandoffDto,
   MarkNotificationsSeenDto,
+  OpenDataSearchDto,
+  SaveOpenDataDto,
   SaveProspectDto,
   SearchProspectsDto,
   SendMessageDto,
@@ -44,6 +48,8 @@ export class SalesController {
     private readonly prospects: ProspectsService,
     private readonly roles: RolesService,
     private readonly rateLimit: RateLimitService,
+    private readonly openData: OpenDataService,
+    private readonly webProspects: WebProspectsService,
   ) {}
 
   /** Notificaciones del pipeline del que consulta (el TL publicó la propuesta,
@@ -89,6 +95,49 @@ export class SalesController {
       industry: body.previewIndustry,
       location: body.previewLocation,
       linkedinUrl: body.previewLinkedinUrl,
+    });
+  }
+
+  // ── Fuente WEB: Datos Abiertos Colombia (gratis, sin API key) ─────────────
+
+  /** Qué fuentes de prospección están operativas. El frontend usa esto para
+   *  no ofrecer un buscador que va a fallar por falta de configuración. */
+  @Get('prospects/sources')
+  async prospectSources(@Req() req: RequestWithUser) {
+    await this.requireSeller(req);
+    return {
+      apollo: this.prospects.status().configured,
+      opendata: this.openData.status().configured,
+    };
+  }
+
+  /** Busca empresas colombianas en el registro público. No consume cuota ni
+   *  créditos: se puede buscar todas las veces que haga falta. */
+  @Post('prospects/opendata/search')
+  async openDataSearch(@Body() body: OpenDataSearchDto, @Req() req: RequestWithUser) {
+    const login = await this.requireSeller(req);
+    // Tope suave: el dataset es gratis, pero no queremos que un bucle del
+    // frontend martille a datos.gov.co en nuestro nombre.
+    await this.rateLimit.enforce(login, 'opendata-search', 120, 60 * 60_000);
+    return this.openData.search(body.keywords, body.city ?? null, body.limit ?? 25, body.offset ?? 0);
+  }
+
+  /** Guarda una de esas empresas en el pipeline (idempotente por NIT). */
+  @Post('prospects/opendata/save')
+  async openDataSave(@Body() body: SaveOpenDataDto, @Req() req: RequestWithUser) {
+    const login = await this.requireSeller(req);
+    if (!login) throw new ForbiddenException('No se pudo identificar tu usuario.');
+    return this.webProspects.saveFromOpenData(login, {
+      name: body.name,
+      nit: body.nit ?? null,
+      phone: body.phone ?? null,
+      email: body.email ?? null,
+      address: body.address ?? null,
+      city: body.city ?? null,
+      department: body.department ?? null,
+      domain: body.domain ?? null,
+      companyType: body.companyType ?? null,
+      category: body.category ?? null,
     });
   }
 

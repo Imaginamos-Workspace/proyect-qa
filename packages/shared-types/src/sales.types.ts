@@ -267,8 +267,37 @@ export interface SavedProspectSearch {
   active: boolean;
   lastRunAt: string | null;
   createdAt: string;
+  /** Motor que ejecuta la corrida semanal. */
+  source: 'apollo' | 'web';
+  /** Solo para `web`: municipio del registro público. */
+  city: string | null;
 }
 
 export interface SalesRegenerateProposalResult {
   dispatched: true;
+}
+
+/** Empresa colombiana del registro público (Datos Abiertos, SECOP II).
+ *  Fuente `web`: gratis, sin API key y con NIT — a diferencia de Apollo, que
+ *  devuelve personas con cargo pero exige plan pago. */
+export interface OpenDataCompany {
+  /** Razón social tal como está en el registro. */
+  name: string;
+  nit: string | null;
+  phone: string | null;
+  email: string | null;
+  address: string | null;
+  city: string | null;
+  department: string | null;
+  /** Dominio normalizado del sitio web, si lo declararon. */
+  domain: string | null;
+  /** Tipo societario (SAS, LTDA…) — sirve para calificar el lead. */
+  companyType: string | null;
+  category: string | null;
+}
+
+/** Qué fuentes de prospección están operativas ahora mismo. */
+export interface ProspectSources {
+  apollo: boolean;
+  opendata: boolean;
 }

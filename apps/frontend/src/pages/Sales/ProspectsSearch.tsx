@@ -16,6 +16,7 @@ import {
 } from '@/hooks/use-sales';
 import { useScrumMe } from '@/hooks/use-scrum';
 import { ProspectsPipeline } from './ProspectsPipeline';
+import { OpenDataSearch } from './OpenDataSearch';
 
 // "CEO, Gerente de operaciones" → ['CEO', 'Gerente de operaciones']
 function splitList(text: string): string[] {
@@ -61,9 +62,9 @@ export function ProspectsSearch() {
   const createSavedSearch = useCreateSavedSearch();
   const deleteSavedSearch = useDeleteSavedSearch();
 
-  // Arranca en "Buscar en Apollo" — es la primera pestaña, y su contenido es el
-  // que se ve al entrar. "Mis clientes" queda a un clic.
-  const [view, setView] = useState<'buscar' | 'pipeline'>('buscar');
+  // Arranca en el registro público: es la primera pestaña, es gratis y es la
+  // fuente que hoy funciona (Apollo quedó sin acceso a la API en su plan Free).
+  const [view, setView] = useState<'registro' | 'buscar' | 'pipeline'>('registro');
   const [keywords, setKeywords] = useState('');
   const [titles, setTitles] = useState('');
   const [locations, setLocations] = useState('');
@@ -89,10 +90,6 @@ export function ProspectsSearch() {
   if (statusLoading) {
     return <Skeleton className="h-40 w-full" />;
   }
-  if (!status?.configured) {
-    return <ApolloSetupCard />;
-  }
-
   const result = search.data;
   // Idempotencia visible: guardados según el backend (savedApolloIds de la
   // búsqueda) + los del pipeline ya cargado (cubre lo recién guardado).
@@ -102,6 +99,9 @@ export function ProspectsSearch() {
   return (
     <div className="space-y-4">
       <div className="flex gap-2">
+        <Button variant={view === 'registro' ? 'default' : 'outline'} size="sm" onClick={() => setView('registro')}>
+          <Building2 className="mr-2 h-4 w-4" /> Buscar empresas
+        </Button>
         <Button variant={view === 'buscar' ? 'default' : 'outline'} size="sm" onClick={() => setView('buscar')}>
           <Search className="mr-2 h-4 w-4" /> Buscar en Apollo
         </Button>
@@ -110,8 +110,14 @@ export function ProspectsSearch() {
         </Button>
       </div>
 
-      {view === 'pipeline' ? (
+      {view === 'registro' ? (
+        <OpenDataSearch isVendedor={isVendedor} />
+      ) : view === 'pipeline' ? (
         <ProspectsPipeline />
+      ) : !status?.configured ? (
+        // Solo la pestaña de Apollo depende de su key; el registro público y el
+        // pipeline funcionan igual sin ella.
+        <ApolloSetupCard />
       ) : (
         <>
           <Card>
