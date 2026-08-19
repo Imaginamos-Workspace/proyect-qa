@@ -149,7 +149,10 @@ export class ApolloOrgSearchDto {
   limit?: number;
 }
 
-const PROSPECT_ESTADOS = ['por-contactar', 'en-seguimiento', 'contactado', 'reunion-agendada', 'referido', 'descartado', 'convertido'];
+const PROSPECT_ESTADOS = [
+  'contacto', 'reunion', 'propuesta', 'en-revision', 'aprobado-documentos',
+  'aprobado-cerrado', 'perdido', 'frio', 'cambio-propuesta', 'no-calificado', 'recontactar',
+];
 
 /** Nutrir un prospecto guardado (teléfono, email, notas, reintento, estado). */
 export class UpdateProspectDto {

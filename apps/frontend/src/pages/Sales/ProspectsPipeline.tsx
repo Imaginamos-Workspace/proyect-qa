@@ -28,14 +28,23 @@ function slugify(text: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
-const COLUMNS: { estado: SavedProspectEstado; label: string }[] = [
-  { estado: 'por-contactar', label: 'Por contactar' },
-  { estado: 'en-seguimiento', label: 'En seguimiento' },
-  { estado: 'contactado', label: 'Contactado' },
-  { estado: 'reunion-agendada', label: 'Reunión agendada' },
-  { estado: 'referido', label: 'Referido' },
-  { estado: 'convertido', label: 'Convertido' },
-  { estado: 'descartado', label: 'Descartado' },
+/**
+ * Las 11 etapas del proceso comercial, en el orden en que avanza un negocio.
+ * `hint` es el criterio para saber cuándo mover una tarjeta acá — sin eso cada
+ * vendedor interpreta las etapas a su manera y el embudo deja de ser comparable.
+ */
+const COLUMNS: { estado: SavedProspectEstado; label: string; hint: string }[] = [
+  { estado: 'contacto', label: 'Contacto', hint: 'Lead registrado y primer acercamiento, sea inbound u outbound.' },
+  { estado: 'reunion', label: 'Reunión', hint: 'Reuniones para entender necesidad y alcance. Puede repetirse; anota los puntos en observaciones.' },
+  { estado: 'propuesta', label: 'Propuesta', hint: 'Etapa interna: estás armando alcance, tiempos e inversión.' },
+  { estado: 'en-revision', label: 'En revisión', hint: 'Ya enviada. Registra servicios ofrecidos, monto y fecha de envío.' },
+  { estado: 'cambio-propuesta', label: 'Cambio de propuesta', hint: 'Pidió ajustes de alcance, tiempos o inversión.' },
+  { estado: 'aprobado-documentos', label: 'Aprobado / Documentos', hint: 'Confirmó avanzar: contrato, documentos y primera factura.' },
+  { estado: 'aprobado-cerrado', label: 'Aprobado / Cerrado', hint: 'Firmado y listo para operaciones.' },
+  { estado: 'recontactar', label: 'Recontactar', hint: 'Aplazó o dejó de responder, pero sigue siendo potencial. Anota cuándo volver.' },
+  { estado: 'frio', label: 'Frío', hint: 'Sin contacto tras 3 intentos.' },
+  { estado: 'no-calificado', label: 'No calificado', hint: 'Tras la reunión inicial, no encaja como cliente potencial.' },
+  { estado: 'perdido', label: 'Perdido', hint: 'No avanzó. El motivo es obligatorio en observaciones.' },
 ];
 
 const TIPOS = [
@@ -127,7 +136,7 @@ function ProspectDetail({ prospect, onClose }: { prospect: SavedProspect; onClos
         `${prospect.notes ? ` Notas de prospección: ${prospect.notes}.` : ''}` +
         ` Ayúdame a armar el brief con esto como punto de partida.`;
       await api.post(`/sales/opportunities/${opp.id}/messages`, { content: seedMessage }, 55_000);
-      await updateProspect.mutateAsync({ id: prospect.id, estado: 'convertido', opportunityId: opp.id });
+      await updateProspect.mutateAsync({ id: prospect.id, estado: 'aprobado-cerrado', opportunityId: opp.id });
       navigate(`/ventas/${opp.id}`);
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : 'No se pudo convertir el prospecto.');
@@ -260,19 +269,19 @@ function ProspectDetail({ prospect, onClose }: { prospect: SavedProspect; onClos
       {errorMsg && <p className="text-sm text-destructive">{errorMsg}</p>}
 
       <div className="flex flex-wrap gap-2">
-        <Button onClick={convertir} disabled={converting || prospect.estado === 'convertido'}>
-          {converting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creando oportunidad…</> : prospect.estado === 'convertido' ? 'Ya convertido' : <><Sparkles className="mr-2 h-4 w-4" /> Crear oportunidad</>}
+        <Button onClick={convertir} disabled={converting || prospect.estado === 'aprobado-cerrado'}>
+          {converting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creando oportunidad…</> : prospect.estado === 'aprobado-cerrado' ? 'Ya convertido' : <><Sparkles className="mr-2 h-4 w-4" /> Crear oportunidad</>}
         </Button>
         {prospect.opportunityId && (
           <Button variant="outline" onClick={() => navigate(`/ventas/${prospect.opportunityId}`)}>Abrir oportunidad</Button>
         )}
-        {prospect.estado !== 'descartado' && prospect.estado !== 'convertido' && (
+        {prospect.estado !== 'perdido' && prospect.estado !== 'aprobado-cerrado' && (
           <Button
             variant="ghost"
             className="text-destructive"
-            onClick={() => updateProspect.mutate({ id: prospect.id, estado: 'descartado' })}
+            onClick={() => updateProspect.mutate({ id: prospect.id, estado: 'perdido' })}
           >
-            <Trash2 className="mr-2 h-4 w-4" /> Descartar
+            <Trash2 className="mr-2 h-4 w-4" /> Marcar perdido
           </Button>
         )}
       </div>
@@ -289,6 +298,21 @@ export function ProspectsPipeline() {
   // sin obligar al vendedor a salir del tablero a buscarla.
   const { data: oportunidades } = useSalesOpportunities();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Drag & drop nativo de HTML5: cero dependencias nuevas. `arrastrando` es el
+  // id de la tarjeta en vuelo; `sobre` la columna resaltada como destino.
+  const [arrastrando, setArrastrando] = useState<string | null>(null);
+  const [sobre, setSobre] = useState<SavedProspectEstado | null>(null);
+  const mover = useUpdateProspect();
+
+  const soltarEn = (estado: SavedProspectEstado) => {
+    const id = arrastrando;
+    setArrastrando(null);
+    setSobre(null);
+    if (!id) return;
+    const actual = (prospects ?? []).find((p) => p.id === id);
+    if (!actual || actual.estado === estado) return; // soltó en su misma columna
+    mover.mutate({ id, estado });
+  };
 
   const etapaDe = (opportunityId: string) =>
     (oportunidades ?? []).find((o) => o.id === opportunityId)?.status ?? null;
@@ -318,9 +342,15 @@ export function ProspectsPipeline() {
         {COLUMNS.map((col) => {
           const items = all.filter((p) => p.estado === col.estado);
           return (
-            <div key={col.estado} className="min-w-0">
+            <div
+              key={col.estado}
+              className={`min-w-0 rounded-lg p-1 transition-colors ${sobre === col.estado ? 'bg-primary/10 ring-2 ring-primary' : ''}`}
+              onDragOver={(e) => { e.preventDefault(); setSobre(col.estado); }}
+              onDragLeave={() => setSobre((s) => (s === col.estado ? null : s))}
+              onDrop={(e) => { e.preventDefault(); soltarEn(col.estado); }}
+            >
               <div className="mb-2 flex items-center justify-between px-1">
-                <p className="text-sm font-semibold text-foreground">{col.label}</p>
+                <p className="text-sm font-semibold text-foreground" title={col.hint}>{col.label}</p>
                 <Badge variant="secondary">{items.length}</Badge>
               </div>
               <div className="space-y-2">
@@ -329,9 +359,12 @@ export function ProspectsPipeline() {
                     key={p.id}
                     role="button"
                     tabIndex={0}
+                    draggable
+                    onDragStart={() => setArrastrando(p.id)}
+                    onDragEnd={() => { setArrastrando(null); setSobre(null); }}
                     onClick={() => setSelectedId(p.id)}
                     onKeyDown={(e) => { if (e.key === 'Enter') setSelectedId(p.id); }}
-                    className={`cursor-pointer transition-colors hover:border-primary hover:bg-primary/5 ${selectedId === p.id ? 'border-primary' : ''}`}
+                    className={`cursor-grab transition-colors hover:border-primary hover:bg-primary/5 active:cursor-grabbing ${selectedId === p.id ? 'border-primary' : ''} ${arrastrando === p.id ? 'opacity-40' : ''}`}
                   >
                     <CardContent className="space-y-1 p-3">
                       <div className="flex items-center justify-between gap-1 text-muted-foreground">
@@ -354,7 +387,9 @@ export function ProspectsPipeline() {
                   </Card>
                 ))}
                 {items.length === 0 && (
-                  <p className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">Vacío</p>
+                  <p className="rounded-lg border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">
+                    {sobre === col.estado ? 'Soltá acá' : 'Vacío'}
+                  </p>
                 )}
               </div>
             </div>

@@ -22,15 +22,22 @@ const SEARCHES_TABLE = 'sales_prospect_searches';
 // Transición automática de estado según el resultado del intento — el
 // vendedor registra QUÉ pasó y el pipeline se mueve solo (menos clics).
 const RESULT_TO_ESTADO: Record<ProspectInteractionResultado, SavedProspectEstado> = {
-  'sin-respuesta': 'en-seguimiento',
-  'contacto-logrado': 'contactado',
-  'reunion-agendada': 'reunion-agendada',
-  referido: 'referido',
-  rechazado: 'descartado',
-  // La persona ya no está en la empresa: se descarta CON bitácora (queda el
+  // Sin respuesta NO es "frío" todavía: frío es tras agotar los 3 intentos.
+  // Hasta entonces sigue siendo un cliente al que hay que volver.
+  'sin-respuesta': 'recontactar',
+  'contacto-logrado': 'contacto',
+  'reunion-agendada': 'reunion',
+  // Un referido entra como lead nuevo, en la primera etapa.
+  referido: 'contacto',
+  rechazado: 'perdido',
+  // La persona ya no está en la empresa: se pierde CON bitácora (queda el
   // porqué). Si dio referido, usar 'referido' — ese sí crea el contacto nuevo.
-  'ya-no-trabaja': 'descartado',
+  'ya-no-trabaja': 'perdido',
 };
+
+/** Tras 3 intentos sin respuesta, el prospecto pasa a Frío. Lo dice el proceso
+ *  comercial y así el vendedor no lo persigue indefinidamente. */
+const INTENTOS_ANTES_DE_FRIO = 3;
 
 // Búsqueda de personas de Apollo.io. La key va en el header X-Api-Key y se
 // configura SOLO como variable de entorno del backend (APOLLO_API_KEY) —
@@ -357,8 +364,23 @@ export class ProspectsService {
       .single();
     if (error) throw new BadRequestException(`No se pudo registrar el intento: ${error.message}`);
 
+    // Regla del proceso comercial: tras 3 intentos sin respuesta el prospecto
+    // pasa a Frío, no a Recontactar. Se cuenta sobre la bitácora real, así que
+    // un contacto logrado en el medio reinicia la cuenta (la racha se corta).
+    let estado = RESULT_TO_ESTADO[input.resultado];
+    if (input.resultado === 'sin-respuesta') {
+      const { data: bitacora } = await this.supabase
+        .from(INTERACTIONS_TABLE)
+        .select('resultado')
+        .eq('prospect_id', id)
+        .order('created_at', { ascending: false })
+        .limit(INTENTOS_ANTES_DE_FRIO);
+      const rachaSinRespuesta = (bitacora ?? []).every((i) => i.resultado === 'sin-respuesta');
+      if ((bitacora ?? []).length >= INTENTOS_ANTES_DE_FRIO && rachaSinRespuesta) estado = 'frio';
+    }
+
     const prospect = await this.updateProspect(id, vendedorLogin, {
-      estado: RESULT_TO_ESTADO[input.resultado],
+      estado,
       nextAttemptAt: input.reintentarAt ?? null,
     });
 
@@ -435,7 +457,7 @@ export class ProspectsService {
   }
 
   /** Corrida semanal (cron de Vercel): ejecuta cada búsqueda activa y guarda
-   *  los prospectos NUEVOS como 'por-contactar' (origen semanal). Idempotente:
+   *  los prospectos NUEVOS en la etapa 'contacto' (origen semanal). Idempotente:
    *  el unique de apollo_id hace que lo ya guardado se salte sin tocar su
    *  estado/notas. Los nuevos NO se enriquecen acá (economía de créditos —
    *  el vendedor enriquece al abrir el que le interese... el guardado manual
