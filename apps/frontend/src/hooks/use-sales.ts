@@ -223,7 +223,7 @@ export function useSaveProspect() {
 export function useUpdateProspect() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...patch }: { id: string } & Partial<Pick<SavedProspect, 'estado' | 'notes' | 'phone' | 'email' | 'nextAttemptAt' | 'opportunityId'>>) =>
+    mutationFn: ({ id, ...patch }: { id: string } & Partial<Pick<SavedProspect, 'estado' | 'etapa' | 'notes' | 'phone' | 'email' | 'nextAttemptAt' | 'opportunityId'>>) =>
       api.post<SavedProspect>(`/sales/prospects/saved/${id}`, patch),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sales', 'prospects', 'saved'] }),
   });

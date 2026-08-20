@@ -149,15 +149,23 @@ export class ApolloOrgSearchDto {
   limit?: number;
 }
 
-const PROSPECT_ESTADOS = [
+const PROSPECT_ETAPAS = [
   'contacto', 'reunion', 'propuesta', 'en-revision', 'aprobado-documentos',
   'aprobado-cerrado', 'perdido', 'frio', 'cambio-propuesta', 'no-calificado', 'recontactar',
 ];
+const PROSPECT_ESTADOS = ['backlog', 'en-gestion', 'rechazado', 'aprobado'];
 
 /** Nutrir un prospecto guardado (teléfono, email, notas, reintento, estado). */
 export class UpdateProspectDto {
+  /** Columna del tablero. Se manda al arrastrar la tarjeta; el backend
+   *  deriva la etapa por defecto de esa columna. */
   @IsOptional() @IsIn(PROSPECT_ESTADOS)
   estado?: string;
+
+  /** Etapa del proceso (las 11). Es la fuente de verdad: si viene, el backend
+   *  recalcula el estado a partir de ella. */
+  @IsOptional() @IsIn(PROSPECT_ETAPAS)
+  etapa?: string;
 
   @IsOptional() @IsString() @MaxLength(2000)
   notes?: string;

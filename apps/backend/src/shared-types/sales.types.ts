@@ -209,28 +209,53 @@ export interface SalesProspectSearchResult {
 // registrar intentos/referidos/reintentos → convertir en oportunidad.
 
 export type SavedProspectEstado =
-  /** 1. Lead registrado, primer acercamiento (inbound u outbound). */
+  /** Leads por trabajar. */
+  | 'backlog'
+  /** Se está trabajando: reunión, propuesta, revisión o ajustes. */
+  | 'en-gestion'
+  /** No avanzó: perdido, frío o no calificado. */
+  | 'rechazado'
+  /** Cerrado: documentos o firma. */
+  | 'aprobado';
+
+/** Las 11 etapas del proceso comercial. Es la fuente de verdad: el ESTADO
+ *  (columna del tablero) se deriva de acá, nunca al revés. */
+export type SavedProspectEtapa =
   | 'contacto'
-  /** 2. Reuniones para entender necesidad, contexto y alcance (1, 2, 3…). */
   | 'reunion'
-  /** 3. INTERNA: el comercial arma alcance, tiempos e inversión. */
   | 'propuesta'
-  /** 4. Propuesta enviada, el cliente la está evaluando. */
   | 'en-revision'
-  /** 5. Confirmó avanzar: contrato, documentos, primera factura. */
   | 'aprobado-documentos'
-  /** 6. Cerrado y firmado, listo para operaciones. */
   | 'aprobado-cerrado'
-  /** 7. No avanzó — el motivo es obligatorio en observaciones. */
   | 'perdido'
-  /** 8. Sin contacto tras 3 intentos. */
   | 'frio'
-  /** 9. Pidió ajustes de alcance, tiempos o inversión. */
   | 'cambio-propuesta'
-  /** 10. Tras la reunión inicial, no es cliente potencial. */
   | 'no-calificado'
-  /** 11. Aplazó o dejó de responder, pero sigue siendo potencial. */
   | 'recontactar';
+
+/** Etapa → columna del tablero. Única definición: la comparten backend y
+ *  frontend para que no puedan quedar en desacuerdo. */
+export const ETAPA_A_ESTADO: Record<SavedProspectEtapa, SavedProspectEstado> = {
+  contacto: 'backlog',
+  recontactar: 'backlog',
+  reunion: 'en-gestion',
+  propuesta: 'en-gestion',
+  'en-revision': 'en-gestion',
+  'cambio-propuesta': 'en-gestion',
+  perdido: 'rechazado',
+  frio: 'rechazado',
+  'no-calificado': 'rechazado',
+  'aprobado-documentos': 'aprobado',
+  'aprobado-cerrado': 'aprobado',
+};
+
+/** Etapa por defecto al arrastrar una tarjeta a una columna. */
+export const ESTADO_A_ETAPA: Record<SavedProspectEstado, SavedProspectEtapa> = {
+  backlog: 'contacto',
+  'en-gestion': 'reunion',
+  rechazado: 'perdido',
+  aprobado: 'aprobado-documentos',
+};
 
 /** Un envío de la propuesta al TL para que la revise. Se repite si el cliente
  *  pide cambios, por eso es una lista y no un campo. */
@@ -246,6 +271,7 @@ export interface SavedProspect {
   id: string;
   apolloId: string;
   estado: SavedProspectEstado;
+  etapa: SavedProspectEtapa;
   origen: 'manual' | 'semanal' | 'referido';
   name: string;
   title: string | null;
