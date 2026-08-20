@@ -286,4 +286,20 @@ export class WebProspectsService {
     const { data } = await this.supabase.from(BLOCKLIST_TABLE).select('domain');
     return new Set((data ?? []).map((r) => r.domain as string));
   }
+
+  /**
+   * De una lista de NITs/dominios, cuáles YA están en el pipeline de este
+   * vendedor. Sin esto la búsqueda ofrece "Guardar" sobre empresas que ya
+   * está trabajando, y guardar de nuevo no hace nada (choca con el unique).
+   */
+  async yaGuardados(vendedorLogin: string, claves: string[]): Promise<Record<string, string>> {
+    if (!claves.length) return {};
+    const { data } = await this.supabase
+      .from(PROSPECTS_TABLE)
+      .select('id, apollo_id')
+      .eq('vendedor_login', vendedorLogin)
+      .in('apollo_id', claves);
+    // clave externa → id del prospecto, para poder llevar al vendedor a su ficha.
+    return Object.fromEntries((data ?? []).map((r) => [r.apollo_id as string, r.id as string]));
+  }
 }

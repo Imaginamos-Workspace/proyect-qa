@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Bookmark, BookmarkCheck, Building2, CalendarClock, Globe, Loader2, Mail, MapPin, Phone, Search } from 'lucide-react';
+import { ArrowRight, Bookmark, BookmarkCheck, Building2, CalendarClock, Globe, Loader2, Mail, MapPin, Phone, Search } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -15,7 +15,14 @@ import type { OpenDataCompany } from '@qa/shared-types';
  * La contrapartida: devuelve la EMPRESA, no una persona con cargo. El
  * vendedor consigue el contacto llamando, y lo nutre desde el pipeline.
  */
-export function OpenDataSearch({ isVendedor }: { isVendedor: boolean }) {
+export function OpenDataSearch({
+  isVendedor,
+  onAbrirProspecto,
+}: {
+  isVendedor: boolean;
+  /** Lleva al tablero y abre la ficha de un cliente que YA está en el pipeline. */
+  onAbrirProspecto: (prospectId: string) => void;
+}) {
   const [keywords, setKeywords] = useState('');
   const [city, setCity] = useState('Bogotá');
   const [guardadas, setGuardadas] = useState<Set<string>>(new Set());
@@ -53,7 +60,10 @@ export function OpenDataSearch({ isVendedor }: { isVendedor: boolean }) {
     });
   };
 
-  const resultados = search.data ?? [];
+  const resultados = search.data?.companies ?? [];
+  // clave externa → id del prospecto, para las que ya están en el pipeline.
+  const yaEnPipeline = search.data?.saved ?? {};
+  const claveExterna = (c: OpenDataCompany) => (c.nit ? `nit:${c.nit}` : c.domain ? `web:${c.domain}` : '');
 
   return (
     <div className="space-y-4">
@@ -146,6 +156,7 @@ export function OpenDataSearch({ isVendedor }: { isVendedor: boolean }) {
               const clave = claveDe(c);
               const yaEsta = guardadas.has(clave);
               const enCurso = guardando === clave;
+              const enPipelineId = yaEnPipeline[claveExterna(c)];
               return (
                 <Card key={clave}>
                   <CardContent className="space-y-2 p-4">
@@ -193,19 +204,28 @@ export function OpenDataSearch({ isVendedor }: { isVendedor: boolean }) {
                       )}
                     </div>
 
-                    <Button
-                      size="sm"
-                      className="w-full"
-                      variant={yaEsta ? 'secondary' : 'default'}
-                      disabled={!isVendedor || yaEsta || enCurso}
-                      onClick={() => guardar(c)}
-                    >
-                      {enCurso
-                        ? <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Guardando…</>
-                        : yaEsta
-                          ? <><BookmarkCheck className="mr-1.5 h-3.5 w-3.5" /> Guardada</>
-                          : <><Bookmark className="mr-1.5 h-3.5 w-3.5" /> Guardar</>}
-                    </Button>
+                    {/* Si la empresa YA está en el pipeline no se ofrece
+                        guardarla de nuevo —no haría nada—: se lleva al vendedor
+                        a su ficha, en el punto donde la dejó. */}
+                    {enPipelineId ? (
+                      <Button size="sm" className="w-full" variant="secondary" onClick={() => onAbrirProspecto(enPipelineId)}>
+                        <ArrowRight className="mr-1.5 h-3.5 w-3.5" /> Ver en el tablero
+                      </Button>
+                    ) : (
+                      <Button
+                        size="sm"
+                        className="w-full"
+                        variant={yaEsta ? 'secondary' : 'default'}
+                        disabled={!isVendedor || yaEsta || enCurso}
+                        onClick={() => guardar(c)}
+                      >
+                        {enCurso
+                          ? <><Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> Guardando…</>
+                          : yaEsta
+                            ? <><BookmarkCheck className="mr-1.5 h-3.5 w-3.5" /> Guardada</>
+                            : <><Bookmark className="mr-1.5 h-3.5 w-3.5" /> Guardar</>}
+                      </Button>
+                    )}
                   </CardContent>
                 </Card>
               );

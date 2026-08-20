@@ -148,7 +148,15 @@ export class SalesController {
     // Tope suave: el dataset es gratis, pero no queremos que un bucle del
     // frontend martille a datos.gov.co en nuestro nombre.
     await this.rateLimit.enforce(login, 'opendata-search', 120, 60 * 60_000);
-    return this.openData.search(body.keywords, body.city ?? null, body.limit ?? 25, body.offset ?? 0);
+    const companies = await this.openData.search(body.keywords, body.city ?? null, body.limit ?? 25, body.offset ?? 0);
+
+    // Marca las que ya están en el pipeline: la misma llave de idempotencia
+    // que usa el guardado ('nit:<nit>' o 'web:<dominio>').
+    const claves = companies
+      .map((c) => (c.nit ? `nit:${c.nit}` : c.domain ? `web:${c.domain}` : null))
+      .filter((k): k is string => !!k);
+    const saved = login ? await this.webProspects.yaGuardados(login, claves) : {};
+    return { companies, saved };
   }
 
   /** Guarda una de esas empresas en el pipeline (idempotente por NIT). */

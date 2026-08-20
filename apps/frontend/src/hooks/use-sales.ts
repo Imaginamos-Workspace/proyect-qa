@@ -26,6 +26,7 @@ import type {
   ProspectContact,
   ProspectContactsResult,
   ProspectTlReview,
+  OpenDataSearchResult,
 } from '@qa/shared-types';
 
 export function useSalesOpportunities() {
@@ -454,7 +455,7 @@ export function useProspectSources() {
 export function useOpenDataSearch() {
   return useMutation({
     mutationFn: (input: { keywords: string; city?: string; limit?: number; offset?: number }) =>
-      api.post<OpenDataCompany[]>('/sales/prospects/opendata/search', input, 25_000),
+      api.post<OpenDataSearchResult>('/sales/prospects/opendata/search', input, 25_000),
   });
 }
 

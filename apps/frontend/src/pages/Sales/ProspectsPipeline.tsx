@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router';
 import { Building2, Check, ChevronDown, ExternalLink, Linkedin, Loader2, LockOpen, Mail, Phone, RotateCcw, Send, Sparkles, Trash2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
@@ -525,19 +525,36 @@ function ProspectDetail({ prospect, onClose }: { prospect: SavedProspect; onClos
 
 /** Pipeline de prospección: kanban por estado de contacto. Se alimenta de la
  *  búsqueda (botón Guardar), de la corrida semanal (cron) y de referidos. */
-export function ProspectsPipeline() {
+export function ProspectsPipeline({
+  abrirId = null,
+  onAbierto,
+}: {
+  /** Ficha a abrir al entrar — se usa al saltar desde la búsqueda. */
+  abrirId?: string | null;
+  onAbierto?: () => void;
+} = {}) {
   const { data: prospects, isLoading } = useSavedProspects();
   // Para poder mostrar en qué etapa va la oportunidad de un cliente convertido,
   // sin obligar al vendedor a salir del tablero a buscarla.
   const { data: oportunidades } = useSalesOpportunities();
   const [selectedId, setSelectedId] = useState<string | null>(null);
+
+  // Abrir la ficha pedida desde la búsqueda, una sola vez.
+  useEffect(() => {
+    if (!abrirId) return;
+    setSelectedId(abrirId);
+    onAbierto?.();
+  }, [abrirId, onAbierto]);
+
   // Drag & drop nativo de HTML5: cero dependencias nuevas.
   const [arrastrando, setArrastrando] = useState<string | null>(null);
   const [sobre, setSobre] = useState<SavedProspectEstado | null>(null);
   const mover = useUpdateProspect();
 
-  const soltarEn = (estado: SavedProspectEstado) => {
-    const id = arrastrando;
+  /** @param idSoltado viene del dataTransfer; es más confiable que el estado
+   *  de React, que puede haberse limpiado si el dragend llegó antes. */
+  const soltarEn = (estado: SavedProspectEstado, idSoltado?: string) => {
+    const id = idSoltado || arrastrando;
     setArrastrando(null);
     setSobre(null);
     if (!id) return;
@@ -577,9 +594,9 @@ export function ProspectsPipeline() {
             <div
               key={col.estado}
               className={`min-w-0 rounded-lg p-1 transition-colors ${sobre === col.estado ? 'bg-primary/10 ring-2 ring-primary' : ''}`}
-              onDragOver={(e) => { e.preventDefault(); setSobre(col.estado); }}
+              onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; setSobre(col.estado); }}
               onDragLeave={() => setSobre((x) => (x === col.estado ? null : x))}
-              onDrop={(e) => { e.preventDefault(); soltarEn(col.estado); }}
+              onDrop={(e) => { e.preventDefault(); soltarEn(col.estado, e.dataTransfer.getData('text/plain')); }}
             >
               <div className="mb-3 px-1">
                 <div className="flex items-baseline justify-between gap-2">
@@ -598,7 +615,14 @@ export function ProspectsPipeline() {
                     role="button"
                     tabIndex={0}
                     draggable
-                    onDragStart={() => setArrastrando(p.id)}
+                    onDragStart={(e) => {
+                      // setData es OBLIGATORIO: sin datos en el dataTransfer el
+                      // navegador considera el arrastre inválido y nunca dispara
+                      // el drop — la tarjeta se veía arrastrar y volvía a su sitio.
+                      e.dataTransfer.setData('text/plain', p.id);
+                      e.dataTransfer.effectAllowed = 'move';
+                      setArrastrando(p.id);
+                    }}
                     onDragEnd={() => { setArrastrando(null); setSobre(null); }}
                     onClick={() => setSelectedId(p.id)}
                     onKeyDown={(e) => { if (e.key === 'Enter') setSelectedId(p.id); }}

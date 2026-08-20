@@ -24,6 +24,13 @@ export function ProspectsSearch() {
   const { data: saved } = useSavedProspects();
 
   const [view, setView] = useState<'buscar' | 'pipeline'>('buscar');
+  // Cliente a abrir al saltar desde la búsqueda a "Mis clientes".
+  const [abrirId, setAbrirId] = useState<string | null>(null);
+
+  const irAlTablero = (prospectId: string) => {
+    setAbrirId(prospectId);
+    setView('pipeline');
+  };
 
   // Cuenta TODOS: excluir convertidos y descartados hacía que el número no
   // coincidiera con las tarjetas del tablero, y el vendedor creía que se le
@@ -41,7 +48,9 @@ export function ProspectsSearch() {
         </Button>
       </div>
 
-      {view === 'buscar' ? <OpenDataSearch isVendedor={isVendedor} /> : <ProspectsPipeline />}
+      {view === 'buscar'
+        ? <OpenDataSearch isVendedor={isVendedor} onAbrirProspecto={irAlTablero} />
+        : <ProspectsPipeline abrirId={abrirId} onAbierto={() => setAbrirId(null)} />}
     </div>
   );
 }

@@ -400,3 +400,10 @@ export interface ProspectContactsResult {
   enrichedAt: string | null;
   message?: string;
 }
+
+/** Resultado de la búsqueda en el registro público, con la marca de cuáles
+ *  ya están en el pipeline del vendedor (clave externa → id del prospecto). */
+export interface OpenDataSearchResult {
+  companies: OpenDataCompany[];
+  saved: Record<string, string>;
+}
