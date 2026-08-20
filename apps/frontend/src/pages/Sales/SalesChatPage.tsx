@@ -70,8 +70,15 @@ function fieldText(v: unknown): string {
   return String(v);
 }
 
-export function SalesChatPage() {
-  const { id } = useParams<{ id: string }>();
+/**
+ * @param opportunityId cuando se embebe (por ejemplo en el modal de un
+ *   prospecto ya convertido) el id llega por prop en vez de por la ruta. Sin
+ *   prop se comporta igual que siempre como página.
+ * @param embedded oculta el encabezado y el volver, que en un modal sobran.
+ */
+export function SalesChatPage({ opportunityId, embedded = false }: { opportunityId?: string; embedded?: boolean } = {}) {
+  const params = useParams<{ id: string }>();
+  const id = opportunityId ?? params.id;
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const { data: me } = useScrumMe();
@@ -226,19 +233,23 @@ export function SalesChatPage() {
   const canEdit = isVendedor && opp.isOwner;
 
   return (
-    <div className="mx-auto max-w-4xl space-y-4">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <Button variant="ghost" size="icon" onClick={() => navigate('/ventas')}>
-            <ArrowLeft className="h-4 w-4" />
-          </Button>
-          <div>
-            <h1 className="text-xl font-semibold">{opp.oportunidad}</h1>
-            <p className="text-sm text-muted-foreground">{opp.cliente}</p>
+    <div className={embedded ? 'space-y-4 p-4' : 'mx-auto max-w-4xl space-y-4'}>
+      {/* En el modal del prospecto el encabezado sobra: el nombre del cliente
+          y el volver ya están arriba. Solo se conserva el estado. */}
+      {!embedded && (
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" size="icon" onClick={() => navigate('/ventas')}>
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+            <div>
+              <h1 className="text-xl font-semibold">{opp.oportunidad}</h1>
+              <p className="text-sm text-muted-foreground">{opp.cliente}</p>
+            </div>
           </div>
+          <Badge variant={statusMeta.variant}>{statusMeta.label}</Badge>
         </div>
-        <Badge variant={statusMeta.variant}>{statusMeta.label}</Badge>
-      </div>
+      )}
 
       {/* El tracker va siempre de primero, visible sin importar qué pestaña
           esté activa abajo — es el "dónde estamos" del negocio. */}

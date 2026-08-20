@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
-import { Building2, Check, ExternalLink, Linkedin, Loader2, LockOpen, Mail, Phone, RotateCcw, Send, Sparkles, Trash2 } from 'lucide-react';
+import { Building2, Check, ChevronDown, ExternalLink, Linkedin, Loader2, LockOpen, Mail, Phone, RotateCcw, Send, Sparkles, Trash2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
+import { SalesChatPage } from './SalesChatPage';
 import { Skeleton } from '@/components/ui/skeleton';
 import {
   useAddInteraction,
@@ -308,8 +309,21 @@ function ProspectDetail({ prospect, onClose }: { prospect: SavedProspect; onClos
     }
   };
 
+  // Si el prospecto ya tiene oportunidad, el trabajo real está en el brief:
+  // el chat se abre y la gestión arranca comprimida. Si no la tiene, no hay
+  // chat que mostrar, así que la gestión queda abierta.
+  const tieneBrief = !!prospect.opportunityId;
+  const [gestionAbierta, setGestionAbierta] = useState(!tieneBrief);
+
   return (
-    <Card className="border-primary/40">
+    <div
+      className="fixed inset-0 z-40 overflow-y-auto bg-black/50 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Caso de ${prospect.company ?? prospect.name}`}
+      onClick={onClose}
+    >
+    <Card className="mx-auto max-w-5xl border-primary/40" onClick={(e) => e.stopPropagation()}>
       <CardContent className="space-y-4 p-5">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div>
@@ -348,6 +362,28 @@ function ProspectDetail({ prospect, onClose }: { prospect: SavedProspect; onClos
       </div>
 
       {modalTl && <TlReviewModal prospect={prospect} onClose={() => setModalTl(false)} />}
+
+      {/* El brief con la IA, abierto y en el paso donde quedó el agente: el
+          chat carga su propio historial y el stepper marca la etapa real. */}
+      {tieneBrief && (
+        <div className="rounded-lg border border-border">
+          <SalesChatPage opportunityId={prospect.opportunityId!} embedded />
+        </div>
+      )}
+
+      {/* Gestión y datos: comprimida cuando ya hay brief, porque el foco pasa
+          a ser la conversación, no la ficha. */}
+      <button
+        type="button"
+        onClick={() => setGestionAbierta((v) => !v)}
+        className="flex w-full items-center justify-between rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground hover:bg-muted/50"
+        aria-expanded={gestionAbierta}
+      >
+        <span>Gestión y datos</span>
+        <ChevronDown className={`h-4 w-4 transition-transform ${gestionAbierta ? 'rotate-180' : ''}`} />
+      </button>
+      {gestionAbierta && (
+      <>
 
       {/* Accesos directos de contacto — para llamar/escribir sin salir. */}
       <div className="flex flex-wrap gap-2 text-sm">
@@ -459,6 +495,9 @@ function ProspectDetail({ prospect, onClose }: { prospect: SavedProspect; onClos
         )}
       </div>
 
+      </>
+      )}
+
       {errorMsg && <p className="text-sm text-destructive">{errorMsg}</p>}
 
       <div className="flex flex-wrap gap-2">
@@ -480,6 +519,7 @@ function ProspectDetail({ prospect, onClose }: { prospect: SavedProspect; onClos
       </div>
       </CardContent>
     </Card>
+    </div>
   );
 }
 
