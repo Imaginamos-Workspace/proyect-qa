@@ -13,8 +13,10 @@ import type {
   SavedProspect,
   SavedProspectEstado,
   SavedProspectSearch,
+  SavedProspectEtapa,
   ProspectTlReview,
 } from '../../shared-types/sales.types';
+import { ETAPA_A_ESTADO, ESTADO_A_ETAPA } from '../../shared-types/sales.types';
 
 const PROSPECTS_TABLE = 'sales_prospects';
 const INTERACTIONS_TABLE = 'sales_prospect_interactions';
@@ -301,14 +303,30 @@ export class ProspectsService {
   }
 
   /** Nutrir datos del prospecto (teléfono, email, notas, reintento, estado). */
+  /**
+   * Nutre el prospecto. La ETAPA es la fuente de verdad: si viene, el estado
+   * (columna del tablero) se recalcula a partir de ella. Si en cambio viene
+   * solo el estado —el vendedor arrastró la tarjeta— se pone la etapa por
+   * defecto de esa columna. Así las dos vistas nunca quedan en desacuerdo.
+   */
   async updateProspect(
     id: string,
     vendedorLogin: string,
-    patch: { estado?: SavedProspectEstado; notes?: string; phone?: string; email?: string; nextAttemptAt?: string | null; opportunityId?: string },
+    patch: { estado?: SavedProspectEstado; etapa?: SavedProspectEtapa; notes?: string; phone?: string; email?: string; nextAttemptAt?: string | null; opportunityId?: string },
   ): Promise<SavedProspect> {
     await this.assertOwner(id, vendedorLogin);
     const update: Record<string, unknown> = { updated_at: new Date().toISOString() };
-    if (patch.estado !== undefined) update.estado = patch.estado;
+    // La etapa manda: si viene, el estado se deriva y se ignora lo que hayan
+    // mandado en `estado`. Si solo viene el estado (arrastraron la tarjeta),
+    // se pone la etapa por defecto de esa columna. Nunca se guardan valores
+    // que se contradigan entre sí.
+    if (patch.etapa !== undefined) {
+      update.etapa = patch.etapa;
+      update.estado = ETAPA_A_ESTADO[patch.etapa];
+    } else if (patch.estado !== undefined) {
+      update.estado = patch.estado;
+      update.etapa = ESTADO_A_ETAPA[patch.estado];
+    }
     if (patch.notes !== undefined) update.notes = patch.notes;
     if (patch.phone !== undefined) update.phone = patch.phone;
     if (patch.email !== undefined) update.email = patch.email;
@@ -507,6 +525,7 @@ export class ProspectsService {
       id: r.id as string,
       apolloId: r.apollo_id as string,
       estado: r.estado as SavedProspectEstado,
+      etapa: (r.etapa as SavedProspectEtapa) ?? 'contacto',
       origen: r.origen as SavedProspect['origen'],
       name: r.name as string,
       title: (r.title as string | null) ?? null,

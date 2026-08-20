@@ -31,6 +31,7 @@ import type {
   ProspectInteractionResultado,
   ProspectInteractionTipo,
   SavedProspectEstado,
+  SavedProspectEtapa,
 } from '../../shared-types/sales.types';
 
 import { type AuthedUser, githubLoginOf } from '../auth/github-identity';
@@ -184,6 +185,7 @@ export class SalesController {
     return this.prospects.updateProspect(id, login, {
       ...body,
       estado: body.estado as SavedProspectEstado | undefined,
+      etapa: body.etapa as SavedProspectEtapa | undefined,
     });
   }
 

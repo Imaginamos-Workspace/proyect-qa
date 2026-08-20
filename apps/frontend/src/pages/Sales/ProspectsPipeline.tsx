@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router';
-import { Building2, ExternalLink, Linkedin, Loader2, LockOpen, Mail, Phone, RotateCcw, Send, Sparkles, Trash2 } from 'lucide-react';
+import { Building2, Check, ExternalLink, Linkedin, Loader2, LockOpen, Mail, Phone, RotateCcw, Send, Sparkles, Trash2 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -19,7 +19,7 @@ import {
   useTlReviews,
 } from '@/hooks/use-sales';
 import { api } from '@/lib/api';
-import type { SavedProspect, SavedProspectEstado } from '@qa/shared-types';
+import type { SavedProspect, SavedProspectEstado, SavedProspectEtapa } from '@qa/shared-types';
 import { ProspectContacts } from './ProspectContacts';
 
 // Mismo criterio kebab-case que exige CreateOpportunityDto en el backend.
@@ -38,42 +38,71 @@ function slugify(text: string): string {
  * de ser comparable entre personas.
  */
 /**
- * Equivalencia de los 7 estados anteriores a las 11 etapas nuevas, SOLO para
- * mostrar. Existe porque el código puede desplegarse antes de que corra la
- * migración 032: sin esto, una tarjeta con estado 'por-contactar' no
- * coincidiría con ninguna columna y desaparecería del tablero — el vendedor
- * vería su pipeline vacío y pensaría que perdió los clientes.
+ * Equivalencia de los esquemas anteriores (7 y 11 estados) a las 4 columnas,
+ * SOLO para mostrar. Existe porque el código puede desplegarse antes de que
+ * corra la migración 033: sin esto una tarjeta con un estado viejo no
+ * coincidiría con ninguna columna y desaparecería del tablero.
  *
- * Cuando la migración corra, ningún registro caerá acá y este mapa deja de
- * usarse solo. Se puede borrar una vez confirmado.
+ * Cuando la migración corra, ningún registro cae acá y se puede borrar.
  */
 const LEGACY: Record<string, SavedProspectEstado> = {
-  'por-contactar': 'contacto',
-  contactado: 'contacto',
-  referido: 'contacto',
-  'en-seguimiento': 'recontactar',
-  'reunion-agendada': 'reunion',
-  convertido: 'aprobado-cerrado',
-  descartado: 'perdido',
+  'por-contactar': 'backlog', referido: 'backlog', contacto: 'backlog', recontactar: 'backlog',
+  'en-seguimiento': 'en-gestion', contactado: 'en-gestion', 'reunion-agendada': 'en-gestion',
+  reunion: 'en-gestion', propuesta: 'en-gestion', 'en-revision': 'en-gestion', 'cambio-propuesta': 'en-gestion',
+  convertido: 'aprobado', 'aprobado-documentos': 'aprobado', 'aprobado-cerrado': 'aprobado',
+  descartado: 'rechazado', perdido: 'rechazado', 'no-calificado': 'rechazado', frio: 'rechazado',
 };
 
-/** Etapa efectiva de un prospecto, tolerando los estados del esquema viejo. */
-export function etapaVigente(estado: string): SavedProspectEstado {
+/** Columna efectiva, tolerando los estados de esquemas anteriores. */
+export function columnaDe(estado: string): SavedProspectEstado {
   return (LEGACY[estado] ?? estado) as SavedProspectEstado;
 }
 
-export const COLUMNS: { estado: SavedProspectEstado; label: string; hint: string }[] = [
-  { estado: 'contacto', label: 'Contacto', hint: '1. Lead registrado y primer acercamiento para validar interés y necesidad. Inbound (llegó solo) u outbound (lo contactamos).' },
-  { estado: 'reunion', label: 'Reunión', hint: '2. Reuniones para entender necesidad, contexto y alcance. Puede repetirse; registra en observaciones cómo va y los puntos tratados.' },
-  { estado: 'propuesta', label: 'Propuesta', hint: '3. Etapa interna: armás alcance, tiempos e inversión, y validás con el equipo antes de enviarla.' },
-  { estado: 'en-revision', label: 'En revisión', hint: '4. Ya enviada, el cliente la evalúa. Registra qué servicios ofreciste, el monto y la fecha de envío.' },
-  { estado: 'aprobado-documentos', label: 'Aprobado / Documentos', hint: '5. Confirmó avanzar: contrato, firma, validación de documentos y primera factura.' },
-  { estado: 'aprobado-cerrado', label: 'Aprobado / Cerrado', hint: '6. Cerrado con éxito, documentos firmados, listo para operaciones.' },
-  { estado: 'perdido', label: 'Perdido', hint: '7. No avanzó: desistió, eligió otro proveedor o no se hará. El motivo es obligatorio en observaciones.' },
-  { estado: 'frio', label: 'Frío', hint: '8. En pausa por falta de contacto. Máximo 3 intentos antes de llegar acá.' },
-  { estado: 'cambio-propuesta', label: 'Cambio de propuesta', hint: '9. Pidió ajustes de alcance, tiempos o inversión: actualizala y reenviala.' },
-  { estado: 'no-calificado', label: 'No calificado', hint: '10. Tras la reunión inicial, no reúne las características para ser cliente potencial.' },
-  { estado: 'recontactar', label: 'Recontactar', hint: '11. Aplazó o dejó de contestar, pero se ve potencial. Anota en observaciones cuándo volver.' },
+/** Etapa vigente, tolerando prospectos guardados antes de la migración 033. */
+export function etapaDeProspecto(p: { etapa?: string; estado: string }): SavedProspectEtapa {
+  if (p.etapa) return p.etapa as SavedProspectEtapa;
+  return (ETAPA_LEGACY[p.estado] ?? 'contacto') as SavedProspectEtapa;
+}
+
+/** Estados viejos → etapa equivalente, para los que aún no tienen `etapa`. */
+const ETAPA_LEGACY: Record<string, SavedProspectEtapa> = {
+  'por-contactar': 'contacto', referido: 'contacto', contactado: 'contacto',
+  'en-seguimiento': 'recontactar', 'reunion-agendada': 'reunion',
+  convertido: 'aprobado-cerrado', descartado: 'perdido',
+};
+
+/**
+ * Las 4 columnas del tablero. `accent` es la línea de color bajo el título:
+ * da un ancla visual para saber dónde estás sin tener que leer.
+ */
+/** Las 11 etapas del proceso comercial, con el criterio de cada una. */
+export const ETAPAS: { etapa: SavedProspectEtapa; label: string; hint: string }[] = [
+  { etapa: 'contacto', label: 'Contacto', hint: 'Lead registrado y primer acercamiento para validar interés y necesidad.' },
+  { etapa: 'reunion', label: 'Reunión', hint: 'Reuniones para entender necesidad, contexto y alcance. Puede repetirse.' },
+  { etapa: 'propuesta', label: 'Propuesta', hint: 'Etapa interna: armás alcance, tiempos e inversión.' },
+  { etapa: 'en-revision', label: 'En revisión', hint: 'Enviada, el cliente la evalúa. Registra servicios, monto y fecha.' },
+  { etapa: 'aprobado-documentos', label: 'Aprobado / Documentos', hint: 'Confirmó avanzar: contrato, documentos y primera factura.' },
+  { etapa: 'aprobado-cerrado', label: 'Aprobado / Cerrado', hint: 'Firmado y listo para operaciones.' },
+  { etapa: 'perdido', label: 'Perdido', hint: 'No avanzó. El motivo es obligatorio en las notas.' },
+  { etapa: 'frio', label: 'Frío', hint: 'Sin contacto tras 3 intentos.' },
+  { etapa: 'cambio-propuesta', label: 'Cambio de propuesta', hint: 'Pidió ajustes de alcance, tiempos o inversión.' },
+  { etapa: 'no-calificado', label: 'No calificado', hint: 'Tras la reunión inicial, no es cliente potencial.' },
+  { etapa: 'recontactar', label: 'Recontactar', hint: 'Aplazó o dejó de contestar, pero se ve potencial.' },
+];
+
+/** Color de cada columna, para que el estado del card se lea de un vistazo. */
+const ESTADO_COLOR: Record<SavedProspectEstado, string> = {
+  backlog: 'bg-slate-500',
+  'en-gestion': 'bg-emerald-600',
+  rechazado: 'bg-rose-600',
+  aprobado: 'bg-amber-600',
+};
+
+export const COLUMNS: { estado: SavedProspectEstado; label: string; hint: string; accent: string }[] = [
+  { estado: 'backlog', label: 'Backlog', accent: 'bg-slate-400', hint: 'Leads por trabajar: registrados, sin gestión activa todavía.' },
+  { estado: 'en-gestion', label: 'En gestión', accent: 'bg-emerald-500', hint: 'Se está trabajando: reuniones, propuesta, revisión o ajustes pedidos por el cliente.' },
+  { estado: 'rechazado', label: 'Rechazado', accent: 'bg-rose-500', hint: 'No avanzó: desistió, no calificó o se enfrió. Anota el motivo en las notas.' },
+  { estado: 'aprobado', label: 'Aprobado', accent: 'bg-amber-500', hint: 'Cerrado: aprobado, documentos firmados, listo para operaciones.' },
 ];
 
 const TIPOS = [
@@ -270,7 +299,7 @@ function ProspectDetail({ prospect, onClose }: { prospect: SavedProspect; onClos
       await api.post(`/sales/opportunities/${opp.id}/messages`, { content: seedMessage }, 55_000);
       // Crear la oportunidad además cierra la etapa comercial: el negocio
       // quedó aprobado y pasa a operaciones.
-      await updateProspect.mutateAsync({ id: prospect.id, estado: 'aprobado-cerrado', opportunityId: opp.id });
+      await updateProspect.mutateAsync({ id: prospect.id, etapa: 'aprobado-cerrado', opportunityId: opp.id });
       navigate(`/ventas/${opp.id}`);
     } catch (e) {
       setErrorMsg(e instanceof Error ? e.message : 'No se pudo convertir el prospecto.');
@@ -287,23 +316,32 @@ function ProspectDetail({ prospect, onClose }: { prospect: SavedProspect; onClos
           <p className="font-semibold text-foreground">{prospect.name}{prospect.title ? ` — ${prospect.title}` : ''}</p>
           <p className="text-sm text-muted-foreground">{prospect.company ?? 'Empresa por confirmar'}{prospect.industry ? ` · ${prospect.industry}` : ''}</p>
         </div>
-        <Button variant="ghost" size="sm" onClick={onClose}>Cerrar</Button>
+        {/* Esquina superior: el estado ACTUAL (columna del tablero, solo
+            lectura porque se deriva) y el desplegable con las 11 etapas. */}
+        <div className="flex flex-wrap items-center gap-2">
+          <span
+            className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-semibold uppercase tracking-wide text-white ${ESTADO_COLOR[columnaDe(prospect.estado)]}`}
+            title={COLUMNS.find((c) => c.estado === columnaDe(prospect.estado))?.hint}
+          >
+            <Check className="h-4 w-4" /> {COLUMNS.find((c) => c.estado === columnaDe(prospect.estado))?.label}
+          </span>
+
+          <select
+            className="h-9 rounded-md border border-input bg-background px-3 text-sm"
+            value={etapaDeProspecto(prospect)}
+            onChange={(e) => updateProspect.mutate({ id: prospect.id, etapa: e.target.value as SavedProspectEtapa })}
+            title={ETAPAS.find((x) => x.etapa === etapaDeProspecto(prospect))?.hint}
+            aria-label="Etapa del proceso comercial"
+          >
+            {ETAPAS.map((x) => <option key={x.etapa} value={x.etapa}>{x.label}</option>)}
+          </select>
+          {updateProspect.isPending && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+
+          <Button variant="ghost" size="sm" onClick={onClose}>Cerrar</Button>
+        </div>
       </div>
 
-      {/* La MISMA lista de las columnas: cambiarla acá mueve la tarjeta, y
-          arrastrar la tarjeta cambia esto. Es el mismo dato, dos formas. */}
-      <div className="flex flex-wrap items-center gap-2">
-        <label className="text-xs text-muted-foreground" htmlFor="etapa">Etapa</label>
-        <select
-          id="etapa"
-          className="h-9 rounded-md border border-input bg-background px-3 text-sm"
-          value={etapaVigente(prospect.estado)}
-          onChange={(e) => updateProspect.mutate({ id: prospect.id, estado: e.target.value as SavedProspectEstado })}
-          title={COLUMNS.find((c) => c.estado === etapaVigente(prospect.estado))?.hint}
-        >
-          {COLUMNS.map((c) => <option key={c.estado} value={c.estado}>{c.label}</option>)}
-        </select>
-        {updateProspect.isPending && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />}
+      <div>
         <Button variant="outline" size="sm" onClick={() => setModalTl(true)}>
           <Send className="mr-2 h-4 w-4" /> Enviar propuesta al TL
         </Button>
@@ -424,17 +462,17 @@ function ProspectDetail({ prospect, onClose }: { prospect: SavedProspect; onClos
       {errorMsg && <p className="text-sm text-destructive">{errorMsg}</p>}
 
       <div className="flex flex-wrap gap-2">
-        <Button onClick={convertir} disabled={converting || etapaVigente(prospect.estado) === 'aprobado-cerrado'}>
-          {converting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creando oportunidad…</> : etapaVigente(prospect.estado) === 'aprobado-cerrado' ? 'Ya convertido' : <><Sparkles className="mr-2 h-4 w-4" /> Crear oportunidad</>}
+        <Button onClick={convertir} disabled={converting || etapaDeProspecto(prospect) === 'aprobado-cerrado'}>
+          {converting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creando oportunidad…</> : etapaDeProspecto(prospect) === 'aprobado-cerrado' ? 'Ya convertido' : <><Sparkles className="mr-2 h-4 w-4" /> Crear oportunidad</>}
         </Button>
         {prospect.opportunityId && (
           <Button variant="outline" onClick={() => navigate(`/ventas/${prospect.opportunityId}`)}>Abrir oportunidad</Button>
         )}
-        {etapaVigente(prospect.estado) !== 'perdido' && etapaVigente(prospect.estado) !== 'aprobado-cerrado' && (
+        {columnaDe(prospect.estado) !== 'rechazado' && columnaDe(prospect.estado) !== 'aprobado' && (
           <Button
             variant="ghost"
             className="text-destructive"
-            onClick={() => updateProspect.mutate({ id: prospect.id, estado: 'perdido' })}
+            onClick={() => updateProspect.mutate({ id: prospect.id, etapa: 'perdido' })}
           >
             <Trash2 className="mr-2 h-4 w-4" /> Marcar perdido
           </Button>
@@ -464,7 +502,7 @@ export function ProspectsPipeline() {
     setSobre(null);
     if (!id) return;
     const actual = (prospects ?? []).find((p) => p.id === id);
-    if (!actual || etapaVigente(actual.estado) === estado) return; // soltó en su misma columna
+    if (!actual || columnaDe(actual.estado) === estado) return; // soltó en su misma columna
     mover.mutate({ id, estado });
   };
 
@@ -492,9 +530,9 @@ export function ProspectsPipeline() {
       {/* Rejilla que envuelve, NO scroll horizontal: con 7 columnas de ancho
           fijo, "Convertido" y "Descartado" quedaban fuera de pantalla y el
           vendedor creía que sus clientes habían desaparecido. */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         {COLUMNS.map((col) => {
-          const items = all.filter((p) => etapaVigente(p.estado) === col.estado);
+          const items = all.filter((p) => columnaDe(p.estado) === col.estado);
           return (
             <div
               key={col.estado}
@@ -503,9 +541,15 @@ export function ProspectsPipeline() {
               onDragLeave={() => setSobre((x) => (x === col.estado ? null : x))}
               onDrop={(e) => { e.preventDefault(); soltarEn(col.estado); }}
             >
-              <div className="mb-2 flex items-center justify-between px-1">
-                <p className="cursor-help text-sm font-semibold text-foreground" title={col.hint}>{col.label}</p>
-                <Badge variant="secondary">{items.length}</Badge>
+              <div className="mb-3 px-1">
+                <div className="flex items-baseline justify-between gap-2">
+                  {/* text-base = 2 puntos menos que el text-lg del mockup. */}
+                  <p className="cursor-help text-base font-semibold uppercase tracking-wide text-foreground" title={col.hint}>
+                    {col.label}
+                  </p>
+                  <span className="text-base font-medium text-muted-foreground">{items.length}</span>
+                </div>
+                <div className={`mt-1 h-0.5 w-full rounded-full ${col.accent}`} />
               </div>
               <div className="space-y-2">
                 {items.map((p) => (
