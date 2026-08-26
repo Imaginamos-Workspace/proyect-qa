@@ -86,6 +86,61 @@ export function normalizarBusqueda(texto: string): string {
   return out;
 }
 
+/**
+ * País → código ISO-2, que es como el dataset guarda `pais` ("CO", "US", "ES").
+ * Acepta el nombre en español, en inglés o el código directo, porque el
+ * vendedor escribe "México", "Mexico" o "MX" indistintamente.
+ *
+ * OJO con la cobertura real, medida sobre el dataset: 1.597.779 empresas
+ * colombianas contra 2.885 repartidas en 90 países. Fuera de Colombia esto
+ * NO es un directorio internacional: son proveedores extranjeros inscritos
+ * ante el Estado colombiano. El frontend lo advierte al elegir otro país.
+ */
+const PAISES: Record<string, string> = {
+  colombia: 'CO',
+  'estados unidos': 'US', 'united states': 'US', usa: 'US', eeuu: 'US',
+  espana: 'ES', 'españa': 'ES', spain: 'ES',
+  mexico: 'MX', 'méxico': 'MX',
+  chile: 'CL',
+  venezuela: 'VE',
+  peru: 'PE', 'perú': 'PE',
+  'reino unido': 'GB', 'united kingdom': 'GB', inglaterra: 'GB',
+  brasil: 'BR', brazil: 'BR',
+  argentina: 'AR',
+  francia: 'FR', france: 'FR',
+  panama: 'PA', 'panamá': 'PA',
+  ecuador: 'EC',
+  canada: 'CA', 'canadá': 'CA',
+  alemania: 'DE', germany: 'DE',
+  china: 'CN',
+  italia: 'IT', italy: 'IT',
+  portugal: 'PT',
+  cuba: 'CU',
+  suiza: 'CH', switzerland: 'CH',
+  uruguay: 'UY',
+  'paises bajos': 'NL', 'países bajos': 'NL', holanda: 'NL', netherlands: 'NL',
+  'costa rica': 'CR',
+  israel: 'IL',
+  suecia: 'SE', sweden: 'SE',
+  'republica checa': 'CZ', 'república checa': 'CZ',
+  india: 'IN',
+  japon: 'JP', 'japón': 'JP', japan: 'JP',
+  'republica dominicana': 'DO', 'república dominicana': 'DO',
+  guatemala: 'GT',
+  bolivia: 'BO',
+  paraguay: 'PY',
+};
+
+/** Devuelve el ISO-2 del país, o null si no se reconoce. Un código de 2 letras
+ *  se acepta tal cual: así funcionan también los 60 países que no están en el
+ *  mapa de nombres. */
+export function codigoPais(entrada: string | null): string | null {
+  const t = normalizarBusqueda(entrada ?? '').toLowerCase();
+  if (!t) return null;
+  if (/^[a-z]{2}$/.test(t)) return t.toUpperCase();
+  return PAISES[t] ?? null;
+}
+
 /** El dataset escribe "No Provisto" en vez de dejar el campo vacío. */
 const SIN_DATO = /^(no provisto|no definido|n\/?a|ninguno|-)$/i;
 
@@ -121,16 +176,31 @@ export class OpenDataService {
    * @param city     municipio; se compara en mayúsculas y por prefijo porque
    *                 el dataset trae "BOGOTa", "MEDELLiN" y variantes.
    */
-  async search(keywords: string, city: string | null, limit = 25, offset = 0): Promise<OpenDataCompany[]> {
+  async search(
+    keywords: string,
+    city: string | null,
+    country: string | null = 'Colombia',
+    limit = 25,
+    offset = 0,
+  ): Promise<OpenDataCompany[]> {
     // Mismo problema en los nombres: el dataset trae "LOGiSTICA" y "CONSTRUCCIoN".
     const q = normalizarBusqueda(keywords ?? '');
     if (!q) throw new BadRequestException('La búsqueda necesita al menos una palabra clave.');
+    const pais = codigoPais(country);
+    // Si el vendedor escribió un país y no lo reconocemos, fallar es lo correcto:
+    // ignorarlo devolvía empresas colombianas haciéndolas pasar por extranjeras.
+    if (country?.trim() && !pais) {
+      throw new BadRequestException(
+        `No reconozco el país "${country.trim()}". Escribilo completo (Colombia, México, España…) o usa su código de 2 letras (CO, MX, ES).`,
+      );
+    }
 
     const where = [
       "esta_activa='Si'",
       // Habeas Data: una persona natural no es una empresa, y sus datos son personales.
       "tipo_empresa NOT LIKE '%PERSONA NATURAL%'",
       city ? `upper(municipio) LIKE '%${this.escape(normalizarBusqueda(city).toUpperCase())}%'` : null,
+      pais ? `pais='${this.escape(pais)}'` : null,
     ]
       .filter(Boolean)
       .join(' AND ');

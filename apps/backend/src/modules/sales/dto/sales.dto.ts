@@ -90,6 +90,10 @@ export class OpenDataSearchDto {
   @IsOptional() @IsString() @MaxLength(80)
   city?: string;
 
+  /** Nombre del país o su código ISO-2. Por defecto Colombia. */
+  @IsOptional() @IsString() @MaxLength(60)
+  country?: string;
+
   @IsOptional() @IsInt() @Min(1) @Max(50)
   limit?: number;
 
