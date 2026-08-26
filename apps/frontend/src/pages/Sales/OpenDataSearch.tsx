@@ -25,6 +25,7 @@ export function OpenDataSearch({
 }) {
   const [keywords, setKeywords] = useState('');
   const [city, setCity] = useState('Bogotá');
+  const [country, setCountry] = useState('Colombia');
   const [guardadas, setGuardadas] = useState<Set<string>>(new Set());
   const [guardando, setGuardando] = useState<string | null>(null);
 
@@ -36,7 +37,12 @@ export function OpenDataSearch({
 
   const buscar = () => {
     if (!keywords.trim()) return;
-    search.mutate({ keywords: keywords.trim(), city: city.trim() || undefined, limit: 25 });
+    search.mutate({
+      keywords: keywords.trim(),
+      city: city.trim() || undefined,
+      country: country.trim() || 'Colombia',
+      limit: 25,
+    });
   };
 
   const guardar = (c: OpenDataCompany) => {
@@ -69,7 +75,7 @@ export function OpenDataSearch({
     <div className="space-y-4">
       <Card>
         <CardContent className="space-y-3 p-4">
-          <div className="grid gap-3 sm:grid-cols-[1fr_220px_auto]">
+          <div className="grid gap-3 sm:grid-cols-[1fr_180px_180px_auto]">
             <div>
               <label className="mb-1 block text-xs text-muted-foreground" htmlFor="od-kw">
                 Qué buscás
@@ -93,6 +99,24 @@ export function OpenDataSearch({
                 onKeyDown={(e) => e.key === 'Enter' && buscar()}
                 placeholder="Bogotá, Medellín, Cali…"
               />
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground" htmlFor="od-country">
+                País
+              </label>
+              <Input
+                id="od-country"
+                value={country}
+                onChange={(e) => setCountry(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && buscar()}
+                placeholder="Colombia, México, España…"
+                list="od-paises"
+              />
+              <datalist id="od-paises">
+                {['Colombia','Estados Unidos','España','México','Chile','Venezuela','Perú','Reino Unido','Brasil','Argentina','Francia','Panamá','Ecuador','Canadá','Alemania'].map((p) => (
+                  <option key={p} value={p} />
+                ))}
+              </datalist>
             </div>
             <div className="flex items-end">
               <div className="flex gap-2">
@@ -122,6 +146,17 @@ export function OpenDataSearch({
             búsquedas — no consume créditos. Solo empresas activas: las personas
             naturales quedan excluidas.
           </p>
+          {/* Honestidad sobre la cobertura: el registro es colombiano y fuera de
+              Colombia solo tiene proveedores extranjeros inscritos ante el Estado.
+              Sin este aviso, buscar en otro país parece un bug. */}
+          {country.trim().toLowerCase() !== 'colombia' && country.trim() !== '' && (
+            <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+              Ojo: este registro es colombiano. Fuera de Colombia solo contiene proveedores
+              extranjeros inscritos ante el Estado colombiano — unas 2.900 empresas en 90
+              países, contra 1,6 millones colombianas. Es útil para casos puntuales, no como
+              directorio internacional.
+            </p>
+          )}
 
           {search.isError && (
             <p className="text-sm text-destructive">{(search.error as Error).message}</p>

@@ -148,7 +148,13 @@ export class SalesController {
     // Tope suave: el dataset es gratis, pero no queremos que un bucle del
     // frontend martille a datos.gov.co en nuestro nombre.
     await this.rateLimit.enforce(login, 'opendata-search', 120, 60 * 60_000);
-    const companies = await this.openData.search(body.keywords, body.city ?? null, body.limit ?? 25, body.offset ?? 0);
+    const companies = await this.openData.search(
+      body.keywords,
+      body.city ?? null,
+      body.country ?? 'Colombia',
+      body.limit ?? 25,
+      body.offset ?? 0,
+    );
 
     // Marca las que ya están en el pipeline: la misma llave de idempotencia
     // que usa el guardado ('nit:<nit>' o 'web:<dominio>').
