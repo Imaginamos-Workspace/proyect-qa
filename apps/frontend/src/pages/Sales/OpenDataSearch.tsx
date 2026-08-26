@@ -8,34 +8,36 @@ import { useCreateSavedSearch, useOpenDataCities, useOpenDataSearch, useSaveOpen
 import type { OpenDataCompany } from '@qa/shared-types';
 
 /**
- * Países con empresas en el registro, con su volumen real medido sobre el
- * dataset. Se muestra el conteo para que el vendedor sepa qué esperar antes
- * de buscar: ver 3 resultados en Guatemala no es un error, es todo lo que hay.
+ * Países del registro, con cuántas empresas REALMENTE puede devolver la
+ * búsqueda: activas y excluyendo personas naturales, que son los mismos
+ * filtros que aplica el backend.
  *
- * Es un <select> y no un <input> con datalist: el datalist FILTRA las opciones
- * por lo ya escrito, así que con "Colombia" en el campo solo se veía Colombia.
+ * Antes se mostraba el total crudo del dataset y engañaba: Colombia decía
+ * 1.597.779 cuando lo buscable son 429.790, y Ecuador decía 62 cuando son 42.
+ * Un conteo que no coincide con lo que la búsqueda puede encontrar hace que
+ * "sin resultados" parezca un error del sistema.
  */
 const PAISES: { valor: string; iso: string; empresas: number }[] = [
-  { valor: 'Colombia', iso: 'CO', empresas: 1597779 },
-  { valor: 'Estados Unidos', iso: 'US', empresas: 626 },
-  { valor: 'España', iso: 'ES', empresas: 419 },
-  { valor: 'México', iso: 'MX', empresas: 261 },
-  { valor: 'Chile', iso: 'CL', empresas: 156 },
-  { valor: 'Venezuela', iso: 'VE', empresas: 156 },
-  { valor: 'Perú', iso: 'PE', empresas: 102 },
-  { valor: 'Reino Unido', iso: 'GB', empresas: 93 },
-  { valor: 'Brasil', iso: 'BR', empresas: 92 },
-  { valor: 'Argentina', iso: 'AR', empresas: 91 },
-  { valor: 'Francia', iso: 'FR', empresas: 75 },
-  { valor: 'Panamá', iso: 'PA', empresas: 67 },
-  { valor: 'Ecuador', iso: 'EC', empresas: 62 },
-  { valor: 'Canadá', iso: 'CA', empresas: 60 },
-  { valor: 'Alemania', iso: 'DE', empresas: 55 },
-  { valor: 'Italia', iso: 'IT', empresas: 42 },
-  { valor: 'Portugal', iso: 'PT', empresas: 27 },
-  { valor: 'Uruguay', iso: 'UY', empresas: 24 },
-  { valor: 'Costa Rica', iso: 'CR', empresas: 23 },
-  { valor: 'Países Bajos', iso: 'NL', empresas: 23 },
+  { valor: 'Colombia', iso: 'CO', empresas: 429790 },
+  { valor: 'Estados Unidos', iso: 'US', empresas: 578 },
+  { valor: 'España', iso: 'ES', empresas: 376 },
+  { valor: 'México', iso: 'MX', empresas: 243 },
+  { valor: 'Chile', iso: 'CL', empresas: 124 },
+  { valor: 'Reino Unido', iso: 'GB', empresas: 87 },
+  { valor: 'Perú', iso: 'PE', empresas: 85 },
+  { valor: 'Brasil', iso: 'BR', empresas: 79 },
+  { valor: 'Argentina', iso: 'AR', empresas: 68 },
+  { valor: 'Francia', iso: 'FR', empresas: 65 },
+  { valor: 'Panamá', iso: 'PA', empresas: 64 },
+  { valor: 'Canadá', iso: 'CA', empresas: 55 },
+  { valor: 'Alemania', iso: 'DE', empresas: 50 },
+  { valor: 'Venezuela', iso: 'VE', empresas: 48 },
+  { valor: 'Ecuador', iso: 'EC', empresas: 42 },
+  { valor: 'Italia', iso: 'IT', empresas: 35 },
+  { valor: 'Portugal', iso: 'PT', empresas: 24 },
+  { valor: 'Países Bajos', iso: 'NL', empresas: 22 },
+  { valor: 'Costa Rica', iso: 'CR', empresas: 22 },
+  { valor: 'Uruguay', iso: 'UY', empresas: 21 },
 ];
 
 /** Bandera como emoji, derivada del ISO-2: cada letra se mapea a su símbolo
@@ -219,9 +221,29 @@ export function OpenDataSearch({
       {search.isSuccess && resultados.length === 0 && (
         <Card>
           <CardContent className="p-6 text-sm text-muted-foreground">
-            Sin resultados para “{keywords}”{city ? ` en ${city}` : ''}. Probá con una
-            palabra más general — el registro busca por razón social, así que “transporte”
-            suele traer más que “transporte refrigerado”.
+            {(() => {
+              const p = PAISES.find((x) => x.valor === country);
+              const chico = p && p.empresas < 1000;
+              return (
+                <>
+                  Sin resultados para “{keywords}” en {country}
+                  {city ? `, ${city}` : ''}.
+                  {chico ? (
+                    <>
+                      {' '}Ese país tiene apenas <strong>{p!.empresas.toLocaleString('es-CO')} empresas</strong> en
+                      todo el registro, así que muchas búsquedas van a volver vacías. No es un error:
+                      el registro es colombiano y fuera de Colombia solo hay proveedores inscritos
+                      ante el Estado.
+                    </>
+                  ) : (
+                    <>
+                      {' '}Probá con una palabra más general — el registro busca por razón social,
+                      así que “transporte” suele traer más que “transporte refrigerado”.
+                    </>
+                  )}
+                </>
+              );
+            })()}
           </CardContent>
         </Card>
       )}
