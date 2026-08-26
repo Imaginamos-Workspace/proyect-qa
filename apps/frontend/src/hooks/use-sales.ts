@@ -454,7 +454,8 @@ export function useProspectSources() {
  *  A diferencia de Apollo, no consume créditos ni cuota. */
 export function useOpenDataSearch() {
   return useMutation({
-    mutationFn: (input: { keywords: string; city?: string; country?: string; limit?: number; offset?: number }) =>
+    // `keywords` es opcional: sin ella se listan todas las empresas del país.
+    mutationFn: (input: { keywords?: string; city?: string; country?: string; limit?: number; offset?: number }) =>
       api.post<OpenDataSearchResult>('/sales/prospects/opendata/search', input, 25_000),
   });
 }
