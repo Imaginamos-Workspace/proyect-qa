@@ -406,4 +406,7 @@ export interface ProspectContactsResult {
 export interface OpenDataSearchResult {
   companies: OpenDataCompany[];
   saved: Record<string, string>;
+  /** Hay más resultados después de esta página. Se sabe pidiendo un registro
+   *  de más, sin gastar una consulta de conteo sobre 1,6M de filas. */
+  hasMore: boolean;
 }

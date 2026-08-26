@@ -67,23 +67,38 @@ export function OpenDataSearch({
   // ("BOGOTa"), así que un valor escrito a mano no matchearía ninguna.
   const [city, setCity] = useState('');
   const [country, setCountry] = useState('Colombia');
+  // Página actual del listado. Se reinicia al cambiar cualquier filtro: seguir
+  // en la página 4 con otro país mostraría un tramo sin relación.
+  const [pagina, setPagina] = useState(0);
   const [guardadas, setGuardadas] = useState<Set<string>>(new Set());
   const [guardando, setGuardando] = useState<string | null>(null);
 
   const { data: ciudades, isLoading: cargandoCiudades } = useOpenDataCities(country);
+
+  // País y ciudad son obligatorios. La excepción es el país que no tiene NINGUNA
+  // ciudad registrada en el dataset (Ecuador, por ejemplo): exigirla ahí volvería
+  // la búsqueda imposible, así que ese caso se deja pasar sin filtro de ciudad.
+  const hayCiudades = (ciudades ?? []).length > 0;
+  const faltaCiudad = hayCiudades && !city.trim();
+  const faltaPais = !country.trim();
   const search = useOpenDataSearch();
   const save = useSaveOpenDataCompany();
   const guardarSemanal = useCreateSavedSearch();
 
   const claveDe = (c: OpenDataCompany) => c.nit ?? c.domain ?? c.name;
 
-  const buscar = () => {
-    if (!keywords.trim()) return;
+  const POR_PAGINA = 30;
+
+  /** Sin palabra clave lista todas las empresas del país; con ella, filtra. */
+  const buscar = (p = 0) => {
+    if (faltaPais || faltaCiudad) return;
+    setPagina(p);
     search.mutate({
-      keywords: keywords.trim(),
+      keywords: keywords.trim() || undefined,
       city: city.trim() || undefined,
       country: country.trim() || 'Colombia',
-      limit: 25,
+      limit: POR_PAGINA,
+      offset: p * POR_PAGINA,
     });
   };
 
@@ -120,24 +135,24 @@ export function OpenDataSearch({
           <div className="grid gap-3 sm:grid-cols-[1fr_180px_180px_auto]">
             <div>
               <label className="mb-1 block text-xs text-muted-foreground" htmlFor="od-kw">
-                Qué buscás
+                Qué buscás <span className="text-muted-foreground/70">(opcional)</span>
               </label>
               <Input
                 id="od-kw"
                 value={keywords}
                 onChange={(e) => setKeywords(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && buscar()}
+                onKeyDown={(e) => e.key === 'Enter' && buscar(0)}
                 placeholder="logistica, software, construccion…"
               />
             </div>
             <div>
               <label className="mb-1 block text-xs text-muted-foreground" htmlFor="od-country">
-                País
+                País <span className="text-destructive">*</span>
               </label>
               <select
                 id="od-country"
                 value={country}
-                onChange={(e) => { setCountry(e.target.value); setCity(''); }}
+                onChange={(e) => { setCountry(e.target.value); setCity(''); setPagina(0); }}
                 className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
                 {PAISES.map((p) => (
@@ -149,7 +164,7 @@ export function OpenDataSearch({
             </div>
             <div>
               <label className="mb-1 block text-xs text-muted-foreground" htmlFor="od-city">
-                Ciudad
+                Ciudad <span className="text-destructive">*</span>
               </label>
               <select
                 id="od-city"
@@ -158,10 +173,13 @@ export function OpenDataSearch({
                 disabled={cargandoCiudades}
                 className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-60"
               >
-                {/* "Todas" primero y siempre: en la mayoría de los países el
-                    dataset no registra la ciudad, así que filtrar por ella
-                    dejaría al vendedor sin resultados. */}
-                <option value="">Todas las ciudades</option>
+                {/* Sin opción "todas": la ciudad es obligatoria. El placeholder
+                    vacío mantiene el select en estado no elegido hasta que el
+                    vendedor decide. Si el país no tiene ciudades registradas se
+                    avisa y la búsqueda corre igual, sin filtro. */}
+                <option value="">
+                  {cargandoCiudades ? 'Cargando ciudades…' : hayCiudades ? 'Elegí una ciudad…' : 'Sin ciudades registradas'}
+                </option>
                 {(ciudades ?? []).map((c) => (
                   <option key={c.city} value={c.city}>{c.city} ({c.count.toLocaleString('es-CO')})</option>
                 ))}
@@ -169,10 +187,10 @@ export function OpenDataSearch({
             </div>
             <div className="flex items-end">
               <div className="flex gap-2">
-                <Button onClick={buscar} disabled={!keywords.trim() || search.isPending}>
+                <Button onClick={() => buscar(0)} disabled={search.isPending || faltaPais || faltaCiudad}>
                   {search.isPending
                     ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Buscando…</>
-                    : <><Search className="mr-2 h-4 w-4" /> Buscar</>}
+                    : <><Search className="mr-2 h-4 w-4" /> {keywords.trim() ? 'Buscar' : 'Ver todas'}</>}
                 </Button>
                 <Button
                   variant="outline"
@@ -189,6 +207,13 @@ export function OpenDataSearch({
               </div>
             </div>
           </div>
+
+          {faltaCiudad && (
+            <p className="text-xs text-amber-700 dark:text-amber-300">
+              Elegí una ciudad para buscar. La palabra clave es opcional: sin ella se
+              listan todas las empresas de esa ciudad.
+            </p>
+          )}
 
           <p className="text-xs text-muted-foreground">
             Registro público de empresas de Colombia (SECOP II). Gratis y sin límite de
@@ -226,7 +251,7 @@ export function OpenDataSearch({
               const chico = p && p.empresas < 1000;
               return (
                 <>
-                  Sin resultados para “{keywords}” en {country}
+                  Sin resultados {keywords.trim() ? `para “${keywords}” ` : ''}en {country}
                   {city ? `, ${city}` : ''}.
                   {chico ? (
                     <>
@@ -251,8 +276,9 @@ export function OpenDataSearch({
       {resultados.length > 0 && (
         <>
           <p className="text-sm text-muted-foreground">
-            {resultados.length} empresa{resultados.length === 1 ? '' : 's'} · guardá las que te
-            interesen para trabajarlas en tu pipeline.
+            {resultados.length} empresa{resultados.length === 1 ? '' : 's'}
+            {pagina > 0 ? ` (página ${pagina + 1})` : ''} · guardá las que te interesen para
+            trabajarlas en tu pipeline.
           </p>
 
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">

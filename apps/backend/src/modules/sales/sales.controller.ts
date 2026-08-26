@@ -148,11 +148,11 @@ export class SalesController {
     // Tope suave: el dataset es gratis, pero no queremos que un bucle del
     // frontend martille a datos.gov.co en nuestro nombre.
     await this.rateLimit.enforce(login, 'opendata-search', 120, 60 * 60_000);
-    const companies = await this.openData.search(
-      body.keywords,
+    const { companies, hasMore } = await this.openData.search(
+      body.keywords ?? '',
       body.city ?? null,
       body.country ?? 'Colombia',
-      body.limit ?? 25,
+      body.limit ?? 30,
       body.offset ?? 0,
     );
 
@@ -162,7 +162,7 @@ export class SalesController {
       .map((c) => (c.nit ? `nit:${c.nit}` : c.domain ? `web:${c.domain}` : null))
       .filter((k): k is string => !!k);
     const saved = login ? await this.webProspects.yaGuardados(login, claves) : {};
-    return { companies, saved };
+    return { companies, saved, hasMore };
   }
 
   /** Ciudades disponibles de un país, con cuántas empresas tiene cada una.
