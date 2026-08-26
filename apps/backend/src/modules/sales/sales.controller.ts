@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, ForbiddenException, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, ForbiddenException, Get, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { SalesService } from './sales.service';
 import { ProspectsService } from './prospects.service';
 import { RateLimitService } from './rate-limit.service';
@@ -163,6 +163,14 @@ export class SalesController {
       .filter((k): k is string => !!k);
     const saved = login ? await this.webProspects.yaGuardados(login, claves) : {};
     return { companies, saved };
+  }
+
+  /** Ciudades disponibles de un país, con cuántas empresas tiene cada una.
+   *  Alimenta el desplegable de ciudad, que depende del país elegido. */
+  @Get('prospects/opendata/cities')
+  async openDataCities(@Query('country') country: string, @Req() req: RequestWithUser) {
+    await this.requireSeller(req);
+    return this.openData.cities(country ?? 'Colombia');
   }
 
   /** Guarda una de esas empresas en el pipeline (idempotente por NIT). */
