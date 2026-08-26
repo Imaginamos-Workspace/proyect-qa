@@ -12,7 +12,9 @@
     "build:frontend": "turbo run build --filter=frontend",
     "lint": "turbo run lint",
     "clean": "turbo run clean",
-    "db:migrate": "turbo run db:migrate --filter=supabase-schema"
+    "db:migrate": "turbo run db:migrate --filter=supabase-schema",
+    "test": "turbo run test",
+    "typecheck": "turbo run typecheck"
   },
   "devDependencies": {
     "turbo": "^2.4.0"
