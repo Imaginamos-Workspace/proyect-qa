@@ -34,6 +34,11 @@ const MAX_LIMIT = 50;
  *  proyectos: desde una IP residencial la misma consulta responde 5/5 en 0,5s
  *  y desde el serverless rebota. El App Token lo resuelve de raíz; los
  *  reintentos son la red de contención mientras tanto. */
+/** Las ciudades por país se cachean: agregarlas para Colombia tarda ~4,2s y
+ *  el dataset cambia con muy baja frecuencia. */
+const CIUDADES_TTL_MS = 6 * 60 * 60_000;
+const MAX_CIUDADES = 100;
+
 const REINTENTOS = 3;
 const BACKOFF_MS = [400, 1200];
 
@@ -161,6 +166,58 @@ export class OpenDataService {
    *  compartido por IP. Sin él, desde Vercel se recibe 503 constante. */
   private get appToken(): string | null {
     return process.env.SOCRATA_APP_TOKEN?.trim().replace(/^["']|["']$/g, '') || null;
+  }
+
+  /**
+   * Ciudades de un país, con cuántas empresas tiene cada una.
+   *
+   * Se cachea en memoria: agregarlas para Colombia tarda ~4,2s (500+
+   * municipios) y el dataset cambia con muy baja frecuencia. Sin caché, cada
+   * vez que el vendedor cambia de país esperaría ese tiempo.
+   *
+   * `No Provisto` se descarta: es el valor MÁS común del campo (105.554 en
+   * Colombia, 577 de 626 en Estados Unidos) y no es una ciudad.
+   */
+  private ciudadesCache = new Map<string, { ts: number; datos: { city: string; count: number }[] }>();
+
+  async cities(country: string | null): Promise<{ city: string; count: number }[]> {
+    const pais = codigoPais(country);
+    if (!pais) return [];
+
+    const cacheado = this.ciudadesCache.get(pais);
+    if (cacheado && Date.now() - cacheado.ts < CIUDADES_TTL_MS) return cacheado.datos;
+
+    const url = new URL(SODA_URL);
+    url.searchParams.set('$select', 'municipio,count(*) as n');
+    url.searchParams.set(
+      '$where',
+      `esta_activa='Si' AND tipo_empresa NOT LIKE '%PERSONA NATURAL%' AND pais='${this.escape(pais)}'`,
+    );
+    url.searchParams.set('$group', 'municipio');
+    url.searchParams.set('$order', 'n DESC');
+    // Tope: con 100 se cubre lo que un vendedor puede llegar a usar, y evita
+    // arrastrar los cientos de municipios con 1 sola empresa.
+    url.searchParams.set('$limit', String(MAX_CIUDADES));
+
+    const headers: Record<string, string> = { Accept: 'application/json' };
+    if (this.appToken) headers['X-App-Token'] = this.appToken;
+
+    let filas: { municipio?: string; n?: string }[] = [];
+    try {
+      const res = await fetch(url, { headers, signal: AbortSignal.timeout(TIMEOUT_MS) });
+      if (res.ok) filas = (await res.json().catch(() => [])) as typeof filas;
+    } catch (err) {
+      this.logger.warn(`No se pudieron listar ciudades de ${pais}: ${(err as Error).message}`);
+      return cacheado?.datos ?? [];
+    }
+
+    const datos = filas
+      .map((f) => ({ city: limpio(f.municipio) ?? '', count: Number(f.n ?? 0) }))
+      .filter((c) => !!c.city)
+      .sort((a, b) => b.count - a.count);
+
+    this.ciudadesCache.set(pais, { ts: Date.now(), datos });
+    return datos;
   }
 
   /** El dataset es público, así que siempre está "configurado" — pero avisamos

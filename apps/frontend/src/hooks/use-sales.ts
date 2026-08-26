@@ -524,3 +524,16 @@ export function useAddTlReview(prospectId: string) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['sales', 'prospects', 'tl-reviews', prospectId] }),
   });
 }
+
+/** Ciudades de un país, con cuántas empresas tiene cada una. El backend las
+ *  cachea 6h porque agregarlas para Colombia tarda ~4s. */
+export function useOpenDataCities(country: string) {
+  return useQuery({
+    queryKey: ['sales', 'prospects', 'opendata', 'cities', country],
+    queryFn: () => api.get<{ city: string; count: number }[]>(
+      `/sales/prospects/opendata/cities?country=${encodeURIComponent(country)}`,
+    ),
+    enabled: !!country,
+    staleTime: 6 * 60 * 60_000,
+  });
+}

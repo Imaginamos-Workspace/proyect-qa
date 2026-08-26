@@ -4,7 +4,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { useCreateSavedSearch, useOpenDataSearch, useSaveOpenDataCompany } from '@/hooks/use-sales';
+import { useCreateSavedSearch, useOpenDataCities, useOpenDataSearch, useSaveOpenDataCompany } from '@/hooks/use-sales';
 import type { OpenDataCompany } from '@qa/shared-types';
 
 /**
@@ -15,28 +15,34 @@ import type { OpenDataCompany } from '@qa/shared-types';
  * Es un <select> y no un <input> con datalist: el datalist FILTRA las opciones
  * por lo ya escrito, así que con "Colombia" en el campo solo se veía Colombia.
  */
-const PAISES: { valor: string; etiqueta: string }[] = [
-  { valor: 'Colombia', etiqueta: 'Colombia (1.597.779)' },
-  { valor: 'Estados Unidos', etiqueta: 'Estados Unidos (626)' },
-  { valor: 'España', etiqueta: 'España (419)' },
-  { valor: 'México', etiqueta: 'México (261)' },
-  { valor: 'Chile', etiqueta: 'Chile (156)' },
-  { valor: 'Venezuela', etiqueta: 'Venezuela (156)' },
-  { valor: 'Perú', etiqueta: 'Perú (102)' },
-  { valor: 'Reino Unido', etiqueta: 'Reino Unido (93)' },
-  { valor: 'Brasil', etiqueta: 'Brasil (92)' },
-  { valor: 'Argentina', etiqueta: 'Argentina (91)' },
-  { valor: 'Francia', etiqueta: 'Francia (75)' },
-  { valor: 'Panamá', etiqueta: 'Panamá (67)' },
-  { valor: 'Ecuador', etiqueta: 'Ecuador (62)' },
-  { valor: 'Canadá', etiqueta: 'Canadá (60)' },
-  { valor: 'Alemania', etiqueta: 'Alemania (55)' },
-  { valor: 'Italia', etiqueta: 'Italia (42)' },
-  { valor: 'Portugal', etiqueta: 'Portugal (27)' },
-  { valor: 'Uruguay', etiqueta: 'Uruguay (24)' },
-  { valor: 'Costa Rica', etiqueta: 'Costa Rica (23)' },
-  { valor: 'Países Bajos', etiqueta: 'Países Bajos (23)' },
+const PAISES: { valor: string; iso: string; empresas: number }[] = [
+  { valor: 'Colombia', iso: 'CO', empresas: 1597779 },
+  { valor: 'Estados Unidos', iso: 'US', empresas: 626 },
+  { valor: 'España', iso: 'ES', empresas: 419 },
+  { valor: 'México', iso: 'MX', empresas: 261 },
+  { valor: 'Chile', iso: 'CL', empresas: 156 },
+  { valor: 'Venezuela', iso: 'VE', empresas: 156 },
+  { valor: 'Perú', iso: 'PE', empresas: 102 },
+  { valor: 'Reino Unido', iso: 'GB', empresas: 93 },
+  { valor: 'Brasil', iso: 'BR', empresas: 92 },
+  { valor: 'Argentina', iso: 'AR', empresas: 91 },
+  { valor: 'Francia', iso: 'FR', empresas: 75 },
+  { valor: 'Panamá', iso: 'PA', empresas: 67 },
+  { valor: 'Ecuador', iso: 'EC', empresas: 62 },
+  { valor: 'Canadá', iso: 'CA', empresas: 60 },
+  { valor: 'Alemania', iso: 'DE', empresas: 55 },
+  { valor: 'Italia', iso: 'IT', empresas: 42 },
+  { valor: 'Portugal', iso: 'PT', empresas: 27 },
+  { valor: 'Uruguay', iso: 'UY', empresas: 24 },
+  { valor: 'Costa Rica', iso: 'CR', empresas: 23 },
+  { valor: 'Países Bajos', iso: 'NL', empresas: 23 },
 ];
+
+/** Bandera como emoji, derivada del ISO-2: cada letra se mapea a su símbolo
+ *  indicador regional. Sin librería de iconos ni imágenes que cargar. */
+function bandera(iso: string): string {
+  return String.fromCodePoint(...[...iso.toUpperCase()].map((c) => 0x1f1e6 + c.charCodeAt(0) - 65));
+}
 
 /**
  * Búsqueda de empresas colombianas en el REGISTRO PÚBLICO (Datos Abiertos,
@@ -55,11 +61,14 @@ export function OpenDataSearch({
   onAbrirProspecto: (prospectId: string) => void;
 }) {
   const [keywords, setKeywords] = useState('');
-  const [city, setCity] = useState('Bogotá');
+  // Arranca en "Todas": las opciones vienen del dataset con su ortografía real
+  // ("BOGOTa"), así que un valor escrito a mano no matchearía ninguna.
+  const [city, setCity] = useState('');
   const [country, setCountry] = useState('Colombia');
   const [guardadas, setGuardadas] = useState<Set<string>>(new Set());
   const [guardando, setGuardando] = useState<string | null>(null);
 
+  const { data: ciudades, isLoading: cargandoCiudades } = useOpenDataCities(country);
   const search = useOpenDataSearch();
   const save = useSaveOpenDataCompany();
   const guardarSemanal = useCreateSavedSearch();
@@ -120,29 +129,39 @@ export function OpenDataSearch({
               />
             </div>
             <div>
-              <label className="mb-1 block text-xs text-muted-foreground" htmlFor="od-city">
-                Ciudad
-              </label>
-              <Input
-                id="od-city"
-                value={city}
-                onChange={(e) => setCity(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && buscar()}
-                placeholder="Bogotá, Medellín, Cali…"
-              />
-            </div>
-            <div>
               <label className="mb-1 block text-xs text-muted-foreground" htmlFor="od-country">
                 País
               </label>
               <select
                 id="od-country"
                 value={country}
-                onChange={(e) => setCountry(e.target.value)}
+                onChange={(e) => { setCountry(e.target.value); setCity(''); }}
                 className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
               >
                 {PAISES.map((p) => (
-                  <option key={p.valor} value={p.valor}>{p.etiqueta}</option>
+                  <option key={p.valor} value={p.valor}>
+                    {bandera(p.iso)} {p.valor} ({p.empresas.toLocaleString('es-CO')})
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs text-muted-foreground" htmlFor="od-city">
+                Ciudad
+              </label>
+              <select
+                id="od-city"
+                value={city}
+                onChange={(e) => setCity(e.target.value)}
+                disabled={cargandoCiudades}
+                className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm disabled:opacity-60"
+              >
+                {/* "Todas" primero y siempre: en la mayoría de los países el
+                    dataset no registra la ciudad, así que filtrar por ella
+                    dejaría al vendedor sin resultados. */}
+                <option value="">Todas las ciudades</option>
+                {(ciudades ?? []).map((c) => (
+                  <option key={c.city} value={c.city}>{c.city} ({c.count.toLocaleString('es-CO')})</option>
                 ))}
               </select>
             </div>
