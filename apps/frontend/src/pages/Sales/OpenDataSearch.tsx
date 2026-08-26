@@ -8,6 +8,37 @@ import { useCreateSavedSearch, useOpenDataSearch, useSaveOpenDataCompany } from 
 import type { OpenDataCompany } from '@qa/shared-types';
 
 /**
+ * Países con empresas en el registro, con su volumen real medido sobre el
+ * dataset. Se muestra el conteo para que el vendedor sepa qué esperar antes
+ * de buscar: ver 3 resultados en Guatemala no es un error, es todo lo que hay.
+ *
+ * Es un <select> y no un <input> con datalist: el datalist FILTRA las opciones
+ * por lo ya escrito, así que con "Colombia" en el campo solo se veía Colombia.
+ */
+const PAISES: { valor: string; etiqueta: string }[] = [
+  { valor: 'Colombia', etiqueta: 'Colombia (1.597.779)' },
+  { valor: 'Estados Unidos', etiqueta: 'Estados Unidos (626)' },
+  { valor: 'España', etiqueta: 'España (419)' },
+  { valor: 'México', etiqueta: 'México (261)' },
+  { valor: 'Chile', etiqueta: 'Chile (156)' },
+  { valor: 'Venezuela', etiqueta: 'Venezuela (156)' },
+  { valor: 'Perú', etiqueta: 'Perú (102)' },
+  { valor: 'Reino Unido', etiqueta: 'Reino Unido (93)' },
+  { valor: 'Brasil', etiqueta: 'Brasil (92)' },
+  { valor: 'Argentina', etiqueta: 'Argentina (91)' },
+  { valor: 'Francia', etiqueta: 'Francia (75)' },
+  { valor: 'Panamá', etiqueta: 'Panamá (67)' },
+  { valor: 'Ecuador', etiqueta: 'Ecuador (62)' },
+  { valor: 'Canadá', etiqueta: 'Canadá (60)' },
+  { valor: 'Alemania', etiqueta: 'Alemania (55)' },
+  { valor: 'Italia', etiqueta: 'Italia (42)' },
+  { valor: 'Portugal', etiqueta: 'Portugal (27)' },
+  { valor: 'Uruguay', etiqueta: 'Uruguay (24)' },
+  { valor: 'Costa Rica', etiqueta: 'Costa Rica (23)' },
+  { valor: 'Países Bajos', etiqueta: 'Países Bajos (23)' },
+];
+
+/**
  * Búsqueda de empresas colombianas en el REGISTRO PÚBLICO (Datos Abiertos,
  * SECOP II). A diferencia de Apollo: no consume créditos, no tiene cuota
  * diaria y no necesita API key, y las empresas vienen con NIT.
@@ -104,19 +135,16 @@ export function OpenDataSearch({
               <label className="mb-1 block text-xs text-muted-foreground" htmlFor="od-country">
                 País
               </label>
-              <Input
+              <select
                 id="od-country"
                 value={country}
                 onChange={(e) => setCountry(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && buscar()}
-                placeholder="Colombia, México, España…"
-                list="od-paises"
-              />
-              <datalist id="od-paises">
-                {['Colombia','Estados Unidos','España','México','Chile','Venezuela','Perú','Reino Unido','Brasil','Argentina','Francia','Panamá','Ecuador','Canadá','Alemania'].map((p) => (
-                  <option key={p} value={p} />
+                className="h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                {PAISES.map((p) => (
+                  <option key={p.valor} value={p.valor}>{p.etiqueta}</option>
                 ))}
-              </datalist>
+              </select>
             </div>
             <div className="flex items-end">
               <div className="flex gap-2">
