@@ -35,7 +35,7 @@ const SYNC_LOG_TABLE = 'sales_apollo_sync_log';
  *  que se corta por tiempo Y por cantidad de llamadas: lo que no entra queda
  *  para la semana siguiente (el catálogo es acumulativo). */
 const SYNC_PRESUPUESTO_MS = 45_000;
-const SYNC_MAX_CALLS = 20;
+const SYNC_MAX_CALLS = 30;
 /** Pausa entre llamadas — cortesía con la API y evita el 429. */
 const SYNC_PAUSA_MS = 500;
 
@@ -54,6 +54,33 @@ export function segmentFor(employees: number): string {
   if (employees <= 500) return 'SMB';
   return 'Enterprise';
 }
+
+/**
+ * Países donde Imaginamos puede tener clientes: Latinoamérica, España y
+ * Estados Unidos. Van en inglés porque es como Apollo indexa `organization_locations`.
+ *
+ * Colombia primero a propósito: es el mercado principal, y si una corrida se
+ * corta por presupuesto conviene que lo ya cubierto sea lo más útil.
+ */
+export const COUNTRIES = [
+  'Colombia',
+  'Mexico',
+  'Spain',
+  'United States',
+  'Panama',
+  'Costa Rica',
+  'Guatemala',
+  'El Salvador',
+  'Honduras',
+  'Dominican Republic',
+  'Ecuador',
+  'Peru',
+  'Chile',
+  'Argentina',
+  'Uruguay',
+  'Paraguay',
+  'Bolivia',
+] as const;
 
 /** Sets de palabras clave por industria, en español e inglés — Apollo indexa
  *  en ambos y las empresas colombianas aparecen escritas de las dos formas. */
@@ -237,40 +264,73 @@ export class ApolloOrgsService {
    * tiempo y por número de llamadas: el catálogo es acumulativo, así que no
    * hace falta terminar todo en una corrida.
    */
-  async refreshWeekly(): Promise<{ sectors: number; calls: number; fetched: number; inserted: number }> {
-    if (!this.apiKey) {
-      await this.logSync({ sectors: 0, calls: 0, fetched: 0, inserted: 0, error: 'APOLLO_API_KEY no configurada' });
-      return { sectors: 0, calls: 0, fetched: 0, inserted: 0 };
-    }
-
-    const finAntesDe = Date.now() + SYNC_PRESUPUESTO_MS;
+  /**
+   * Barrido semanal: recorre PAÍS × SECTOR y va llenando el catálogo.
+   *
+   * 17 países × 14 sectores = 238 combinaciones, y en el presupuesto de 45s
+   * entran ~30 llamadas. Por eso el barrido es ROTATIVO: cada corrida arranca
+   * donde quedó la anterior (`next_index` en el log) y deja anotado el punto
+   * siguiente. Un ciclo completo toma ~8 semanas y el catálogo es acumulativo.
+   *
+   * No se filtra por tamaño de empresa: el segmento se deriva del headcount
+   * que Apollo ya devuelve, así que filtrar por rango triplicaría las
+   * combinaciones sin aportar datos nuevos.
+   */
+  async refreshWeekly(): Promise<{ combos: number; calls: number; fetched: number; inserted: number; nextIndex: number }> {
     const sectores = Object.entries(KEYWORD_SETS);
-    let calls = 0;
-    let fetched = 0;
-    let inserted = 0;
-    let sectoresTocados = 0;
-
-    outer: for (const [sector, keywords] of sectores) {
-      sectoresTocados++;
-      for (const { range } of SEGMENTS) {
-        if (Date.now() > finAntesDe || calls >= SYNC_MAX_CALLS) break outer;
-
-        const r = await this.search(keywords, ['Colombia'], [range], 1).catch((e: Error) => {
-          this.logger.warn(`Apollo falló en ${sector}/${range}: ${e.message}`);
-          return null;
-        });
-        calls++;
-        await new Promise((res) => setTimeout(res, SYNC_PAUSA_MS));
-        if (!r) continue;
-
-        fetched += r.orgs.length;
-        inserted += await this.upsertCache(r.orgs, sector);
-      }
+    const combos: { pais: string; sector: string; keywords: string[] }[] = [];
+    for (const pais of COUNTRIES) {
+      for (const [sector, keywords] of sectores) combos.push({ pais, sector, keywords });
     }
 
-    await this.logSync({ sectors: sectoresTocados, calls, fetched, inserted });
-    this.logger.log(`Apollo semanal: ${calls} llamadas · ${fetched} empresas · ${inserted} nuevas/actualizadas`);
-    return { sectors: sectoresTocados, calls, fetched, inserted };
+    if (!this.apiKey) {
+      await this.logSync({ calls: 0, fetched: 0, inserted: 0, next_index: 0, error: 'APOLLO_API_KEY no configurada' });
+      return { combos: 0, calls: 0, fetched: 0, inserted: 0, nextIndex: 0 };
+    }
+
+    const desde = await this.leerCursor(combos.length);
+    const finAntesDe = Date.now() + SYNC_PRESUPUESTO_MS;
+    let calls = 0, fetched = 0, inserted = 0, i = desde;
+    const tocados: string[] = [];
+
+    while (calls < SYNC_MAX_CALLS && Date.now() < finAntesDe) {
+      const c = combos[i % combos.length];
+      const r = await this.search(c.keywords, [c.pais], [], 1).catch((e: Error) => {
+        this.logger.warn(`Apollo falló en ${c.pais}/${c.sector}: ${e.message}`);
+        return null;
+      });
+      calls++;
+      tocados.push(`${c.pais}/${c.sector}`);
+      i++;
+      await new Promise((res) => setTimeout(res, SYNC_PAUSA_MS));
+      if (!r) continue;
+      fetched += r.orgs.length;
+      inserted += await this.upsertCache(r.orgs, c.sector);
+    }
+
+    const nextIndex = i % combos.length;
+    await this.logSync({
+      calls, fetched, inserted, next_index: nextIndex,
+      combos: tocados.join(', ').slice(0, 2000),
+    });
+    this.logger.log(
+      `Apollo semanal: ${calls} llamadas · ${fetched} empresas · ${inserted} guardadas · ` +
+      `posición ${desde}→${nextIndex} de ${combos.length}`,
+    );
+    return { combos: combos.length, calls, fetched, inserted, nextIndex };
+  }
+
+  /** Dónde quedó el barrido anterior. Fail-soft: si el log no existe todavía
+   *  (migración 034 sin correr) se empieza por el principio. */
+  private async leerCursor(total: number): Promise<number> {
+    const { data } = await this.supabase
+      .from(SYNC_LOG_TABLE)
+      .select('next_index')
+      .order('ran_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    const n = Number(data?.next_index ?? 0);
+    return Number.isFinite(n) && n >= 0 ? n % total : 0;
   }
 
   private async upsertCache(orgs: ApolloOrg[], sector: string): Promise<number> {
