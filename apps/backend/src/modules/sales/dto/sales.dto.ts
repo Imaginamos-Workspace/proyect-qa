@@ -84,8 +84,9 @@ export class SaveProspectDto {
 
 /** Búsqueda de empresas en Datos Abiertos Colombia (fuente `web`, sin API key). */
 export class OpenDataSearchDto {
-  @IsString() @IsNotEmpty() @MaxLength(120)
-  keywords: string;
+  /** Opcional: sin palabra clave se listan todas las empresas del país. */
+  @IsOptional() @IsString() @MaxLength(120)
+  keywords?: string;
 
   @IsOptional() @IsString() @MaxLength(80)
   city?: string;
@@ -97,7 +98,7 @@ export class OpenDataSearchDto {
   @IsOptional() @IsInt() @Min(1) @Max(50)
   limit?: number;
 
-  @IsOptional() @IsInt() @Min(0) @Max(1000)
+  @IsOptional() @IsInt() @Min(0) @Max(100000)
   offset?: number;
 }
 
